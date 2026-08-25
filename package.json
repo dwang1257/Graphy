@@ -1,0 +1,36 @@
+{
+  "name": "graphy",
+  "version": "0.1.0",
+  "description": "Chrome extension that renders LeetCode custom test cases as interactive graphs.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dwang1257/Graphy.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/dwang1257/Graphy/issues"
+  },
+  "homepage": "https://github.com/dwang1257/Graphy#readme",
+  "devDependencies": {
+    "@crxjs/vite-plugin": "^2.7.1",
+    "@preact/preset-vite": "^2.10.6",
+    "@types/chrome": "^0.2.7",
+    "@types/node": "^26.3.0",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.2"
+  },
+  "dependencies": {
+    "@hpcc-js/wasm-graphviz": "^1.28.0",
+    "preact": "^10.29.8"
+  },
+  "private": true
+}

@@ -1,0 +1,53 @@
+{
+  "manifest_version": 3,
+  "name": "Graphy",
+  "version": "0.1.0",
+  "description": "Renders LeetCode custom test cases as interactive graphs.",
+  "permissions": [
+    "storage"
+  ],
+  "action": {
+    "default_title": "Toggle Graphy"
+  },
+  "background": {
+    "service_worker": "service-worker-loader.js",
+    "type": "module"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "content_scripts": [
+    {
+      "js": [
+        "assets/index.ts-loader-D6Lav5L6.js"
+      ],
+      "matches": [
+        "https://leetcode.com/*",
+        "https://leetcode.cn/*"
+      ],
+      "run_at": "document_start"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "matches": [
+        "https://leetcode.cn/*",
+        "https://leetcode.com/*"
+      ],
+      "resources": [
+        "injected.js",
+        "src/panel/index.html",
+        "assets/*",
+        "assets/protocol-B5ROsokH.js",
+        "assets/index.ts-d7K9qfyt.js"
+      ],
+      "use_dynamic_url": false
+    }
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  }
+}

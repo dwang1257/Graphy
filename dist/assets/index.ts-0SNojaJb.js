@@ -1,0 +1,1 @@
+chrome.action.onClicked.addListener(e=>{e.id!==void 0&&chrome.tabs.sendMessage(e.id,{type:`graphy:toggle`}).catch(()=>{})});
