@@ -23,8 +23,10 @@ import { TitleBar } from "./TitleBar.js";
 import { GripIcon } from "./icons.js";
 import { preload, renderDot } from "./graphviz.js";
 
+const EXTENSION_ORIGIN = `${location.protocol}//${location.host}`;
+
 function toHost(message: FromPanel): void {
-  parent.postMessage(message, "*");
+  parent.postMessage(message, EXTENSION_ORIGIN);
 }
 
 const DIRECTIONAL: StructureKind[] = ["graph", "adjacency"];
@@ -59,6 +61,7 @@ export function App(): JSX.Element {
     });
 
     const onMessage = (event: MessageEvent): void => {
+      if (event.source !== parent || event.origin !== EXTENSION_ORIGIN) return;
       const data: unknown = event.data;
       if (!isToPanel(data)) return;
       if (data.type === "theme") {

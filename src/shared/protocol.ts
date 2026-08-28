@@ -45,7 +45,9 @@ function isSnapshot(payload: unknown): payload is Snapshot {
     typeof p.code === "string" &&
     typeof p.lang === "string" &&
     typeof p.slug === "string" &&
-    (p.source === "editor" || p.source === "network")
+    (p.source === "editor" || p.source === "network") &&
+    typeof p.at === "number" &&
+    Number.isFinite(p.at)
   );
 }
 
@@ -58,12 +60,35 @@ export function isPageMessage(data: unknown): data is PageMessage {
 }
 
 export function isPanelMessage(data: unknown): data is FromPanel {
-  return onChannel(data, PANEL_CHANNEL);
+  if (!onChannel(data, PANEL_CHANNEL)) return false;
+  const m = data as Record<string, unknown>;
+  switch (m.type) {
+    case "ready":
+    case "close":
+    case "persist":
+      return true;
+    case "collapse":
+      return typeof m.collapsed === "boolean";
+    case "move":
+    case "resize":
+      return (
+        typeof m.dx === "number" &&
+        Number.isFinite(m.dx) &&
+        typeof m.dy === "number" &&
+        Number.isFinite(m.dy)
+      );
+    default:
+      return false;
+  }
 }
 
 export function isToPanel(data: unknown): data is ToPanel {
   if (!onChannel(data, PANEL_CHANNEL)) return false;
   const m = data as { type?: unknown; payload?: unknown; pageIsDark?: unknown };
   if (m.type === "theme") return typeof m.pageIsDark === "boolean";
-  return m.type === "snapshot" && isSnapshot(m.payload);
+  return (
+    m.type === "snapshot" &&
+    typeof m.pageIsDark === "boolean" &&
+    isSnapshot(m.payload)
+  );
 }
