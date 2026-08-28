@@ -17,8 +17,8 @@ const TYPE_RULES: Array<[RegExp, StructureKind]> = [
 const NAME_RULES: Array<[Set<string>, Role]> = [
   [set("root root1 root2 subRoot p q original cloned target"), { kind: "binary-tree" }],
   [set("head headA headB l1 l2 list1 list2 list"), { kind: "linked-list" }],
-  [set("grid board matrix mat image maze forest heights land dungeon obstacleGrid isWater box picture"), { kind: "matrix" }],
-  [set("adjList adj neighbors graph rooms isConnected"), { kind: "adjacency" }],
+  [set("grid board matrix mat image maze forest heights land dungeon obstacleGrid isWater box picture isConnected"), { kind: "matrix" }],
+  [set("adjList adj neighbors graph rooms"), { kind: "adjacency" }],
   [set("prerequisites trust times flights relations dependencies edges1 requirements"), { kind: "graph", directed: true }],
   [set("edges connections roads paths pairs dislikes edgeList links"), { kind: "graph", directed: false }],
   [set("n numCourses numNodes numVertices size"), { kind: "node-count" }],
