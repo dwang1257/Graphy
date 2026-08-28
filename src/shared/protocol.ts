@@ -17,9 +17,7 @@ export interface Snapshot {
   at: number;
 }
 
-export type PageMessage =
-  | { channel: typeof PAGE_CHANNEL; type: "snapshot"; payload: Snapshot }
-  | { channel: typeof PAGE_CHANNEL; type: "run" };
+export type PageMessage = { channel: typeof PAGE_CHANNEL; type: "snapshot"; payload: Snapshot };
 
 export type ToPanel =
   | { channel: typeof PANEL_CHANNEL; type: "snapshot"; payload: Snapshot; pageIsDark: boolean }
@@ -55,7 +53,6 @@ function isSnapshot(payload: unknown): payload is Snapshot {
 export function isPageMessage(data: unknown): data is PageMessage {
   if (!onChannel(data, PAGE_CHANNEL)) return false;
   const m = data as { type?: unknown; payload?: unknown };
-  if (m.type === "run") return true;
   return m.type === "snapshot" && isSnapshot(m.payload);
 }
 

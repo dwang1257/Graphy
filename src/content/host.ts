@@ -1,4 +1,4 @@
-import { PANEL_CHANNEL, isPanelMessage, type ToPanel } from "../shared/protocol.js";
+import { isPanelMessage, type ToPanel } from "../shared/protocol.js";
 import { DEFAULT_PANEL, loadPanelState, savePanelState, type PanelState } from "../settings/storage.js";
 
 const HOST_ID = "graphy-root";
@@ -166,7 +166,7 @@ export class PanelHost {
     if (event.source !== this.frame.contentWindow) return;
     if (event.origin !== this.frameOrigin) return;
     const data: unknown = event.data;
-    if (!isPanelMessage(data) || data.channel !== PANEL_CHANNEL) return;
+    if (!isPanelMessage(data)) return;
 
     switch (data.type) {
       case "ready": {

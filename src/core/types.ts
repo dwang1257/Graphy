@@ -6,15 +6,12 @@ export type StructureKind =
   | "adjacency"
   | "matrix";
 
-export type NodeRole = "normal" | "null" | "spine" | "root" | "terminal" | "highlight";
+export type NodeRole = "normal" | "null" | "spine" | "root" | "terminal";
 
 export interface GNode {
   id: string;
   label: string;
   role: NodeRole;
-  /** Binary-tree only: emitted left-to-right under the parent. */
-  order?: number;
-  tooltip?: string;
 }
 
 export type EdgeRole = "normal" | "spine" | "null" | "cycle";
@@ -24,12 +21,9 @@ export interface GEdge {
   to: string;
   label?: string;
   role: EdgeRole;
-  /** Overrides the model-level direction for this edge. */
-  directed?: boolean;
 }
 
 export interface MatrixCell {
-  value: unknown;
   text: string;
   /** Truthy cells get accent fill (land in grid problems, 1s in a bitmap). */
   filled: boolean;

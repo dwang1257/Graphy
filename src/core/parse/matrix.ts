@@ -33,7 +33,7 @@ export function parseMatrix(value: LCValue, title?: string, showIndices = true):
 
 function toCell(raw: LCValue): MatrixCell {
   const text = scalarText(raw);
-  return { value: raw, text, filled: !FALSY.has(text.toLowerCase()) };
+  return { text, filled: !FALSY.has(text.toLowerCase()) };
 }
 
 /** Accepts `[[..]]` directly, expands string grids, and promotes other flat arrays. */

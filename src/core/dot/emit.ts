@@ -66,7 +66,6 @@ export function emitDot(model: GraphModel, options: EmitOptions): string {
 
 function nodeLine(node: GNode, { palette, layout }: EmitOptions): string {
   const base: Record<string, string | number | undefined> = { label: node.label };
-  if (node.tooltip) base.tooltip = node.tooltip;
 
   switch (node.role) {
     case "root":
@@ -82,9 +81,6 @@ function nodeLine(node: GNode, { palette, layout }: EmitOptions): string {
       break;
     case "terminal":
       Object.assign(base, { shape: "plaintext", style: "", fontcolor: palette.terminalText, fontsize: layout.fontSize + 2 });
-      break;
-    case "highlight":
-      Object.assign(base, { fillcolor: palette.cycleColor, fontcolor: palette.background, color: palette.cycleColor });
       break;
     case "normal":
       break;

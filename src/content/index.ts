@@ -59,7 +59,7 @@ function forward(snapshot: Snapshot): void {
 window.addEventListener("message", (event) => {
   if (event.source !== window) return;
   const data: unknown = event.data;
-  if (!isPageMessage(data) || data.type !== "snapshot") return;
+  if (!isPageMessage(data)) return;
   lastSnapshot = data.payload;
   forward(data.payload);
 });

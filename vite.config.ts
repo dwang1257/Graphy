@@ -1,4 +1,5 @@
-import { defineConfig, type Plugin } from "vite";
+import { defineConfig } from "vitest/config";
+import type { Plugin } from "vite";
 import { crx } from "@crxjs/vite-plugin";
 import preact from "@preact/preset-vite";
 import { build } from "esbuild";
@@ -28,6 +29,9 @@ function pageWorldBundle(): Plugin {
 
 export default defineConfig({
   plugins: [preact(), pageWorldBundle(), crx({ manifest })],
+  test: {
+    exclude: ["**/node_modules/**", "**/dist/**", "**/.worktrees/**"],
+  },
   build: {
     target: "chrome110",
     chunkSizeWarningLimit: 2048,
