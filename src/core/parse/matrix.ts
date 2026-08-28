@@ -36,11 +36,18 @@ function toCell(raw: LCValue): MatrixCell {
   return { value: raw, text, filled: !FALSY.has(text.toLowerCase()) };
 }
 
-/** Accepts `[[..]]` directly and promotes a flat array to a single row. */
+/** Accepts `[[..]]` directly, expands string grids, and promotes other flat arrays. */
 function normalize(value: LCValue): LCValue[][] | null {
   if (isNestedArray(value)) return value;
   if (isArray(value)) {
     if (value.length === 0) return [];
+    if (
+      value.every((v): v is string => typeof v === "string") &&
+      value[0]!.length > 0 &&
+      value.every((v) => v.length === value[0]!.length)
+    ) {
+      return value.map((row) => [...row]);
+    }
     if (value.every((v) => !isArray(v))) return [value];
   }
   return null;

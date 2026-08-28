@@ -57,12 +57,16 @@ function fromShape(value: LCValue): Role {
   if (isNestedArray(value)) {
     const widths = new Set(value.map((row) => row.length));
     const allPairs = [...widths].every((w) => w === 2 || w === 3);
-    const maxValue = maxNumber(value);
-    // An edge list's row count is the edge count, unrelated to the vertex ids,
-    // so ids reaching past the row count rule out an adjacency list.
-    if (allPairs && (maxValue >= value.length || widths.has(3))) {
-      return { kind: "graph", directed: false };
+    if (isSquareBinaryGrid(value)) return { kind: "matrix" };
+
+    // A row that starts with its own index is carrying an explicit source,
+    // which is stronger edge-list evidence than merely having in-range ids.
+    const hasExplicitSources = allPairs
+      && value.every((row, index) => row[0] === index);
+    if (!hasExplicitSources && isLikelyAdjacency(value)) {
+      return { kind: "adjacency" };
     }
+    if (allPairs) return { kind: "graph", directed: false };
     if (widths.size === 1 && !allPairs) return { kind: "matrix" };
     return { kind: "adjacency" };
   }
@@ -76,12 +80,21 @@ function fromShape(value: LCValue): Role {
   return { kind: "ignore" };
 }
 
-function maxNumber(rows: LCValue[][]): number {
-  let max = -Infinity;
+function isSquareBinaryGrid(rows: LCValue[][]): boolean {
+  return rows.length > 0
+    && rows.every((row) => row.length === rows.length
+      && row.every((value) => value === 0 || value === 1));
+}
+
+function isLikelyAdjacency(rows: LCValue[][]): boolean {
+  let indexCount = 0;
+  let inRangeCount = 0;
   for (const row of rows) {
-    for (const v of row) {
-      if (typeof v === "number" && v > max) max = v;
+    for (const value of row) {
+      if (!Number.isInteger(value) || (value as number) < 0) return false;
+      indexCount++;
+      if ((value as number) < rows.length) inRangeCount++;
     }
   }
-  return max;
+  return indexCount > 0 && inRangeCount / indexCount >= 0.75;
 }
