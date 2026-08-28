@@ -4,7 +4,7 @@ import type { JSX } from "preact";
 import { buildPanes } from "../core/build.js";
 import { emitDot } from "../core/dot/emit.js";
 import { parseSignature } from "../core/signature.js";
-import { KIND_LABELS, modelSize, visibleNodeCount, type StructureKind } from "../core/types.js";
+import { KIND_LABELS, modelSize, visibleNodeCount, type GraphModel, type StructureKind } from "../core/types.js";
 import { DEFAULT_SETTINGS, type Settings } from "../settings/schema.js";
 import {
   loadOverrides,
@@ -28,6 +28,11 @@ function toHost(message: FromPanel): void {
 }
 
 const DIRECTIONAL: StructureKind[] = ["graph", "adjacency"];
+
+function resolvedPalette(mode: Settings["mode"], pageIsDark: boolean): "light" | "dark" {
+  if (mode === "light" || mode === "dark") return mode;
+  return pageIsDark ? "dark" : "light";
+}
 
 export function App(): JSX.Element {
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
@@ -107,7 +112,7 @@ export function App(): JSX.Element {
   );
 
   const pane = result.panes[Math.min(active, Math.max(0, result.panes.length - 1))];
-  const paletteName = settings.mode === "auto" ? (pageIsDark ? "dark" : "light") : settings.mode;
+  const paletteName = resolvedPalette(settings.mode, pageIsDark);
   const palette = settings[paletteName];
 
   const paneSize = pane ? modelSize(pane.model) : 0;
@@ -230,7 +235,7 @@ export function App(): JSX.Element {
           )}
 
           <div class="stage-wrap">
-            {svg ? <GraphView svg={svg} fitKey={`${pane?.id ?? ""}:${fitCount}`} /> : <Empty />}
+            {svg ? <GraphView svg={svg} fitKey={`${pane?.id ?? ""}:${fitCount}`} /> : <div class="stage" />}
             {!svg && (
               <Placeholder
                 snapshot={snapshot}
@@ -244,7 +249,7 @@ export function App(): JSX.Element {
             {showSettings && (
               <SettingsDrawer
                 settings={settings}
-                activePalette={paletteName === "dark" ? "dark" : "light"}
+                activePalette={paletteName}
                 onChange={updateSettings}
               />
             )}
@@ -252,11 +257,7 @@ export function App(): JSX.Element {
 
           <div class="statusbar">
             {pane && <span class="pill">{KIND_LABELS[pane.model.kind]}</span>}
-            <span>
-              {pane
-                ? `${visibleNodeCount(pane.model)} ${pane.model.kind === "matrix" ? "cells" : "nodes"}`
-                : "waiting for input"}
-            </span>
+            <span>{countLabel(pane?.model)}</span>
             {pane?.model.notes[0] && <span>{pane.model.notes[0]}</span>}
             <span class="spacer" />
             {snapshot && <span>{snapshot.source === "network" ? "from Run" : "live"}</span>}
@@ -268,8 +269,10 @@ export function App(): JSX.Element {
   );
 }
 
-function Empty(): JSX.Element {
-  return <div class="stage" />;
+function countLabel(model: GraphModel | undefined): string {
+  if (!model) return "waiting for input";
+  const unit = model.kind === "matrix" ? "cells" : "nodes";
+  return `${visibleNodeCount(model)} ${unit}`;
 }
 
 interface PlaceholderProps {

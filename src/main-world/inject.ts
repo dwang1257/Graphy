@@ -12,6 +12,11 @@ interface CMNode extends HTMLElement {
   cmView?: { rootView?: { view?: { state?: { doc?: { toString(): string } } } } };
 }
 
+interface Editor {
+  el: CMNode;
+  text: string;
+}
+
 const CODE_HINTS = /class\s+Solution|def\s+\w+\s*\(|func\s+\w+|impl\s+Solution|var\s+\w+\s*=\s*function|public\s+class|^\s*(?:int|char|void|double|bool|struct)\b[^=\n]*\(/m;
 
 let last = "";
@@ -23,8 +28,8 @@ function docOf(content: CMNode): string | null {
   return typeof text === "string" ? text : null;
 }
 
-function editors(): Array<{ el: CMNode; text: string }> {
-  const out: Array<{ el: CMNode; text: string }> = [];
+function editors(): Editor[] {
+  const out: Editor[] = [];
   for (const el of document.querySelectorAll<CMNode>(".cm-content")) {
     const text = docOf(el);
     if (text !== null) out.push({ el, text });
@@ -41,22 +46,18 @@ function isActiveField(el: HTMLElement): boolean {
 /** The buffer that looks like source code; only active test fields become input. */
 function splitBuffers(): { code: string; input: string } {
   const found = editors();
-  let code = "";
-  const inputs: string[] = [];
-
   let codeIndex = found.findIndex((e) => CODE_HINTS.test(e.text));
-  if (codeIndex === -1 && found.length > 1) {
-    // Fall back to the longest buffer, which is almost always the solution.
+  if (codeIndex === -1 && found.length > 0) {
+    // Longest buffer is almost always the solution; a single editor is the
+    // solution with the testcase drawer collapsed.
     codeIndex = found.reduce((best, e, i) => (e.text.length > found[best]!.text.length ? i : best), 0);
-  } else if (codeIndex === -1 && found.length === 1) {
-    // A single visible editor is the solution buffer (testcase drawer collapsed).
-    codeIndex = 0;
   }
 
-  found.forEach((entry, i) => {
-    if (i === codeIndex) code = entry.text;
-    else if (isActiveField(entry.el)) inputs.push(entry.text);
-  });
+  const code = codeIndex >= 0 ? found[codeIndex]!.text : "";
+  const inputs: string[] = [];
+  for (const [i, entry] of found.entries()) {
+    if (i !== codeIndex && isActiveField(entry.el)) inputs.push(entry.text);
+  }
 
   // LeetCode can mirror a field as CodeMirror and a textarea; use one representation.
   if (inputs.length === 0) {
@@ -97,7 +98,6 @@ function publish(source: Snapshot["source"], override?: Partial<Snapshot>): void
     lang: langOf(),
     slug,
     source,
-    at: Date.now(),
     ...defined(override),
   };
   const key = `${snapshot.input}\u001e${snapshot.code}\u001e${snapshot.lang}`;
@@ -135,12 +135,17 @@ function fromRunBody(body: unknown): Partial<Snapshot> | null {
 
 const RUN_URL = /\/interpret_solution\/?$|\/interpret_solution\//;
 
+function requestUrl(input: RequestInfo | URL): string {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.href;
+  return input.url;
+}
+
 function patchNetwork(): void {
   const nativeFetch = window.fetch;
   window.fetch = function patched(this: typeof globalThis, input: RequestInfo | URL, init?: RequestInit) {
     try {
-      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-      if (RUN_URL.test(url)) {
+      if (RUN_URL.test(requestUrl(input))) {
         const captured = fromRunBody(init?.body);
         if (captured) publish("network", captured);
       }
