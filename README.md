@@ -81,8 +81,8 @@ Graphy infers the structure from the function signature first, then the paramete
 | Linked list | `ListNode`, `head`, `headA`, `l1`, plus an optional `pos` for cycles | `[1,2,3,4]`, `pos = 1` |
 | Directed graph | `prerequisites`, `trust`, `flights`, `edges1` | `[[1,0],[2,1]]` |
 | Undirected graph | `edges`, `connections`, `roads`, `pairs` | `[[0,1],[1,2],[2,0]]` |
-| Adjacency list | `adjList`, `graph`, `rooms`, `isConnected` | `[[2,4],[1,3],[2,4],[1,3]]` |
-| Grid / matrix | `grid`, `board`, `matrix`, `maze`, equal-length strings | `["11110","10001"]` |
+| Adjacency list | `adjList`, `graph`, `rooms` | `[[2,4],[1,3],[2,4],[1,3]]` |
+| Grid / matrix | `grid`, `board`, `matrix`, `maze`, `isConnected`, equal-length strings | `["11110","10001"]` |
 
 When the guess is wrong, pick the right structure from the dropdown in the panel's title bar.
 

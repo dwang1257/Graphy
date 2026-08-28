@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { JSX } from "preact";
 import { pointerDragHandler } from "./usePointerDrag.js";
 
@@ -17,12 +17,29 @@ interface View {
 const MIN_SCALE = 0.15;
 const MAX_SCALE = 6;
 
+function sanitizeSvg(svg: string): string {
+  const document = new DOMParser().parseFromString(svg, "image/svg+xml");
+  if (document.querySelector("parsererror")) return "";
+
+  for (const script of document.querySelectorAll("script")) script.remove();
+  for (const element of document.querySelectorAll("*")) {
+    for (const attribute of [...element.attributes]) {
+      if (attribute.name.toLowerCase().startsWith("on")) {
+        element.removeAttribute(attribute.name);
+      }
+    }
+  }
+
+  return new XMLSerializer().serializeToString(document.documentElement);
+}
+
 /** Zoom/pan surface for the rendered SVG. */
 export function GraphView({ svg, fitKey }: Props): JSX.Element {
   const stage = useRef<HTMLDivElement>(null);
   const viewport = useRef<HTMLDivElement>(null);
   const [view, setView] = useState<View>({ x: 0, y: 0, scale: 1 });
   const [panning, setPanning] = useState(false);
+  const sanitizedSvg = useMemo(() => sanitizeSvg(svg), [svg]);
 
   const fit = (): void => {
     const box = stage.current?.getBoundingClientRect();
@@ -75,7 +92,7 @@ export function GraphView({ svg, fitKey }: Props): JSX.Element {
           class="viewport"
           ref={viewport}
           style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }}
-          dangerouslySetInnerHTML={{ __html: svg }}
+          dangerouslySetInnerHTML={{ __html: sanitizedSvg }}
         />
       </div>
     </div>

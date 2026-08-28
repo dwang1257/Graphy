@@ -98,6 +98,7 @@ function publish(source: Snapshot["source"], override?: Partial<Snapshot>): void
     lang: langOf(),
     slug,
     source,
+    at: Date.now(),
     ...defined(override),
   };
   const key = `${snapshot.input}\u001e${snapshot.code}\u001e${snapshot.lang}`;

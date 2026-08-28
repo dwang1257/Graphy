@@ -42,6 +42,7 @@ const STYLE = `
 
 export class PanelHost {
   private root: ShadowRoot;
+  private readonly frameOrigin: string;
   private shell!: HTMLDivElement;
   private frame!: HTMLIFrameElement;
   private launcher!: HTMLButtonElement;
@@ -54,6 +55,8 @@ export class PanelHost {
   readonly restored: Promise<void>;
 
   constructor(private frameUrl: string) {
+    const frameLocation = new URL(frameUrl);
+    this.frameOrigin = `${frameLocation.protocol}//${frameLocation.host}`;
     const existing = document.getElementById(HOST_ID);
     existing?.remove();
 
@@ -61,7 +64,7 @@ export class PanelHost {
     host.id = HOST_ID;
     // `all: initial` on the host keeps LeetCode's cascade from reaching in.
     host.style.cssText = "all: initial; position: static;";
-    this.root = host.attachShadow({ mode: "open" });
+    this.root = host.attachShadow({ mode: "closed" });
     (document.body ?? document.documentElement).appendChild(host);
     this.restored = this.build();
   }
@@ -150,7 +153,7 @@ export class PanelHost {
       this.pending.set(message.type, message);
       return;
     }
-    this.frame.contentWindow?.postMessage(message, "*");
+    this.frame.contentWindow?.postMessage(message, this.frameOrigin);
   }
 
   destroy(): void {
@@ -161,6 +164,7 @@ export class PanelHost {
 
   private onMessage = (event: MessageEvent): void => {
     if (event.source !== this.frame.contentWindow) return;
+    if (event.origin !== this.frameOrigin) return;
     const data: unknown = event.data;
     if (!isPanelMessage(data)) return;
 
