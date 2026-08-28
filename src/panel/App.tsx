@@ -4,7 +4,7 @@ import type { JSX } from "preact";
 import { buildPanes } from "../core/build.js";
 import { emitDot } from "../core/dot/emit.js";
 import { parseSignature } from "../core/signature.js";
-import { KIND_LABELS, modelSize, visibleNodeCount, type StructureKind } from "../core/types.js";
+import { KIND_LABELS, visibleNodeCount, type StructureKind } from "../core/types.js";
 import { DEFAULT_SETTINGS, type Settings } from "../settings/schema.js";
 import {
   loadOverrides,
@@ -110,7 +110,7 @@ export function App(): JSX.Element {
   const paletteName = settings.mode === "auto" ? (pageIsDark ? "dark" : "light") : settings.mode;
   const palette = settings[paletteName];
 
-  const paneSize = pane ? modelSize(pane.model) : 0;
+  const paneSize = pane ? visibleNodeCount(pane.model) : 0;
   const confirmKey = `${snapshot?.input ?? ""}:${overrideKind}`;
   const tooLarge = !!pane && paneSize > settings.nodeLimit && confirmedFor !== confirmKey;
 
