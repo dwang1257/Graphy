@@ -22,7 +22,7 @@
   "content_scripts": [
     {
       "js": [
-        "assets/index.ts-loader-D6Lav5L6.js"
+        "assets/index.ts-loader-DfK_VivV.js"
       ],
       "matches": [
         "https://leetcode.com/*",
@@ -41,8 +41,8 @@
         "injected.js",
         "src/panel/index.html",
         "assets/*",
-        "assets/protocol-B5ROsokH.js",
-        "assets/index.ts-d7K9qfyt.js"
+        "assets/protocol-DD8fg8kY.js",
+        "assets/index.ts-0UTjp6ZO.js"
       ],
       "use_dynamic_url": false
     }

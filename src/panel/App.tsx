@@ -4,7 +4,7 @@ import type { JSX } from "preact";
 import { buildPanes } from "../core/build.js";
 import { emitDot } from "../core/dot/emit.js";
 import { parseSignature } from "../core/signature.js";
-import { KIND_LABELS, modelSize, visibleNodeCount, type StructureKind } from "../core/types.js";
+import { KIND_LABELS, visibleNodeCount, type StructureKind } from "../core/types.js";
 import { DEFAULT_SETTINGS, type Settings } from "../settings/schema.js";
 import {
   loadOverrides,
@@ -22,9 +22,13 @@ import { SettingsDrawer } from "./SettingsDrawer.js";
 import { TitleBar } from "./TitleBar.js";
 import { GripIcon } from "./icons.js";
 import { preload, renderDot } from "./graphviz.js";
+import { detectParentOrigin, isAllowedParentOrigin } from "./parentOrigin.js";
+
+const PARENT_ORIGIN = detectParentOrigin();
 
 function toHost(message: FromPanel): void {
-  parent.postMessage(message, "*");
+  if (!PARENT_ORIGIN) return;
+  parent.postMessage(message, PARENT_ORIGIN);
 }
 
 const DIRECTIONAL: StructureKind[] = ["graph", "adjacency"];
@@ -59,6 +63,7 @@ export function App(): JSX.Element {
     });
 
     const onMessage = (event: MessageEvent): void => {
+      if (event.source !== parent || !isAllowedParentOrigin(event.origin)) return;
       const data: unknown = event.data;
       if (!isToPanel(data)) return;
       if (data.type === "theme") {
@@ -110,7 +115,7 @@ export function App(): JSX.Element {
   const paletteName = settings.mode === "auto" ? (pageIsDark ? "dark" : "light") : settings.mode;
   const palette = settings[paletteName];
 
-  const paneSize = pane ? modelSize(pane.model) : 0;
+  const paneSize = pane ? visibleNodeCount(pane.model) : 0;
   const confirmKey = `${snapshot?.input ?? ""}:${overrideKind}`;
   const tooLarge = !!pane && paneSize > settings.nodeLimit && confirmedFor !== confirmKey;
 
