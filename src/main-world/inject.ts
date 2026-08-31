@@ -15,8 +15,12 @@ interface CMNode extends HTMLElement {
 
 const CODE_HINTS = /class\s+Solution|def\s+\w+\s*\(|func\s+\w+|impl\s+Solution|var\s+\w+\s*=\s*function|public\s+class|^\s*(?:int|char|void|double|bool|struct)\b[^=\n]*\(/m;
 
+/** Temporary: POST the aggregate custom-testcase buffer to a local terminal logger. */
+const DEBUG_BUFFER_URL = "http://127.0.0.1:7921/graphy-buffer";
+
 let last = "";
 let lastCases: string[] = [];
+let lastLoggedBuffer = "";
 let timer: number | undefined;
 
 function docOf(content: CMNode): string | null {
@@ -38,7 +42,7 @@ function editorTexts(): string[] {
  * Reads the full custom-testcase buffer (every Case N), then splits it into
  * ordered cases for Graphy-owned tabs. Does not follow LeetCode's selected tab.
  */
-function captureCases(): { code: string } & CaseCapture {
+function captureCases(): { code: string; buffer: string; caseTags: number; params: number } & CaseCapture {
   const found = editorTexts();
   // Only trust an editor as solution code when it looks like source. LeetCode
   // often exposes only the testcase aggregate as `.cm-content`; guessing the
@@ -58,7 +62,21 @@ function captureCases(): { code: string } & CaseCapture {
   const buffer = inputs.join("\n").trim();
   const caseTags = document.querySelectorAll('[data-e2e-locator="console-testcase-tag"]').length;
   const params = document.querySelectorAll('[data-e2e-locator="console-testcase-input"]').length;
-  return { code, ...groupTestCases(buffer, caseTags, params) };
+  return { code, buffer, caseTags, params, ...groupTestCases(buffer, caseTags, params) };
+}
+
+/** Prints the whole custom-test collection in the local debug terminal (deduped). */
+function debugLogBuffer(buffer: string, caseTags: number, params: number): void {
+  if (buffer === lastLoggedBuffer) return;
+  lastLoggedBuffer = buffer;
+  void fetch(DEBUG_BUFFER_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ buffer, caseTags, params, at: Date.now() }),
+    mode: "cors",
+  }).catch(() => {
+    /* Logger may be down; never break capture. */
+  });
 }
 
 function slugOf(): string {
@@ -87,6 +105,7 @@ function publish(source: Snapshot["source"], override?: Partial<Snapshot>): void
   const fromDom = captureCases();
   let cases = fromDom.cases;
   let captureError = fromDom.captureError;
+  debugLogBuffer(fromDom.buffer, fromDom.caseTags, fromDom.params);
 
   if (source === "network") {
     const runCases = override?.cases;
