@@ -32,16 +32,17 @@ afterEach(() => {
 });
 
 function installPage(options: {
-  code: string;
+  code?: string;
   buffer: string;
   caseTags?: number;
   paramFields?: number;
   textareas?: string[];
-}): { snapshots: Array<{ payload: { cases: string[]; captureError?: string; source: string } }>; tick: () => void } {
+}): { snapshots: Array<{ payload: { cases: string[]; captureError?: string; source: string } }> } {
   const snapshots: Array<{ payload: { cases: string[]; captureError?: string; source: string } }> = [];
-  let intervalCallback: (() => void) | undefined;
-  const code = editor(options.code);
-  const buffer = editor(options.buffer);
+  const cmEditors = [
+    ...(options.code !== undefined ? [editor(options.code)] : []),
+    editor(options.buffer),
+  ];
   const caseTags = Array.from({ length: options.caseTags ?? 0 }, (_, i) => ({
     textContent: `Case ${i + 1}`,
   }));
@@ -50,7 +51,7 @@ function installPage(options: {
 
   const fakeDocument = {
     querySelectorAll: (selector: string) => {
-      if (selector === ".cm-content") return [code, buffer];
+      if (selector === ".cm-content") return cmEditors;
       if (selector === '[data-e2e-locator="console-testcase-tag"]') return caseTags;
       if (selector === '[data-e2e-locator="console-testcase-input"]') return paramFields;
       if (selector.includes("textarea")) return textareas;
@@ -65,10 +66,7 @@ function installPage(options: {
     postMessage: (message: { payload: { cases: string[]; captureError?: string; source: string } }) => {
       snapshots.push(message);
     },
-    setInterval: (callback: () => void) => {
-      intervalCallback = callback;
-      return 0;
-    },
+    setInterval: () => 0,
     setTimeout: () => 0,
     clearTimeout: () => undefined,
   };
@@ -86,13 +84,7 @@ function installPage(options: {
   vi.stubGlobal("localStorage", { getItem: () => JSON.stringify("cpp") });
   vi.stubGlobal("XMLHttpRequest", FakeXhr);
 
-  return {
-    snapshots,
-    tick: () => {
-      expect(intervalCallback).toBeTypeOf("function");
-      intervalCallback?.();
-    },
-  };
+  return { snapshots };
 }
 
 test("publishes every case from a one-parameter aggregate buffer", async () => {
@@ -154,6 +146,22 @@ test("treats the buffer as a single case when LeetCode exposes no case tabs", as
   await import("./inject.js");
 
   expect(snapshots.at(-1)?.payload.cases).toEqual(["[1,2,3]\n2"]);
+});
+
+test("uses the only CodeMirror buffer as testcases when the solution editor is not CM", async () => {
+  const { snapshots } = installPage({
+    buffer: "[4,2,7,1,3,6,9]\n[2,1,3]\n[]",
+    caseTags: 3,
+    paramFields: 1,
+  });
+
+  await import("./inject.js");
+
+  expect(snapshots.at(-1)?.payload.cases).toEqual([
+    "[4,2,7,1,3,6,9]",
+    "[2,1,3]",
+    "[]",
+  ]);
 });
 
 test("keeps a multi-case collection when a Run only carries one case", async () => {

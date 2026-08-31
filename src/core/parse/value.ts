@@ -18,11 +18,16 @@ function lenient(raw: string): LCValue {
   }
 }
 
-/** Splits a custom-testcase blob into one parsed value per line. */
-export function parseInput(input: string): LCValue[] {
+/** Normalizes newlines and drops trailing blank lines. */
+export function splitInputLines(input: string): string[] {
   const lines = input.replace(/\r\n?/g, "\n").split("\n");
   while (lines.length > 0 && lines[lines.length - 1]!.trim() === "") lines.pop();
-  return lines.map((line) => lenient(line.trim()));
+  return lines;
+}
+
+/** Splits a custom-testcase blob into one parsed value per line. */
+export function parseInput(input: string): LCValue[] {
+  return splitInputLines(input).map((line) => lenient(line.trim()));
 }
 
 export function isArray(v: LCValue): v is LCValue[] {

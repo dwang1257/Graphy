@@ -1,3 +1,5 @@
+import { splitInputLines } from "./parse/value.js";
+
 /** Splits LeetCode's concatenated custom-testcase buffer into ordered cases. */
 
 export interface CaseCapture {
@@ -14,8 +16,7 @@ export function groupTestCases(
   caseCount: number,
   paramCount: number,
 ): CaseCapture {
-  const lines = buffer.replace(/\r\n?/g, "\n").split("\n");
-  while (lines.length > 0 && lines[lines.length - 1]!.trim() === "") lines.pop();
+  const lines = splitInputLines(buffer);
 
   if (caseCount <= 0) {
     const text = lines.join("\n").trim();

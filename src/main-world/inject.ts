@@ -1,4 +1,4 @@
-import { groupTestCases } from "../core/cases.js";
+import { groupTestCases, type CaseCapture } from "../core/cases.js";
 import { PAGE_CHANNEL, type Snapshot } from "../shared/protocol.js";
 
 /**
@@ -13,11 +13,6 @@ interface CMNode extends HTMLElement {
   cmView?: { rootView?: { view?: { state?: { doc?: { toString(): string } } } } };
 }
 
-interface Editor {
-  el: CMNode;
-  text: string;
-}
-
 const CODE_HINTS = /class\s+Solution|def\s+\w+\s*\(|func\s+\w+|impl\s+Solution|var\s+\w+\s*=\s*function|public\s+class|^\s*(?:int|char|void|double|bool|struct)\b[^=\n]*\(/m;
 
 let last = "";
@@ -30,41 +25,28 @@ function docOf(content: CMNode): string | null {
   return typeof text === "string" ? text : null;
 }
 
-function editors(): Editor[] {
-  const out: Editor[] = [];
+function editorTexts(): string[] {
+  const out: string[] = [];
   for (const el of document.querySelectorAll<CMNode>(".cm-content")) {
     const text = docOf(el);
-    if (text !== null) out.push({ el, text });
+    if (text !== null) out.push(text);
   }
   return out;
-}
-
-function caseCount(): number {
-  return document.querySelectorAll('[data-e2e-locator="console-testcase-tag"]').length;
-}
-
-function paramCount(): number {
-  return document.querySelectorAll('[data-e2e-locator="console-testcase-input"]').length;
 }
 
 /**
  * Reads the full custom-testcase buffer (every Case N), then splits it into
  * ordered cases for Graphy-owned tabs. Does not follow LeetCode's selected tab.
  */
-function captureCases(): { code: string; cases: string[]; captureError?: string } {
-  const found = editors();
-  let codeIndex = found.findIndex((e) => CODE_HINTS.test(e.text));
-  if (codeIndex === -1 && found.length > 0) {
-    // Longest buffer is almost always the solution; a single editor is the
-    // solution with the testcase drawer collapsed.
-    codeIndex = found.reduce((best, e, i) => (e.text.length > found[best]!.text.length ? i : best), 0);
-  }
+function captureCases(): { code: string } & CaseCapture {
+  const found = editorTexts();
+  // Only trust an editor as solution code when it looks like source. LeetCode
+  // often exposes only the testcase aggregate as `.cm-content`; guessing the
+  // longest buffer would swallow every Case N and leave Graphy empty.
+  const codeIndex = found.findIndex((text) => CODE_HINTS.test(text));
+  const code = codeIndex >= 0 ? found[codeIndex]! : "";
 
-  const code = codeIndex >= 0 ? found[codeIndex]!.text : "";
-  const inputs: string[] = [];
-  for (const [i, entry] of found.entries()) {
-    if (i !== codeIndex) inputs.push(entry.text);
-  }
+  const inputs = found.filter((_, i) => i !== codeIndex);
 
   // Prefer CodeMirror; fall back to mirrored textareas when CM is absent.
   if (inputs.length === 0) {
@@ -74,8 +56,9 @@ function captureCases(): { code: string; cases: string[]; captureError?: string 
   }
 
   const buffer = inputs.join("\n").trim();
-  const grouped = groupTestCases(buffer, caseCount(), paramCount());
-  return { code, cases: grouped.cases, captureError: grouped.captureError };
+  const caseTags = document.querySelectorAll('[data-e2e-locator="console-testcase-tag"]').length;
+  const params = document.querySelectorAll('[data-e2e-locator="console-testcase-input"]').length;
+  return { code, ...groupTestCases(buffer, caseTags, params) };
 }
 
 function slugOf(): string {
@@ -104,12 +87,11 @@ function publish(source: Snapshot["source"], override?: Partial<Snapshot>): void
   const fromDom = captureCases();
   let cases = fromDom.cases;
   let captureError = fromDom.captureError;
-  let code = fromDom.code;
 
   if (source === "network") {
     const runCases = override?.cases;
     // A Run only carries the executed case. Keep a multi-case DOM collection.
-    if (!(cases.length > 1 && !captureError)) {
+    if (cases.length <= 1 || captureError) {
       if (runCases && runCases.length > 0) {
         cases = runCases;
         captureError = undefined;
@@ -122,32 +104,19 @@ function publish(source: Snapshot["source"], override?: Partial<Snapshot>): void
 
   const snapshot: Snapshot = {
     cases,
-    code,
-    lang: langOf(),
+    code: override?.code ?? fromDom.code,
+    lang: override?.lang ?? langOf(),
     slug,
     source,
     at: Date.now(),
-    ...defined({
-      code: override?.code,
-      lang: override?.lang,
-      captureError,
-    }),
   };
-
-  // Optional field: omit when capture succeeded.
-  if (snapshot.captureError === undefined) delete snapshot.captureError;
+  if (captureError) snapshot.captureError = captureError;
 
   const key = `${snapshot.cases.join("\u001f")}\u001e${snapshot.code}\u001e${snapshot.lang}\u001e${snapshot.captureError ?? ""}`;
   if (source === "editor" && key === last) return;
   last = key;
-  lastCases = snapshot.cases;
+  if (snapshot.cases.length > 1) lastCases = snapshot.cases;
   post(snapshot);
-}
-
-/** Spreading a partial with explicit `undefined` would blank good values. */
-function defined(override?: Partial<Snapshot>): Partial<Snapshot> {
-  if (!override) return {};
-  return Object.fromEntries(Object.entries(override).filter(([, v]) => v !== undefined));
 }
 
 function schedule(): void {

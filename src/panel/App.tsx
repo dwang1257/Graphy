@@ -97,13 +97,10 @@ export function App(): JSX.Element {
   const caseInput = cases[caseIndex] ?? "";
 
   useEffect(() => {
-    if (slug !== lastSlug.current) {
-      lastSlug.current = slug;
-      setActiveCase(0);
-      return;
-    }
-    setActiveCase((prev) => clampCaseIndex(prev, cases.length));
-  }, [slug, cases.length]);
+    if (slug === lastSlug.current) return;
+    lastSlug.current = slug;
+    setActiveCase(0);
+  }, [slug]);
 
   const override = overrides[slug] ?? {};
   const overrideKind = (override.kind as StructureKind | undefined) ?? "auto";
