@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { JSX } from "preact";
 
+import { clampCaseIndex } from "../core/cases.js";
 import { buildPanes } from "../core/build.js";
 import { emitDot } from "../core/dot/emit.js";
 import { parseSignature } from "../core/signature.js";
@@ -44,7 +45,7 @@ export function App(): JSX.Element {
   const [pageIsDark, setPageIsDark] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  const [active, setActive] = useState(0);
+  const [activeCase, setActiveCase] = useState(0);
   const [svg, setSvg] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [confirmedFor, setConfirmedFor] = useState<string | null>(null);
@@ -56,6 +57,7 @@ export function App(): JSX.Element {
   const hasRendered = useRef(false);
   const lastSaved = useRef("");
   const saveTimer = useRef<number | undefined>(undefined);
+  const lastSlug = useRef("");
 
   useEffect(() => {
     preload();
@@ -90,6 +92,19 @@ export function App(): JSX.Element {
   }, []);
 
   const slug = snapshot?.slug ?? "";
+  const cases = snapshot?.cases ?? [];
+  const caseIndex = clampCaseIndex(activeCase, cases.length);
+  const caseInput = cases[caseIndex] ?? "";
+
+  useEffect(() => {
+    if (slug !== lastSlug.current) {
+      lastSlug.current = slug;
+      setActiveCase(0);
+      return;
+    }
+    setActiveCase((prev) => clampCaseIndex(prev, cases.length));
+  }, [slug, cases.length]);
+
   const override = overrides[slug] ?? {};
   const overrideKind = (override.kind as StructureKind | undefined) ?? "auto";
 
@@ -100,14 +115,14 @@ export function App(): JSX.Element {
 
   const result = useMemo(
     () =>
-      buildPanes(snapshot?.input ?? "", signature, {
+      buildPanes(caseInput, signature, {
         override: overrideKind === "auto" ? undefined : overrideKind,
         directedOverride: override.directed,
         showTerminal: settings.layout.showListTerminal,
         showIndices: settings.layout.showMatrixIndices,
       }),
     [
-      snapshot?.input,
+      caseInput,
       signature,
       overrideKind,
       override.directed,
@@ -116,12 +131,13 @@ export function App(): JSX.Element {
     ],
   );
 
-  const pane = result.panes[Math.min(active, Math.max(0, result.panes.length - 1))];
+  // One graph per Case: first visualizable parameter of the selected case.
+  const pane = result.panes[0];
   const paletteName = resolvedPalette(settings.mode, pageIsDark);
   const palette = settings[paletteName];
 
   const paneSize = pane ? visibleNodeCount(pane.model) : 0;
-  const confirmKey = `${snapshot?.input ?? ""}:${overrideKind}`;
+  const confirmKey = `${slug}:${caseIndex}:${caseInput}:${overrideKind}`;
   const tooLarge = !!pane && paneSize > settings.nodeLimit && confirmedFor !== confirmKey;
 
   const dot = useMemo(() => {
@@ -174,7 +190,6 @@ export function App(): JSX.Element {
   const setKind = useCallback(
     (kind: StructureKind | "auto") => {
       applyOverride({ kind: kind === "auto" ? undefined : kind });
-      setActive(0);
     },
     [applyOverride],
   );
@@ -223,27 +238,32 @@ export function App(): JSX.Element {
 
       {!collapsed && (
         <>
-          {result.panes.length > 1 && (
-            <div class="tabs" role="tablist">
-              {result.panes.map((p, i) => (
+          {cases.length > 1 && (
+            <div class="tabs" role="tablist" aria-label="Test cases">
+              {cases.map((_, i) => (
                 <button
                   class="tab"
                   role="tab"
-                  key={p.id}
-                  aria-selected={i === active}
-                  onClick={() => setActive(i)}
+                  key={i}
+                  aria-selected={i === caseIndex}
+                  onClick={() => setActiveCase(i)}
                 >
-                  {p.title}
+                  {`Case ${i + 1}`}
                 </button>
               ))}
             </div>
           )}
 
           <div class="stage-wrap">
-            {svg ? <GraphView svg={svg} fitKey={`${pane?.id ?? ""}:${fitCount}`} /> : <div class="stage" />}
+            {svg ? (
+              <GraphView svg={svg} fitKey={`${slug}:${caseIndex}:${pane?.id ?? ""}:${fitCount}`} />
+            ) : (
+              <div class="stage" />
+            )}
             {!svg && (
               <Placeholder
                 snapshot={snapshot}
+                caseInput={caseInput}
                 error={error}
                 tooLarge={tooLarge}
                 nodeCount={paneSize}
@@ -282,6 +302,7 @@ function countLabel(model: GraphModel | undefined): string {
 
 interface PlaceholderProps {
   snapshot: Snapshot | null;
+  caseInput: string;
   error: string | null;
   tooLarge: boolean;
   nodeCount: number;
@@ -298,6 +319,14 @@ function Placeholder(props: PlaceholderProps): JSX.Element {
       </div>
     );
   }
+  if (props.snapshot?.captureError) {
+    return (
+      <div class="placeholder error">
+        <strong>Could not separate test cases</strong>
+        <span>{props.snapshot.captureError}</span>
+      </div>
+    );
+  }
   if (props.tooLarge) {
     return (
       <div class="placeholder">
@@ -307,7 +336,7 @@ function Placeholder(props: PlaceholderProps): JSX.Element {
       </div>
     );
   }
-  if (!props.snapshot || !props.snapshot.input.trim()) {
+  if (!props.snapshot || !props.caseInput.trim()) {
     return (
       <div class="placeholder">
         <strong>No test case yet</strong>

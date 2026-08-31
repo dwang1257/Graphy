@@ -12,11 +12,7 @@ interface FakeEditor extends HTMLElement {
   };
 }
 
-interface Visibility {
-  active: boolean;
-}
-
-function editor(text: string, visibility: Visibility): FakeEditor {
+function editor(text: string): FakeEditor {
   return {
     cmView: {
       rootView: {
@@ -27,10 +23,6 @@ function editor(text: string, visibility: Visibility): FakeEditor {
         },
       },
     },
-    closest: (selector: string) =>
-      selector.includes("inactive") && !visibility.active ? ({} as Element) : null,
-    getClientRects: () =>
-      visibility.active ? ({ length: 1 } as DOMRectList) : ({ length: 0 } as DOMRectList),
   } as FakeEditor;
 }
 
@@ -39,33 +31,29 @@ afterEach(() => {
   vi.resetModules();
 });
 
-test("publishes only the active case and follows a case switch", async () => {
-  const alwaysVisible = { active: true };
-  const caseOne = { active: true };
-  const caseTwo = { active: false };
-  const code = editor(
-    "class Solution { public: int solve(vector<int>& nums, int target) { return 0; } };",
-    alwaysVisible,
-  );
-  const caseOneArgs = [
-    editor("[1,2,3]", caseOne),
-    editor("2", caseOne),
-  ];
-  const caseTwoArgs = [
-    editor("[9,8,7]", caseTwo),
-    editor("8", caseTwo),
-  ];
-  const mirroredTextareas = [
-    Object.assign(editor("[1,2,3]", caseOne), { value: "[1,2,3]" }),
-    Object.assign(editor("[9,8,7]", caseTwo), { value: "[9,8,7]" }),
-  ];
-  const snapshots: Array<{ payload: { input: string } }> = [];
+function installPage(options: {
+  code: string;
+  buffer: string;
+  caseTags?: number;
+  paramFields?: number;
+  textareas?: string[];
+}): { snapshots: Array<{ payload: { cases: string[]; captureError?: string; source: string } }>; tick: () => void } {
+  const snapshots: Array<{ payload: { cases: string[]; captureError?: string; source: string } }> = [];
   let intervalCallback: (() => void) | undefined;
+  const code = editor(options.code);
+  const buffer = editor(options.buffer);
+  const caseTags = Array.from({ length: options.caseTags ?? 0 }, (_, i) => ({
+    textContent: `Case ${i + 1}`,
+  }));
+  const paramFields = Array.from({ length: options.paramFields ?? 0 }, () => ({}));
+  const textareas = (options.textareas ?? []).map((value) => ({ value }));
 
   const fakeDocument = {
     querySelectorAll: (selector: string) => {
-      if (selector === ".cm-content") return [code, ...caseOneArgs, ...caseTwoArgs];
-      if (selector.includes("textarea")) return mirroredTextareas;
+      if (selector === ".cm-content") return [code, buffer];
+      if (selector === '[data-e2e-locator="console-testcase-tag"]') return caseTags;
+      if (selector === '[data-e2e-locator="console-testcase-input"]') return paramFields;
+      if (selector.includes("textarea")) return textareas;
       return [];
     },
     querySelector: () => null,
@@ -74,7 +62,9 @@ test("publishes only the active case and follows a case switch", async () => {
   };
   const fakeWindow = {
     fetch: () => Promise.resolve(new Response()),
-    postMessage: (message: { payload: { input: string } }) => snapshots.push(message),
+    postMessage: (message: { payload: { cases: string[]; captureError?: string; source: string } }) => {
+      snapshots.push(message);
+    },
     setInterval: (callback: () => void) => {
       intervalCallback = callback;
       return 0;
@@ -96,14 +86,101 @@ test("publishes only the active case and follows a case switch", async () => {
   vi.stubGlobal("localStorage", { getItem: () => JSON.stringify("cpp") });
   vi.stubGlobal("XMLHttpRequest", FakeXhr);
 
+  return {
+    snapshots,
+    tick: () => {
+      expect(intervalCallback).toBeTypeOf("function");
+      intervalCallback?.();
+    },
+  };
+}
+
+test("publishes every case from a one-parameter aggregate buffer", async () => {
+  const { snapshots } = installPage({
+    code: "class Solution { public: TreeNode* invertTree(TreeNode* root) { return root; } };",
+    buffer: "[4,2,7,1,3,6,9]\n[2,1,3]\n[]",
+    caseTags: 3,
+    paramFields: 1,
+  });
+
   await import("./inject.js");
 
-  expect(snapshots.at(-1)?.payload.input).toBe("[1,2,3]\n2");
+  expect(snapshots.at(-1)?.payload.cases).toEqual([
+    "[4,2,7,1,3,6,9]",
+    "[2,1,3]",
+    "[]",
+  ]);
+});
 
-  caseOne.active = false;
-  caseTwo.active = true;
-  expect(intervalCallback).toBeTypeOf("function");
-  intervalCallback?.();
+test("publishes every case from a multi-parameter aggregate buffer", async () => {
+  const { snapshots } = installPage({
+    code: "class Solution { public: vector<int> twoSum(vector<int>& nums, int target) { return {}; } };",
+    buffer: "[2,7,11,15]\n9\n[3,2,4]\n6\n[3,3]\n6",
+    caseTags: 3,
+    paramFields: 2,
+  });
 
-  expect(snapshots.at(-1)?.payload.input).toBe("[9,8,7]\n8");
+  await import("./inject.js");
+
+  expect(snapshots.at(-1)?.payload.cases).toEqual([
+    "[2,7,11,15]\n9",
+    "[3,2,4]\n6",
+    "[3,3]\n6",
+  ]);
+});
+
+test("reports a capture error when case and param counts disagree with the buffer", async () => {
+  const { snapshots } = installPage({
+    code: "class Solution { public: int solve(vector<int>& nums) { return 0; } };",
+    buffer: "[1]\n[2]\n[3]",
+    caseTags: 2,
+    paramFields: 2,
+  });
+
+  await import("./inject.js");
+
+  expect(snapshots.at(-1)?.payload.cases).toEqual([]);
+  expect(snapshots.at(-1)?.payload.captureError).toMatch(/Could not separate test cases/);
+});
+
+test("treats the buffer as a single case when LeetCode exposes no case tabs", async () => {
+  const { snapshots } = installPage({
+    code: "class Solution { public: int solve(vector<int>& nums, int target) { return 0; } };",
+    buffer: "[1,2,3]\n2",
+    caseTags: 0,
+    paramFields: 0,
+  });
+
+  await import("./inject.js");
+
+  expect(snapshots.at(-1)?.payload.cases).toEqual(["[1,2,3]\n2"]);
+});
+
+test("keeps a multi-case collection when a Run only carries one case", async () => {
+  const { snapshots } = installPage({
+    code: "class Solution { public: TreeNode* invertTree(TreeNode* root) { return root; } };",
+    buffer: "[4,2,7,1,3,6,9]\n[2,1,3]\n[]",
+    caseTags: 3,
+    paramFields: 1,
+  });
+
+  await import("./inject.js");
+  expect(snapshots.at(-1)?.payload.cases).toHaveLength(3);
+
+  const body = JSON.stringify({
+    data_input: "[2,1,3]",
+    typed_code: "class Solution { public: TreeNode* invertTree(TreeNode* root) { return root; } };",
+    lang: "cpp",
+  });
+  await (window.fetch as typeof fetch)("https://leetcode.com/problems/example/interpret_solution/", {
+    method: "POST",
+    body,
+  });
+
+  expect(snapshots.at(-1)?.payload.source).toBe("network");
+  expect(snapshots.at(-1)?.payload.cases).toEqual([
+    "[4,2,7,1,3,6,9]",
+    "[2,1,3]",
+    "[]",
+  ]);
 });

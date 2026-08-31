@@ -1,11 +1,12 @@
+import { groupTestCases } from "../core/cases.js";
 import { PAGE_CHANNEL, type Snapshot } from "../shared/protocol.js";
 
 /**
  * Runs in the page world. CodeMirror 6 virtualizes its lines, so reading
  * `textContent` off the DOM silently truncates long test cases. Instead we reach
  * the EditorView through the `cmView` property CodeMirror hangs on its own DOM
- * nodes and read the full document. The Run request is intercepted as a second,
- * authoritative source.
+ * nodes and read the full document. The Run request is a one-case fallback when
+ * the full Case collection is unavailable.
  */
 
 interface CMNode extends HTMLElement {
@@ -20,6 +21,7 @@ interface Editor {
 const CODE_HINTS = /class\s+Solution|def\s+\w+\s*\(|func\s+\w+|impl\s+Solution|var\s+\w+\s*=\s*function|public\s+class|^\s*(?:int|char|void|double|bool|struct)\b[^=\n]*\(/m;
 
 let last = "";
+let lastCases: string[] = [];
 let timer: number | undefined;
 
 function docOf(content: CMNode): string | null {
@@ -37,14 +39,19 @@ function editors(): Editor[] {
   return out;
 }
 
-/** Inactive LeetCode Case panels remain mounted but are hidden. */
-function isActiveField(el: HTMLElement): boolean {
-  if (el.closest("[hidden], [aria-hidden='true'], [data-state='inactive']")) return false;
-  return el.getClientRects().length > 0;
+function caseCount(): number {
+  return document.querySelectorAll('[data-e2e-locator="console-testcase-tag"]').length;
 }
 
-/** The buffer that looks like source code; only active test fields become input. */
-function splitBuffers(): { code: string; input: string } {
+function paramCount(): number {
+  return document.querySelectorAll('[data-e2e-locator="console-testcase-input"]').length;
+}
+
+/**
+ * Reads the full custom-testcase buffer (every Case N), then splits it into
+ * ordered cases for Graphy-owned tabs. Does not follow LeetCode's selected tab.
+ */
+function captureCases(): { code: string; cases: string[]; captureError?: string } {
   const found = editors();
   let codeIndex = found.findIndex((e) => CODE_HINTS.test(e.text));
   if (codeIndex === -1 && found.length > 0) {
@@ -56,17 +63,19 @@ function splitBuffers(): { code: string; input: string } {
   const code = codeIndex >= 0 ? found[codeIndex]!.text : "";
   const inputs: string[] = [];
   for (const [i, entry] of found.entries()) {
-    if (i !== codeIndex && isActiveField(entry.el)) inputs.push(entry.text);
+    if (i !== codeIndex) inputs.push(entry.text);
   }
 
-  // LeetCode can mirror a field as CodeMirror and a textarea; use one representation.
+  // Prefer CodeMirror; fall back to mirrored textareas when CM is absent.
   if (inputs.length === 0) {
     for (const area of document.querySelectorAll<HTMLTextAreaElement>("textarea[data-cy], .lc-textarea textarea")) {
-      if (area.value && isActiveField(area)) inputs.push(area.value);
+      if (area.value) inputs.push(area.value);
     }
   }
 
-  return { code, input: inputs.join("\n").trim() };
+  const buffer = inputs.join("\n").trim();
+  const grouped = groupTestCases(buffer, caseCount(), paramCount());
+  return { code, cases: grouped.cases, captureError: grouped.captureError };
 }
 
 function slugOf(): string {
@@ -91,19 +100,47 @@ function post(snapshot: Snapshot): void {
 function publish(source: Snapshot["source"], override?: Partial<Snapshot>): void {
   const slug = slugOf();
   if (!slug) return;
-  const { code, input } = splitBuffers();
+
+  const fromDom = captureCases();
+  let cases = fromDom.cases;
+  let captureError = fromDom.captureError;
+  let code = fromDom.code;
+
+  if (source === "network") {
+    const runCases = override?.cases;
+    // A Run only carries the executed case. Keep a multi-case DOM collection.
+    if (!(cases.length > 1 && !captureError)) {
+      if (runCases && runCases.length > 0) {
+        cases = runCases;
+        captureError = undefined;
+      } else if (lastCases.length > 1) {
+        cases = lastCases;
+        captureError = undefined;
+      }
+    }
+  }
+
   const snapshot: Snapshot = {
-    input,
+    cases,
     code,
     lang: langOf(),
     slug,
     source,
     at: Date.now(),
-    ...defined(override),
+    ...defined({
+      code: override?.code,
+      lang: override?.lang,
+      captureError,
+    }),
   };
-  const key = `${snapshot.input}\u001e${snapshot.code}\u001e${snapshot.lang}`;
+
+  // Optional field: omit when capture succeeded.
+  if (snapshot.captureError === undefined) delete snapshot.captureError;
+
+  const key = `${snapshot.cases.join("\u001f")}\u001e${snapshot.code}\u001e${snapshot.lang}\u001e${snapshot.captureError ?? ""}`;
   if (source === "editor" && key === last) return;
   last = key;
+  lastCases = snapshot.cases;
   post(snapshot);
 }
 
@@ -125,7 +162,7 @@ function fromRunBody(body: unknown): Partial<Snapshot> | null {
     const parsed = JSON.parse(body) as Record<string, unknown>;
     if (typeof parsed.data_input !== "string") return null;
     return {
-      input: parsed.data_input,
+      cases: [parsed.data_input],
       code: typeof parsed.typed_code === "string" ? parsed.typed_code : undefined,
       lang: typeof parsed.lang === "string" ? parsed.lang : undefined,
     };

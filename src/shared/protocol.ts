@@ -5,16 +5,18 @@ export const PANEL_CHANNEL = "graphy:panel";
 
 /** Captured state of the LeetCode editor at one moment. */
 export interface Snapshot {
-  /** Raw custom-testcase text, one parameter per line. */
-  input: string;
+  /** Ordered custom test cases; each entry is one Case N, parameters newline-separated. */
+  cases: string[];
   /** Full solution buffer, used for signature detection. */
   code: string;
   /** LeetCode language slug, e.g. "cpp". */
   lang: string;
   slug: string;
-  /** "network" snapshots come from the Run request and are authoritative. */
+  /** "network" snapshots come from the Run request and are authoritative for a single run. */
   source: "editor" | "network";
   at: number;
+  /** Set when the full buffer could not be split into Case tabs. */
+  captureError?: string;
 }
 
 export type PageMessage = { channel: typeof PAGE_CHANNEL; type: "snapshot"; payload: Snapshot };
@@ -35,18 +37,26 @@ function onChannel(data: unknown, channel: string): data is { channel: string; t
   return typeof data === "object" && data !== null && (data as { channel?: unknown }).channel === channel;
 }
 
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((entry) => typeof entry === "string");
+}
+
 function isSnapshot(payload: unknown): payload is Snapshot {
   if (typeof payload !== "object" || payload === null) return false;
   const p = payload as Record<string, unknown>;
-  return (
-    typeof p.input === "string" &&
-    typeof p.code === "string" &&
-    typeof p.lang === "string" &&
-    typeof p.slug === "string" &&
-    (p.source === "editor" || p.source === "network") &&
-    typeof p.at === "number" &&
-    Number.isFinite(p.at)
-  );
+  if (
+    !isStringArray(p.cases) ||
+    typeof p.code !== "string" ||
+    typeof p.lang !== "string" ||
+    typeof p.slug !== "string" ||
+    (p.source !== "editor" && p.source !== "network") ||
+    typeof p.at !== "number" ||
+    !Number.isFinite(p.at)
+  ) {
+    return false;
+  }
+  if (p.captureError !== undefined && typeof p.captureError !== "string") return false;
+  return true;
 }
 
 /** Any page script can post on this channel, so payloads are shape-checked. */

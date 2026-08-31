@@ -10,7 +10,9 @@ export default defineManifest({
   description: "Renders LeetCode custom test cases as interactive graphs.",
   permissions: ["storage"],
   action: { default_title: "Toggle Graphy" },
-  background: { service_worker: "src/background/index.ts", type: "module" },
+  // Distinct basename from content/index.ts so CRXJS does not wire the
+  // service worker to the content-script chunk (window is not defined).
+  background: { service_worker: "src/background/service-worker.ts", type: "module" },
   icons: {
     16: "icons/icon16.png",
     32: "icons/icon32.png",
