@@ -16,6 +16,18 @@ export interface BuildOptions {
   showIndices?: boolean;
 }
 
+/** Chooses the one pane shown by the tab-free panel. */
+export function selectPrimaryPane(
+  panes: Pane[],
+  override?: StructureKind,
+): Pane | undefined {
+  if (override) {
+    const matching = panes.find((pane) => pane.model.kind === override);
+    if (matching) return matching;
+  }
+  return panes[0];
+}
+
 /**
  * Maps `data_input` lines onto signature parameters, then renders every
  * visualizable parameter into its own pane. Scalars like `n` and `pos` are not

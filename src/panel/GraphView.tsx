@@ -1,21 +1,14 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { JSX } from "preact";
 import { pointerDragHandler } from "./usePointerDrag.js";
+import { normalizeWheelDelta, zoomAtPoint } from "./zoom.js";
+import type { View } from "./zoom.js";
 
 interface Props {
   svg: string;
   /** Changing this resets the view - a new pane should start fitted. */
   fitKey: string;
 }
-
-interface View {
-  x: number;
-  y: number;
-  scale: number;
-}
-
-const MIN_SCALE = 0.15;
-const MAX_SCALE = 6;
 
 function sanitizeSvg(svg: string): string {
   const document = new DOMParser().parseFromString(svg, "image/svg+xml");
@@ -37,9 +30,30 @@ function sanitizeSvg(svg: string): string {
 export function GraphView({ svg, fitKey }: Props): JSX.Element {
   const stage = useRef<HTMLDivElement>(null);
   const viewport = useRef<HTMLDivElement>(null);
-  const [view, setView] = useState<View>({ x: 0, y: 0, scale: 1 });
+  const view = useRef<View>({ x: 0, y: 0, scale: 1 });
+  const paintFrame = useRef<number | null>(null);
   const [panning, setPanning] = useState(false);
   const sanitizedSvg = useMemo(() => sanitizeSvg(svg), [svg]);
+
+  const paintView = (): void => {
+    const { x, y, scale } = view.current;
+    if (viewport.current) {
+      viewport.current.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
+    }
+  };
+
+  const setView = (next: View, deferPaint = false): void => {
+    view.current = next;
+    if (!deferPaint) {
+      paintView();
+      return;
+    }
+    if (paintFrame.current !== null) return;
+    paintFrame.current = requestAnimationFrame(() => {
+      paintFrame.current = null;
+      paintView();
+    });
+  };
 
   const fit = (): void => {
     const box = stage.current?.getBoundingClientRect();
@@ -66,22 +80,24 @@ export function GraphView({ svg, fitKey }: Props): JSX.Element {
       const box = el.getBoundingClientRect();
       const px = event.clientX - box.left;
       const py = event.clientY - box.top;
-      setView((prev) => {
-        const factor = Math.exp(-event.deltaY * 0.0015);
-        const scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, prev.scale * factor));
-        const ratio = scale / prev.scale;
-        // Keep the point under the cursor fixed while zooming.
-        return { scale, x: px - (px - prev.x) * ratio, y: py - (py - prev.y) * ratio };
-      });
+      const delta = normalizeWheelDelta(event.deltaY, event.deltaMode, box.height);
+      setView(zoomAtPoint(view.current, { x: px, y: py }, delta), true);
     };
     el.addEventListener("wheel", onWheel, { passive: false });
-    return () => el.removeEventListener("wheel", onWheel);
+    return () => {
+      el.removeEventListener("wheel", onWheel);
+      if (paintFrame.current !== null) {
+        cancelAnimationFrame(paintFrame.current);
+        paintFrame.current = null;
+      }
+    };
   }, []);
 
   const onPointerDown = pointerDragHandler<HTMLDivElement>({
     coords: "client",
     onStart: () => setPanning(true),
-    onMove: (dx, dy) => setView((prev) => ({ ...prev, x: prev.x + dx, y: prev.y + dy })),
+    onMove: (dx, dy) =>
+      setView({ ...view.current, x: view.current.x + dx, y: view.current.y + dy }),
     onEnd: () => setPanning(false),
   });
 
@@ -91,7 +107,9 @@ export function GraphView({ svg, fitKey }: Props): JSX.Element {
         <div
           class="viewport"
           ref={viewport}
-          style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }}
+          style={{
+            transform: `translate(${view.current.x}px, ${view.current.y}px) scale(${view.current.scale})`,
+          }}
           dangerouslySetInnerHTML={{ __html: sanitizedSvg }}
         />
       </div>
