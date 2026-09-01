@@ -2,7 +2,7 @@ import { isPanelMessage, type ToPanel } from "../shared/protocol.js";
 import { DEFAULT_PANEL, loadPanelState, savePanelState, type PanelState } from "../settings/storage.js";
 
 const HOST_ID = "graphy-root";
-const COLLAPSED_HEIGHT = 42;
+const COLLAPSED_HEIGHT = 40;
 const MIN_WIDTH = 320;
 const MIN_HEIGHT = 220;
 
@@ -11,11 +11,11 @@ const STYLE = `
 .shell {
   position: fixed;
   z-index: 2147483646;
-  border-radius: 12px;
+  border-radius: 10px;
   overflow: hidden;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.28), 0 0 0 1px rgba(0, 0, 0, 0.08);
-  background: #ffffff;
-  transition: height 120ms ease;
+  box-shadow: 0 0 0 1px oklch(0% 0 0 / 0.08), 0 12px 32px oklch(0% 0 0 / 0.18);
+  background: oklch(99% 0.004 250);
+  transition: height 160ms cubic-bezier(0.16, 1, 0.3, 1);
   display: none;
 }
 .shell[data-open="true"] { display: block; }
@@ -25,18 +25,18 @@ const STYLE = `
   z-index: 2147483645;
   right: 20px;
   bottom: 20px;
-  height: 40px;
-  padding: 0 16px;
+  height: 36px;
+  padding: 0 14px;
   border: 0;
-  border-radius: 20px;
-  background: #4f46e5;
-  color: #ffffff;
-  font: 600 13px/40px ui-sans-serif, system-ui, -apple-system, sans-serif;
-  letter-spacing: 0.01em;
+  border-radius: 8px;
+  background: oklch(62% 0.19 255);
+  color: oklch(99% 0.01 255);
+  font: 600 12px/36px ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  letter-spacing: -0.01em;
   cursor: pointer;
-  box-shadow: 0 6px 20px rgba(79, 70, 229, 0.4);
+  box-shadow: 0 4px 16px oklch(62% 0.19 255 / 0.35);
 }
-.launcher:hover { background: #4338ca; }
+.launcher:hover { background: oklch(56% 0.19 255); }
 .launcher[hidden] { display: none; }
 `;
 
