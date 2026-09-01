@@ -1,171 +1,153 @@
 import type { JSX } from "preact";
 import {
-  DEFAULT_SETTINGS,
-  EDGE_STYLES,
-  NODE_SHAPES,
-  RANK_DIRS,
-  SPLINES,
-  THEME_MODES,
-  type EdgeStyle,
+  DEFAULT_LAYOUT,
+  DARK,
+  LIGHT,
   type NodeShape,
   type Palette,
-  type RankDir,
   type Settings,
-  type Splines,
-  type ThemeMode,
 } from "../settings/schema.js";
+import { CloseIcon } from "./icons.js";
 
 interface Props {
   settings: Settings;
-  /** Which palette the current theme resolves to, so edits land on the right one. */
   activePalette: "light" | "dark";
   onChange: (next: Settings) => void;
+  onClose: () => void;
 }
 
-const RANKDIR_LABELS: Record<RankDir, string> = {
-  TB: "Top to bottom",
-  LR: "Left to right",
-  BT: "Bottom to top",
-  RL: "Right to left",
-};
-
-const COLOR_FIELDS: Array<[keyof Palette, string]> = [
-  ["background", "Canvas"],
-  ["nodeFill", "Node fill"],
-  ["nodeStroke", "Node border"],
-  ["nodeText", "Node text"],
-  ["rootFill", "Root fill"],
-  ["rootStroke", "Root border"],
-  ["edgeColor", "Edge"],
-  ["edgeText", "Edge label"],
-  ["cycleColor", "Cycle"],
-  ["terminalText", "Null / tail"],
-  ["cellFill", "Cell (set)"],
-  ["cellEmptyFill", "Cell (unset)"],
-  ["cellStroke", "Cell border"],
-  ["cellText", "Cell text"],
+const SHAPES: Array<{ value: NodeShape; label: string; icon: string }> = [
+  { value: "circle", label: "Circle", icon: "○" },
+  { value: "box", label: "Box", icon: "□" },
+  { value: "diamond", label: "Diamond", icon: "◇" },
 ];
 
-export function SettingsDrawer({ settings, activePalette, onChange }: Props): JSX.Element {
+const NODE_SIZE_MIN = 0.85;
+const NODE_SIZE_MAX = 1.2;
+
+export function SettingsDrawer({ settings, activePalette, onChange, onClose }: Props): JSX.Element {
   const layout = settings.layout;
   const palette = settings[activePalette];
 
   const setLayout = <K extends keyof typeof layout>(key: K, value: (typeof layout)[K]): void => {
     onChange({ ...settings, layout: { ...layout, [key]: value } });
   };
-  const setColor = (key: keyof Palette, value: string): void => {
-    onChange({ ...settings, [activePalette]: { ...palette, [key]: value } });
+
+  const setPalette = (patch: Partial<Palette>): void => {
+    onChange({ ...settings, [activePalette]: { ...palette, ...patch } });
+  };
+
+  const onImageUpload = (file: File | undefined): void => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") setPalette({ backgroundImage: reader.result });
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const resetStyle = (): void => {
+    const defaults = activePalette === "light" ? LIGHT : DARK;
+    onChange({
+      ...settings,
+      layout: {
+        ...layout,
+        nodeShape: DEFAULT_LAYOUT.nodeShape,
+        nodeSize: DEFAULT_LAYOUT.nodeSize,
+      },
+      [activePalette]: {
+        ...palette,
+        background: defaults.background,
+        backgroundImage: defaults.backgroundImage,
+      },
+    });
   };
 
   return (
-    <div class="drawer">
-      <fieldset class="group">
-        <legend>Theme</legend>
-        <Row label="Follow LeetCode">
-          <select value={settings.mode} onChange={(e) => onChange({ ...settings, mode: e.currentTarget.value as ThemeMode })}>
-            {THEME_MODES.map((m) => <option value={m}>{m}</option>)}
-          </select>
-        </Row>
-        <div class="swatches">
-          {COLOR_FIELDS.map(([key, label]) => (
-            <Row label={label}>
-              <input type="color" value={palette[key]} onInput={(e) => setColor(key, e.currentTarget.value)} />
-            </Row>
-          ))}
-        </div>
-      </fieldset>
-
-      <fieldset class="group">
-        <legend>Nodes and edges</legend>
-        <Row label="Node shape">
-          <select value={layout.nodeShape} onChange={(e) => setLayout("nodeShape", e.currentTarget.value as NodeShape)}>
-            {NODE_SHAPES.map((s) => <option value={s}>{s}</option>)}
-          </select>
-        </Row>
-        <Row label="Edge style">
-          <select value={layout.edgeStyle} onChange={(e) => setLayout("edgeStyle", e.currentTarget.value as EdgeStyle)}>
-            {EDGE_STYLES.map((s) => <option value={s}>{s}</option>)}
-          </select>
-        </Row>
-        <Row label="Edge routing">
-          <select value={layout.splines} onChange={(e) => setLayout("splines", e.currentTarget.value as Splines)}>
-            {SPLINES.map((s) => <option value={s}>{s}</option>)}
-          </select>
-        </Row>
-        <Row label="Arrowheads">
-          <input type="checkbox" checked={layout.showArrowheads} onChange={(e) => setLayout("showArrowheads", e.currentTarget.checked)} />
-        </Row>
-        <Row label={`Line weight  ${layout.penWidth.toFixed(1)}`}>
-          <input type="range" min="0.5" max="4" step="0.1" value={layout.penWidth}
-            onInput={(e) => setLayout("penWidth", Number(e.currentTarget.value))} />
-        </Row>
-      </fieldset>
-
-      <fieldset class="group">
-        <legend>Layout</legend>
-        <Row label="Direction">
-          <select value={layout.rankdir} onChange={(e) => setLayout("rankdir", e.currentTarget.value as RankDir)}>
-            {RANK_DIRS.map((value) => <option value={value}>{RANKDIR_LABELS[value]}</option>)}
-          </select>
-        </Row>
-        <Row label={`Node spacing  ${layout.nodeSep.toFixed(2)}`}>
-          <input type="range" min="0.1" max="1.5" step="0.05" value={layout.nodeSep}
-            onInput={(e) => setLayout("nodeSep", Number(e.currentTarget.value))} />
-        </Row>
-        <Row label={`Level spacing  ${layout.rankSep.toFixed(2)}`}>
-          <input type="range" min="0.1" max="2" step="0.05" value={layout.rankSep}
-            onInput={(e) => setLayout("rankSep", Number(e.currentTarget.value))} />
-        </Row>
-        <Row label={`Font size  ${layout.fontSize}`}>
-          <input type="range" min="8" max="24" step="1" value={layout.fontSize}
-            onInput={(e) => setLayout("fontSize", Number(e.currentTarget.value))} />
-        </Row>
-        <Row label="Font">
-          <input type="text" value={layout.fontFamily} onChange={(e) => setLayout("fontFamily", e.currentTarget.value)} />
-        </Row>
-      </fieldset>
-
-      <fieldset class="group">
-        <legend>Detail</legend>
-        <Row label="Show null children">
-          <input type="checkbox" checked={layout.showNullChildren} onChange={(e) => setLayout("showNullChildren", e.currentTarget.checked)} />
-        </Row>
-        <Row label="Show list terminator">
-          <input type="checkbox" checked={layout.showListTerminal} onChange={(e) => setLayout("showListTerminal", e.currentTarget.checked)} />
-        </Row>
-        <Row label="Show grid indices">
-          <input type="checkbox" checked={layout.showMatrixIndices} onChange={(e) => setLayout("showMatrixIndices", e.currentTarget.checked)} />
-        </Row>
-        <Row label="Update while typing">
-          <input type="checkbox" checked={settings.liveUpdate} onChange={(e) => onChange({ ...settings, liveUpdate: e.currentTarget.checked })} />
-        </Row>
-        <Row label="Open automatically">
-          <input type="checkbox" checked={settings.autoOpen} onChange={(e) => onChange({ ...settings, autoOpen: e.currentTarget.checked })} />
-        </Row>
-        <Row label="Warn above N nodes">
-          <input type="number" min="50" max="5000" step="50" value={settings.nodeLimit}
-            onChange={(e) => {
-              const n = Number(e.currentTarget.value);
-              if (!Number.isFinite(n)) return;
-              onChange({ ...settings, nodeLimit: Math.min(5000, Math.max(50, Math.round(n))) });
-            }} />
-        </Row>
-      </fieldset>
-
-      <div class="footer-actions">
-        <button class="ghost-btn" onClick={() => onChange({ ...DEFAULT_SETTINGS, mode: settings.mode })}>
-          Reset to defaults
+    <aside class="style-rail" role="dialog" aria-label="Style your graph">
+      <header class="style-rail-header">
+        <h2 class="style-rail-title">Style your graph</h2>
+        <button class="icon-btn" type="button" aria-label="Close style panel" onClick={onClose}>
+          <CloseIcon />
         </button>
-      </div>
-    </div>
-  );
-}
+      </header>
 
-function Row({ label, children }: { label: string; children: JSX.Element }): JSX.Element {
-  return (
-    <div class="row">
-      <label>{label}</label>
-      {children}
-    </div>
+      <div class="style-rail-body">
+        <section class="style-section">
+          <h3 class="style-section-title">Node shape</h3>
+          <div class="shape-group" role="group" aria-label="Node shape">
+            {SHAPES.map(({ value, label, icon }) => (
+              <button
+                key={value}
+                type="button"
+                class="shape-btn"
+                aria-label={label}
+                aria-pressed={layout.nodeShape === value}
+                onClick={() => setLayout("nodeShape", value)}
+              >
+                <span class="shape-icon" aria-hidden="true">{icon}</span>
+              </button>
+            ))}
+          </div>
+        </section>
+
+        <section class="style-section">
+          <h3 class="style-section-title">Node size</h3>
+          <input
+            type="range"
+            class="size-slider"
+            min={NODE_SIZE_MIN}
+            max={NODE_SIZE_MAX}
+            step="0.05"
+            value={layout.nodeSize}
+            aria-valuemin={NODE_SIZE_MIN}
+            aria-valuemax={NODE_SIZE_MAX}
+            aria-valuenow={layout.nodeSize}
+            onInput={(e) => setLayout("nodeSize", Number(e.currentTarget.value))}
+          />
+          <div class="size-labels">
+            <span>Small</span>
+            <span>Medium</span>
+            <span>Large</span>
+          </div>
+        </section>
+
+        <section class="style-section">
+          <h3 class="style-section-title">Background</h3>
+          <div class="bg-row">
+            <label class="bg-color-label" for="bg-color">Color</label>
+            <input
+              id="bg-color"
+              type="color"
+              class="bg-color-input"
+              value={palette.background}
+              onInput={(e) => setPalette({ background: e.currentTarget.value })}
+            />
+          </div>
+          <div class="bg-image-row">
+            <label class="btn btn-primary bg-upload-btn">
+              Upload image
+              <input
+                type="file"
+                accept="image/*"
+                hidden
+                onChange={(e) => onImageUpload(e.currentTarget.files?.[0])}
+              />
+            </label>
+            {palette.backgroundImage && (
+              <button type="button" class="btn" onClick={() => setPalette({ backgroundImage: null })}>
+                Clear
+              </button>
+            )}
+          </div>
+        </section>
+      </div>
+
+      <footer class="style-rail-footer">
+        <button type="button" class="btn" onClick={resetStyle}>
+          Reset style
+        </button>
+      </footer>
+    </aside>
   );
 }

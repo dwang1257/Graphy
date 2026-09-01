@@ -11,6 +11,15 @@ const base = {
   "stroke-linejoin": "round",
 } as const;
 
+export function PaintBrushIcon(): JSX.Element {
+  return (
+    <svg {...base}>
+      <path d="M3.5 12.5c0-1.2.5-2.3 1.3-3.1L9.5 4.2a2.2 2.2 0 0 1 3.1 3.1L7.9 12.5a2.2 2.2 0 0 1-3.1 0 2.2 2.2 0 0 1-1.3-0z" />
+      <path d="M10.5 3.5 12.5 5.5" />
+    </svg>
+  );
+}
+
 export function GearIcon(): JSX.Element {
   return (
     <svg {...base}>

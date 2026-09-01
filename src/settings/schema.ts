@@ -12,6 +12,8 @@ export type ThemeMode = (typeof THEME_MODES)[number];
 
 export interface Palette {
   background: string;
+  /** Data URL for a stage background image, or null for color only. */
+  backgroundImage: string | null;
   nodeFill: string;
   nodeStroke: string;
   nodeText: string;
@@ -30,6 +32,8 @@ export interface Palette {
 
 export interface Layout {
   nodeShape: NodeShape;
+  /** Visual scale multiplier for node size (font and dimensions). */
+  nodeSize: number;
   edgeStyle: EdgeStyle;
   splines: Splines;
   rankdir: RankDir;
@@ -59,6 +63,7 @@ export interface Settings {
 
 export const LIGHT: Palette = {
   background: "#ffffff",
+  backgroundImage: null,
   nodeFill: "#eef2ff",
   nodeStroke: "#4f46e5",
   nodeText: "#1e1b4b",
@@ -77,6 +82,7 @@ export const LIGHT: Palette = {
 
 export const DARK: Palette = {
   background: "#1a1a1a",
+  backgroundImage: null,
   nodeFill: "#312e81",
   nodeStroke: "#818cf8",
   nodeText: "#e0e7ff",
@@ -95,6 +101,7 @@ export const DARK: Palette = {
 
 export const DEFAULT_LAYOUT: Layout = {
   nodeShape: "circle",
+  nodeSize: 1,
   edgeStyle: "solid",
   splines: "spline",
   rankdir: "TB",
@@ -123,6 +130,12 @@ function num(v: unknown, fallback: number, min: number, max: number): number {
   return typeof v === "number" && Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : fallback;
 }
 
+function backgroundImage(v: unknown, fallback: string | null): string | null {
+  if (v === null) return null;
+  if (typeof v === "string" && v.length > 0) return v;
+  return fallback;
+}
+
 /**
  * Fills gaps left by older stored settings and clamps numbers, so a schema
  * addition or a bad stored value never breaks load.
@@ -134,11 +147,16 @@ export function withDefaults(stored: unknown): Settings {
   layout.penWidth = num(layout.penWidth, DEFAULT_LAYOUT.penWidth, 0.5, 4);
   layout.nodeSep = num(layout.nodeSep, DEFAULT_LAYOUT.nodeSep, 0.1, 1.5);
   layout.rankSep = num(layout.rankSep, DEFAULT_LAYOUT.rankSep, 0.1, 2);
+  layout.nodeSize = num(layout.nodeSize, DEFAULT_LAYOUT.nodeSize, 0.6, 1.8);
+  const light = { ...LIGHT, ...(s.light ?? {}) };
+  const dark = { ...DARK, ...(s.dark ?? {}) };
+  light.backgroundImage = backgroundImage(light.backgroundImage, LIGHT.backgroundImage);
+  dark.backgroundImage = backgroundImage(dark.backgroundImage, DARK.backgroundImage);
   return {
     ...DEFAULT_SETTINGS,
     ...s,
-    light: { ...LIGHT, ...(s.light ?? {}) },
-    dark: { ...DARK, ...(s.dark ?? {}) },
+    light,
+    dark,
     layout,
     nodeLimit: num(s.nodeLimit, DEFAULT_SETTINGS.nodeLimit, 50, 5000),
   };

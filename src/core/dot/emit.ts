@@ -9,11 +9,14 @@ export interface EmitOptions {
 /** Serializes a GraphModel to DOT. Matrices become one HTML-table node. */
 export function emitDot(model: GraphModel, options: EmitOptions): string {
   const { palette, layout } = options;
+  const nodeFontSize = layout.fontSize * layout.nodeSize;
+  const nodeMargin = 0.04 * layout.nodeSize;
   const keyword = model.directed ? "digraph" : "graph";
   const lines: string[] = [`${keyword} G {`];
 
+  // palette.backgroundImage is applied in CSS on the stage, not in DOT.
   lines.push(`  graph [${attrs({
-    bgcolor: palette.background,
+    bgcolor: "transparent",
     rankdir: layout.rankdir,
     splines: layout.splines,
     nodesep: layout.nodeSep,
@@ -31,16 +34,16 @@ export function emitDot(model: GraphModel, options: EmitOptions): string {
     color: palette.nodeStroke,
     fontcolor: palette.nodeText,
     fontname: layout.fontFamily,
-    fontsize: layout.fontSize,
+    fontsize: nodeFontSize,
     penwidth: layout.penWidth,
-    margin: 0.04,
+    margin: nodeMargin,
   })}];`);
 
   lines.push(`  edge [${attrs({
     color: palette.edgeColor,
     fontcolor: palette.edgeText,
     fontname: layout.fontFamily,
-    fontsize: Math.max(8, layout.fontSize - 2),
+    fontsize: Math.max(8, layout.fontSize - 2) * layout.nodeSize,
     penwidth: layout.penWidth,
     style: layout.edgeStyle,
     arrowsize: 0.7,
@@ -65,6 +68,7 @@ export function emitDot(model: GraphModel, options: EmitOptions): string {
 }
 
 function nodeLine(node: GNode, { palette, layout }: EmitOptions): string {
+  const { nodeSize } = layout;
   const base: Record<string, string | number | undefined> = { label: node.label };
 
   switch (node.role) {
@@ -76,11 +80,11 @@ function nodeLine(node: GNode, { palette, layout }: EmitOptions): string {
       break;
     case "null":
       Object.assign(base, layout.showNullChildren
-        ? { label: "", shape: "point", width: 0.09, color: palette.terminalText, fillcolor: palette.terminalText, penwidth: 1 }
-        : { label: "", shape: "point", width: 0.09, style: "invis" });
+        ? { label: "", shape: "point", width: 0.09 * nodeSize, color: palette.terminalText, fillcolor: palette.terminalText, penwidth: 1 }
+        : { label: "", shape: "point", width: 0.09 * nodeSize, style: "invis" });
       break;
     case "terminal":
-      Object.assign(base, { shape: "plaintext", style: "", fontcolor: palette.terminalText, fontsize: layout.fontSize + 2 });
+      Object.assign(base, { shape: "plaintext", style: "", fontcolor: palette.terminalText, fontsize: (layout.fontSize + 2) * nodeSize });
       break;
     case "normal":
       break;
@@ -112,6 +116,9 @@ function edgeLine(edge: GEdge, directed: boolean, { palette, layout }: EmitOptio
 }
 
 function matrixTable(matrix: MatrixData, { palette, layout }: EmitOptions): string {
+  const { nodeSize } = layout;
+  const cellSize = Math.round(26 * nodeSize);
+  const cellFontSize = layout.fontSize * nodeSize;
   let width = 0;
   for (const row of matrix.rows) width = Math.max(width, row.length);
   const cells: string[] = [];
@@ -133,8 +140,8 @@ function matrixTable(matrix: MatrixData, { palette, layout }: EmitOptions): stri
       }
       const fill = cell.filled ? palette.cellFill : palette.cellEmptyFill;
       tds.push(
-        `<TD BGCOLOR="${esc(fill)}" WIDTH="26" HEIGHT="26" ALIGN="CENTER">` +
-        `<FONT COLOR="${esc(palette.cellText)}" POINT-SIZE="${layout.fontSize}">${htmlText(cell.text)}</FONT></TD>`,
+        `<TD BGCOLOR="${esc(fill)}" WIDTH="${cellSize}" HEIGHT="${cellSize}" ALIGN="CENTER">` +
+        `<FONT COLOR="${esc(palette.cellText)}" POINT-SIZE="${cellFontSize}">${htmlText(cell.text)}</FONT></TD>`,
       );
     }
     cells.push(`<TR>${tds.join("")}</TR>`);
@@ -144,7 +151,8 @@ function matrixTable(matrix: MatrixData, { palette, layout }: EmitOptions): stri
 }
 
 function gutter(text: string, palette: Palette, layout: Layout): string {
-  return `<TD BORDER="0"><FONT COLOR="${esc(palette.gutterText)}" POINT-SIZE="${Math.max(7, layout.fontSize - 3)}">${htmlText(text)}</FONT></TD>`;
+  const fontSize = Math.max(7, layout.fontSize - 3) * layout.nodeSize;
+  return `<TD BORDER="0"><FONT COLOR="${esc(palette.gutterText)}" POINT-SIZE="${fontSize}">${htmlText(text)}</FONT></TD>`;
 }
 
 /** Marks a value as a raw HTML-like label so `attrs` skips quoting. */
