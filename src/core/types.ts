@@ -2,8 +2,6 @@
 export type StructureKind =
   | "binary-tree"
   | "linked-list"
-  | "graph"
-  | "adjacency"
   | "matrix";
 
 export type NodeRole = "normal" | "null" | "spine" | "root" | "terminal";
@@ -56,8 +54,6 @@ export interface GraphModel {
 export const KIND_LABELS: Record<StructureKind, string> = {
   "binary-tree": "Binary tree",
   "linked-list": "Linked list",
-  graph: "Edge list",
-  adjacency: "Adjacency",
   matrix: "Grid",
 };
 

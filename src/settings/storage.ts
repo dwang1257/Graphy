@@ -72,7 +72,6 @@ const OVERRIDE_KEY = "graphy.overrides";
 
 export interface Override {
   kind?: string;
-  directed?: boolean;
 }
 
 /** Manual corrections stick per problem, so a bad guess is fixed only once. */
@@ -88,7 +87,7 @@ export async function loadOverrides(): Promise<Record<string, Override>> {
 export async function saveOverrides(all: Record<string, Override>): Promise<void> {
   const compact: Record<string, Override> = {};
   for (const [slug, override] of Object.entries(all)) {
-    if (override.kind !== undefined || override.directed !== undefined) compact[slug] = override;
+    if (override.kind !== undefined) compact[slug] = { kind: override.kind };
   }
   try {
     await chrome.storage.local.set({ [OVERRIDE_KEY]: compact });

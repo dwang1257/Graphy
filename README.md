@@ -79,9 +79,6 @@ Graphy infers the structure from the function signature first, then the paramete
 | --- | --- | --- |
 | Binary tree | `TreeNode`, `root`, `subRoot`, arrays containing `null` | `[3,9,20,null,null,15,7]` |
 | Linked list | `ListNode`, `head`, `headA`, `l1`, plus an optional `pos` for cycles | `[1,2,3,4]`, `pos = 1` |
-| Directed graph | `prerequisites`, `trust`, `flights`, `edges1` | `[[1,0],[2,1]]` |
-| Undirected graph | `edges`, `connections`, `roads`, `pairs` | `[[0,1],[1,2],[2,0]]` |
-| Adjacency list | `adjList`, `graph`, `rooms` | `[[2,4],[1,3],[2,4],[1,3]]` |
 | Grid / matrix | `grid`, `board`, `matrix`, `maze`, `isConnected`, equal-length strings | `["11110","10001"]` |
 
 When the guess is wrong, pick the right structure from the dropdown in the panel's title bar.
@@ -161,10 +158,9 @@ Open the settings drawer with the gear icon in the panel. Settings are stored pe
 <!-- ROADMAP -->
 ## Roadmap
 
-- [x] Binary trees, linked lists, graphs, adjacency lists, and grids
+- [x] Binary trees, linked lists, and grids
 - [x] Live rendering while typing
 - [x] Full color, layout, and shape customization
-- [ ] Weighted edge labels for three-column edge lists
 - [ ] Export the current graph as SVG or PNG
 - [ ] N-ary trees and tries
 - [ ] Chrome Web Store release

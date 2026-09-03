@@ -1,11 +1,14 @@
 import { useState } from "preact/hooks";
 import type { JSX } from "preact";
 import { CloseIcon, ExpandIcon, FitIcon, MinusIcon, PaintBrushIcon } from "./icons.js";
+import { KIND_LABELS, type StructureKind } from "../core/types.js";
 import { pointerDragHandler } from "./usePointerDrag.js";
 
 interface Props {
   collapsed: boolean;
   showSettings: boolean;
+  selectedKind: StructureKind | undefined;
+  onKindChange: (kind: StructureKind) => void;
   onFit: () => void;
   onToggleSettings: () => void;
   onCollapse: () => void;
@@ -14,11 +17,13 @@ interface Props {
   onDragEnd: () => void;
 }
 
+const KINDS = Object.entries(KIND_LABELS) as Array<[StructureKind, string]>;
+
 export function TitleBar(props: Props): JSX.Element {
   const [dragging, setDragging] = useState(false);
 
   const onPointerDown = pointerDragHandler<HTMLDivElement>({
-    ignore: "button",
+    ignore: "button, select, label",
     onStart: () => setDragging(true),
     onMove: props.onDrag,
     onEnd: () => {
@@ -33,6 +38,34 @@ export function TitleBar(props: Props): JSX.Element {
         <span class="brand-mark" aria-hidden="true" />
         Graphy
       </span>
+
+      {!props.collapsed && (
+        <div class="titlebar-controls">
+          <label class="kind-field">
+            <span class="kind-label">Structure</span>
+            <select
+              class={`kind-select${props.selectedKind ? "" : " kind-select-empty"}`}
+              value={props.selectedKind ?? ""}
+              title="Choose which structure to draw"
+              aria-label="Structure"
+              required
+              onChange={(e) => {
+                const value = e.currentTarget.value;
+                if (value in KIND_LABELS) props.onKindChange(value as StructureKind);
+              }}
+            >
+              <option value="" disabled>
+                Choose…
+              </option>
+              {KINDS.map(([value, label]) => (
+                <option value={value} key={value}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+      )}
 
       <span class="spacer" />
 

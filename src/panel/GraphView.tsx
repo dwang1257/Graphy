@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { JSX } from "preact";
+import { applyNodeBackgroundImage } from "./nodeBackground.js";
 import { pointerDragHandler } from "./usePointerDrag.js";
 import { normalizeWheelDelta, zoomAtPoint } from "./zoom.js";
 import type { View } from "./zoom.js";
@@ -8,9 +9,11 @@ interface Props {
   svg: string;
   /** Changing this resets the view - a new pane should start fitted. */
   fitKey: string;
+  /** Data URL painted onto node shapes after Graphviz layout, or null. */
+  nodeBackgroundImage?: string | null;
 }
 
-function sanitizeSvg(svg: string): string {
+function prepareSvg(svg: string, nodeBackgroundImage: string | null | undefined): string {
   const document = new DOMParser().parseFromString(svg, "image/svg+xml");
   if (document.querySelector("parsererror")) return "";
 
@@ -23,17 +26,24 @@ function sanitizeSvg(svg: string): string {
     }
   }
 
+  if (nodeBackgroundImage) {
+    applyNodeBackgroundImage(document.documentElement, nodeBackgroundImage);
+  }
+
   return new XMLSerializer().serializeToString(document.documentElement);
 }
 
 /** Zoom/pan surface for the rendered SVG. */
-export function GraphView({ svg, fitKey }: Props): JSX.Element {
+export function GraphView({ svg, fitKey, nodeBackgroundImage = null }: Props): JSX.Element {
   const stage = useRef<HTMLDivElement>(null);
   const viewport = useRef<HTMLDivElement>(null);
   const view = useRef<View>({ x: 0, y: 0, scale: 1 });
   const paintFrame = useRef<number | null>(null);
   const [panning, setPanning] = useState(false);
-  const sanitizedSvg = useMemo(() => sanitizeSvg(svg), [svg]);
+  const sanitizedSvg = useMemo(
+    () => prepareSvg(svg, nodeBackgroundImage),
+    [svg, nodeBackgroundImage],
+  );
 
   const paintView = (): void => {
     const { x, y, scale } = view.current;

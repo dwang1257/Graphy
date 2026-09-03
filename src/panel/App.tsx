@@ -5,12 +5,13 @@ import { clampCaseIndex } from "../core/cases.js";
 import { buildPanes } from "../core/build.js";
 import { emitDot } from "../core/dot/emit.js";
 import { parseSignature } from "../core/signature.js";
-import { visibleNodeCount, type GraphModel, type StructureKind } from "../core/types.js";
+import { KIND_LABELS, visibleNodeCount, type GraphModel, type StructureKind } from "../core/types.js";
 import { DEFAULT_SETTINGS, type Settings } from "../settings/schema.js";
 import {
   loadOverrides,
   loadSettings,
   onSettingsChanged,
+  saveOverrides,
   saveSettings,
   type Override,
 } from "../settings/storage.js";
@@ -29,6 +30,11 @@ const PARENT_ORIGIN = detectParentOrigin();
 function toHost(message: FromPanel): void {
   if (!PARENT_ORIGIN) return;
   parent.postMessage(message, PARENT_ORIGIN);
+}
+
+function asStructureKind(value: string | undefined): StructureKind | undefined {
+  if (value && value in KIND_LABELS) return value as StructureKind;
+  return undefined;
 }
 
 function resolvedPalette(mode: Settings["mode"], pageIsDark: boolean): "light" | "dark" {
@@ -100,30 +106,34 @@ export function App(): JSX.Element {
   }, [slug]);
 
   const override = overrides[slug] ?? {};
-  const overrideKind = (override.kind as StructureKind | undefined) ?? "auto";
+  const selectedKind = asStructureKind(override.kind);
 
   const signature = useMemo(
     () => (snapshot ? parseSignature(snapshot.code, snapshot.lang) : null),
     [snapshot?.code, snapshot?.lang],
   );
 
-  const result = useMemo(
-    () =>
-      buildPanes(caseInput, signature, {
-        override: overrideKind === "auto" ? undefined : overrideKind,
-        directedOverride: override.directed,
-        showTerminal: settings.layout.showListTerminal,
-        showIndices: settings.layout.showMatrixIndices,
-      }),
-    [
-      caseInput,
-      signature,
-      overrideKind,
-      override.directed,
-      settings.layout.showListTerminal,
-      settings.layout.showMatrixIndices,
-    ],
-  );
+  const result = useMemo(() => {
+    if (!selectedKind) {
+      return {
+        panes: [],
+        failures: caseInput.trim()
+          ? [{ paramName: "input", reason: "Choose a structure in the title bar to draw this input." }]
+          : [],
+      };
+    }
+    return buildPanes(caseInput, signature, {
+      override: selectedKind,
+      showTerminal: settings.layout.showListTerminal,
+      showIndices: settings.layout.showMatrixIndices,
+    });
+  }, [
+    caseInput,
+    signature,
+    selectedKind,
+    settings.layout.showListTerminal,
+    settings.layout.showMatrixIndices,
+  ]);
 
   // One graph per Case: first visualizable parameter of the selected case.
   const pane = result.panes[0];
@@ -131,7 +141,7 @@ export function App(): JSX.Element {
   const palette = settings[paletteName];
 
   const paneSize = pane ? visibleNodeCount(pane.model) : 0;
-  const confirmKey = `${slug}:${caseIndex}:${caseInput}:${overrideKind}`;
+  const confirmKey = `${slug}:${caseIndex}:${caseInput}:${selectedKind ?? ""}`;
   const tooLarge = !!pane && paneSize > settings.nodeLimit && confirmedFor !== confirmKey;
 
   const dot = useMemo(() => {
@@ -169,6 +179,20 @@ export function App(): JSX.Element {
     };
   }, [dot]);
 
+  const applyOverride = useCallback((patch: Override) => {
+    if (!slug) return;
+    setOverrides((prev) => {
+      const all = { ...prev, [slug]: { ...prev[slug], ...patch } };
+      void saveOverrides(all);
+      return all;
+    });
+  }, [slug]);
+
+  const setKind = useCallback(
+    (kind: StructureKind) => applyOverride({ kind }),
+    [applyOverride],
+  );
+
   const updateSettings = useCallback((next: Settings) => {
     setSettings(next);
     window.clearTimeout(saveTimer.current);
@@ -199,6 +223,8 @@ export function App(): JSX.Element {
       <TitleBar
         collapsed={collapsed}
         showSettings={showSettings}
+        selectedKind={selectedKind}
+        onKindChange={setKind}
         onFit={() => setFitCount((n) => n + 1)}
         onToggleSettings={() => setShowSettings((v) => !v)}
         onCollapse={() => {
@@ -224,7 +250,11 @@ export function App(): JSX.Element {
             )}
             <div class="stage-area stage-bg" style={stageStyle}>
               {svg ? (
-                <GraphView svg={svg} fitKey={`${slug}:${caseIndex}:${pane?.id ?? ""}:${fitCount}`} />
+                <GraphView
+                  svg={svg}
+                  fitKey={`${slug}:${caseIndex}:${pane?.id ?? ""}:${fitCount}`}
+                  nodeBackgroundImage={palette.nodeBackgroundImage}
+                />
               ) : (
                 <div class="stage" />
               )}
@@ -250,10 +280,12 @@ export function App(): JSX.Element {
                     class="case-pill"
                     role="tab"
                     key={i}
+                    type="button"
                     aria-selected={i === caseIndex}
+                    aria-label={`Case ${i + 1}`}
                     onClick={() => setActiveCase(i)}
                   >
-                    {i + 1}
+                    Case {i + 1}
                   </button>
                 ))}
               </div>
@@ -339,11 +371,12 @@ function Placeholder(props: PlaceholderProps): JSX.Element {
       </div>
     );
   }
+  const needsStructure = props.failure?.includes("Choose a structure");
   return (
     <div class="placeholder">
       <div class="placeholder-card">
         <div class="placeholder-icon">?</div>
-        <strong>Nothing to draw</strong>
+        <strong>{needsStructure ? "Choose a structure" : "Nothing to draw"}</strong>
         <span>{props.failure ?? "This input does not look like a graph structure."}</span>
       </div>
     </div>

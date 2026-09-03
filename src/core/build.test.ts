@@ -41,3 +41,18 @@ test("uses the signature parameter name for a visualized argument", () => {
 
   expect(result.panes[0]?.title).toBe("head");
 });
+
+test("visualizes a complete tree when binary-tree is selected", () => {
+  const result = buildPanes("[4,2,6,3,1,5]\n1\n2", null, { override: "binary-tree" });
+
+  expect(result.failures).toEqual([]);
+  expect(result.panes[0]?.model.kind).toBe("binary-tree");
+  expect(result.panes[0]?.model.nodes.some((n) => n.role === "root")).toBe(true);
+});
+
+test("visualizes a sparse tree when binary-tree is selected", () => {
+  const result = buildPanes("[4,2,null,3,1]\n1\n3", null, { override: "binary-tree" });
+
+  expect(result.failures).toEqual([]);
+  expect(result.panes[0]?.model.kind).toBe("binary-tree");
+});

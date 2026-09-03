@@ -37,11 +37,14 @@ export function SettingsDrawer({ settings, activePalette, onChange, onClose }: P
     onChange({ ...settings, [activePalette]: { ...palette, ...patch } });
   };
 
-  const onImageUpload = (file: File | undefined): void => {
+  const onImageUpload = (
+    file: File | undefined,
+    key: "backgroundImage" | "nodeBackgroundImage",
+  ): void => {
     if (!file) return;
     const reader = new FileReader();
     reader.onload = () => {
-      if (typeof reader.result === "string") setPalette({ backgroundImage: reader.result });
+      if (typeof reader.result === "string") setPalette({ [key]: reader.result });
     };
     reader.readAsDataURL(file);
   };
@@ -59,6 +62,7 @@ export function SettingsDrawer({ settings, activePalette, onChange, onClose }: P
         ...palette,
         background: defaults.background,
         backgroundImage: defaults.backgroundImage,
+        nodeBackgroundImage: defaults.nodeBackgroundImage,
       },
     });
   };
@@ -86,6 +90,7 @@ export function SettingsDrawer({ settings, activePalette, onChange, onClose }: P
                 onClick={() => setLayout("nodeShape", value)}
               >
                 <span class="shape-icon" aria-hidden="true">{icon}</span>
+                <span class="shape-label">{label}</span>
               </button>
             ))}
           </div>
@@ -113,7 +118,8 @@ export function SettingsDrawer({ settings, activePalette, onChange, onClose }: P
         </section>
 
         <section class="style-section">
-          <h3 class="style-section-title">Background</h3>
+          <h3 class="style-section-title">Stage background</h3>
+          <p class="style-section-hint">Canvas color and image behind the graph</p>
           <div class="bg-row">
             <label class="bg-color-label" for="bg-color">Color</label>
             <input
@@ -131,11 +137,35 @@ export function SettingsDrawer({ settings, activePalette, onChange, onClose }: P
                 type="file"
                 accept="image/*"
                 hidden
-                onChange={(e) => onImageUpload(e.currentTarget.files?.[0])}
+                onChange={(e) => onImageUpload(e.currentTarget.files?.[0], "backgroundImage")}
               />
             </label>
             {palette.backgroundImage && (
               <button type="button" class="btn" onClick={() => setPalette({ backgroundImage: null })}>
+                Clear
+              </button>
+            )}
+          </div>
+        </section>
+
+        <section class="style-section">
+          <h3 class="style-section-title">Node background</h3>
+          <div class="node-bg-image-row">
+            <label class="btn btn-primary node-bg-upload-btn">
+              Upload image
+              <input
+                type="file"
+                accept="image/*"
+                hidden
+                onChange={(e) => onImageUpload(e.currentTarget.files?.[0], "nodeBackgroundImage")}
+              />
+            </label>
+            {palette.nodeBackgroundImage && (
+              <button
+                type="button"
+                class="btn"
+                onClick={() => setPalette({ nodeBackgroundImage: null })}
+              >
                 Clear
               </button>
             )}

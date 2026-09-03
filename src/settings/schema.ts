@@ -14,6 +14,8 @@ export interface Palette {
   background: string;
   /** Data URL for a stage background image, or null for color only. */
   backgroundImage: string | null;
+  /** Data URL for a node fill/background image, or null for solid fills. */
+  nodeBackgroundImage: string | null;
   nodeFill: string;
   nodeStroke: string;
   nodeText: string;
@@ -64,6 +66,7 @@ export interface Settings {
 export const LIGHT: Palette = {
   background: "#ffffff",
   backgroundImage: null,
+  nodeBackgroundImage: null,
   nodeFill: "#eef2ff",
   nodeStroke: "#4f46e5",
   nodeText: "#1e1b4b",
@@ -83,6 +86,7 @@ export const LIGHT: Palette = {
 export const DARK: Palette = {
   background: "#1a1a1a",
   backgroundImage: null,
+  nodeBackgroundImage: null,
   nodeFill: "#312e81",
   nodeStroke: "#818cf8",
   nodeText: "#e0e7ff",
@@ -130,7 +134,8 @@ function num(v: unknown, fallback: number, min: number, max: number): number {
   return typeof v === "number" && Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : fallback;
 }
 
-function backgroundImage(v: unknown, fallback: string | null): string | null {
+/** Accepts a non-empty string (typically a data URL), otherwise the fallback. */
+function imageUrl(v: unknown, fallback: string | null): string | null {
   if (v === null) return null;
   if (typeof v === "string" && v.length > 0) return v;
   return fallback;
@@ -150,8 +155,10 @@ export function withDefaults(stored: unknown): Settings {
   layout.nodeSize = num(layout.nodeSize, DEFAULT_LAYOUT.nodeSize, 0.6, 1.8);
   const light = { ...LIGHT, ...(s.light ?? {}) };
   const dark = { ...DARK, ...(s.dark ?? {}) };
-  light.backgroundImage = backgroundImage(light.backgroundImage, LIGHT.backgroundImage);
-  dark.backgroundImage = backgroundImage(dark.backgroundImage, DARK.backgroundImage);
+  light.backgroundImage = imageUrl(light.backgroundImage, LIGHT.backgroundImage);
+  dark.backgroundImage = imageUrl(dark.backgroundImage, DARK.backgroundImage);
+  light.nodeBackgroundImage = imageUrl(light.nodeBackgroundImage, LIGHT.nodeBackgroundImage);
+  dark.nodeBackgroundImage = imageUrl(dark.nodeBackgroundImage, DARK.nodeBackgroundImage);
   return {
     ...DEFAULT_SETTINGS,
     ...s,

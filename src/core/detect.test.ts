@@ -3,16 +3,12 @@ import { describe, expect, it } from "vitest";
 import { detectRole } from "./detect.js";
 
 describe("detectRole", () => {
-  it("detects neighbor rows as an adjacency list from shape", () => {
+  it("treats equal-width nested rows as a matrix from shape", () => {
     expect(detectRole(undefined, [[2, 4], [1, 3], [2, 4], [1, 3]])).toEqual({
-      kind: "adjacency",
+      kind: "matrix",
     });
-  });
-
-  it("detects pairs forming a triangle as an undirected graph from shape", () => {
     expect(detectRole(undefined, [[0, 1], [1, 2], [2, 0]])).toEqual({
-      kind: "graph",
-      directed: false,
+      kind: "matrix",
     });
   });
 
@@ -23,5 +19,20 @@ describe("detectRole", () => {
         [[1, 1, 0], [1, 1, 0], [0, 0, 1]],
       ),
     ).toEqual({ kind: "matrix" });
+  });
+
+  it("detects a sparse binary tree with nulls from shape", () => {
+    expect(detectRole(undefined, [4, 2, null, 3, 1])).toEqual({
+      kind: "binary-tree",
+    });
+  });
+
+  it("ignores typed plain value arrays so Two Sum nums stay non-visual", () => {
+    expect(
+      detectRole({ name: "nums", type: "vector<int>" }, [2, 7, 11, 15]),
+    ).toEqual({ kind: "ignore" });
+    expect(
+      detectRole({ name: "nums", type: "number[]" }, [2, 7, 11, 15]),
+    ).toEqual({ kind: "ignore" });
   });
 });
