@@ -1,4 +1,5 @@
 import { groupTestCases, type CaseCapture } from "../core/cases.js";
+import { splitInputValues } from "../core/parse/value.js";
 import { PAGE_CHANNEL, type Snapshot } from "../shared/protocol.js";
 
 /**
@@ -59,9 +60,20 @@ function captureCases(): { code: string; buffer: string; caseTags: number; param
     }
   }
 
-  const buffer = inputs.join("\n").trim();
   const caseTags = document.querySelectorAll('[data-e2e-locator="console-testcase-tag"]').length;
   const params = document.querySelectorAll('[data-e2e-locator="console-testcase-input"]').length;
+
+  // LeetCode sometimes renders one CodeMirror per case tab instead of one aggregate buffer.
+  if (caseTags > 0 && inputs.length === caseTags) {
+    const perCase = inputs.map((text) => splitInputValues(text).join("\n"));
+    const paramMismatch = params > 0 && perCase.some((text) => splitInputValues(text).length !== params);
+    if (!paramMismatch) {
+      const buffer = inputs.join("\n").trim();
+      return { code, buffer, caseTags, params, cases: perCase };
+    }
+  }
+
+  const buffer = inputs.join("\n").trim();
   return { code, buffer, caseTags, params, ...groupTestCases(buffer, caseTags, params) };
 }
 

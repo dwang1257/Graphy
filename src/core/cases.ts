@@ -1,4 +1,4 @@
-import { splitInputLines } from "./parse/value.js";
+import { splitInputValues } from "./parse/value.js";
 
 /** Splits LeetCode's concatenated custom-testcase buffer into ordered cases. */
 
@@ -16,36 +16,36 @@ export function groupTestCases(
   caseCount: number,
   paramCount: number,
 ): CaseCapture {
-  const lines = splitInputLines(buffer);
+  const values = splitInputValues(buffer);
 
   if (caseCount <= 0) {
-    const text = lines.join("\n").trim();
+    const text = values.join("\n").trim();
     return { cases: text ? [text] : [] };
   }
 
   let params = paramCount;
   if (params <= 0) {
-    if (lines.length > 0 && lines.length % caseCount === 0) {
-      params = lines.length / caseCount;
+    if (values.length > 0 && values.length % caseCount === 0) {
+      params = values.length / caseCount;
     } else {
       return {
         cases: [],
-        captureError: `Could not separate test cases (${caseCount} cases, ${lines.length} lines).`,
+        captureError: `Could not separate test cases (${caseCount} cases, ${values.length} values).`,
       };
     }
   }
 
   const expected = caseCount * params;
-  if (lines.length !== expected) {
+  if (values.length !== expected) {
     return {
       cases: [],
-      captureError: `Could not separate test cases (${caseCount} cases × ${params} params, found ${lines.length} lines).`,
+      captureError: `Could not separate test cases (${caseCount} cases × ${params} params, found ${values.length} values).`,
     };
   }
 
   const cases: string[] = [];
   for (let i = 0; i < caseCount; i += 1) {
-    cases.push(lines.slice(i * params, (i + 1) * params).join("\n"));
+    cases.push(values.slice(i * params, (i + 1) * params).join("\n"));
   }
   return { cases };
 }

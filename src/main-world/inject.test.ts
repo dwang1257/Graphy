@@ -33,15 +33,17 @@ afterEach(() => {
 
 function installPage(options: {
   code?: string;
-  buffer: string;
+  buffer?: string;
+  buffers?: string[];
   caseTags?: number;
   paramFields?: number;
   textareas?: string[];
 }): { snapshots: Array<{ payload: { cases: string[]; captureError?: string; source: string } }> } {
   const snapshots: Array<{ payload: { cases: string[]; captureError?: string; source: string } }> = [];
+  const testcaseBuffers = options.buffers ?? (options.buffer !== undefined ? [options.buffer] : []);
   const cmEditors = [
     ...(options.code !== undefined ? [editor(options.code)] : []),
-    editor(options.buffer),
+    ...testcaseBuffers.map((text) => editor(text)),
   ];
   const caseTags = Array.from({ length: options.caseTags ?? 0 }, (_, i) => ({
     textContent: `Case ${i + 1}`,
@@ -162,6 +164,22 @@ test("uses the only CodeMirror buffer as testcases when the solution editor is n
     "[2,1,3]",
     "[]",
   ]);
+});
+
+test("reads one CodeMirror editor per case tab when LeetCode splits editors", async () => {
+  const caseA = "[\n  1,\n  2,\n  3,\n  4,\n  5,\n  6,\n  7\n]";
+  const caseB = "[\n  8,\n  9,\n  10,\n  11,\n  12,\n  13,\n  14,\n  15\n]";
+  const { snapshots } = installPage({
+    code: "class Solution { public: TreeNode* invertTree(TreeNode* root) { return root; } };",
+    buffers: [caseA, caseB],
+    caseTags: 2,
+    paramFields: 1,
+  });
+
+  await import("./inject.js");
+
+  expect(snapshots.at(-1)?.payload.cases).toEqual([caseA, caseB]);
+  expect(snapshots.at(-1)?.payload.captureError).toBeUndefined();
 });
 
 test("keeps a multi-case collection when a Run only carries one case", async () => {

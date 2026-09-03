@@ -30,7 +30,23 @@ describe("groupTestCases", () => {
   it("returns a capture error when counts do not divide cleanly", () => {
     expect(groupTestCases("[1]\n[2]\n[3]", 2, 2)).toEqual({
       cases: [],
-      captureError: "Could not separate test cases (2 cases × 2 params, found 3 lines).",
+      captureError: "Could not separate test cases (2 cases × 2 params, found 3 values).",
+    });
+  });
+
+  it("groups pretty-printed arrays that span multiple lines", () => {
+    const buffer = "[\n  1,\n  2,\n  3\n]\n[\n  4,\n  5\n]";
+    expect(groupTestCases(buffer, 2, 1)).toEqual({
+      cases: ["[\n  1,\n  2,\n  3\n]", "[\n  4,\n  5\n]"],
+    });
+  });
+
+  it("splits two pretty-printed single-param cases from a long buffer", () => {
+    const caseA = "[\n  1,\n  2,\n  3,\n  4,\n  5,\n  6,\n  7\n]";
+    const caseB = "[\n  8,\n  9,\n  10,\n  11,\n  12,\n  13,\n  14,\n  15\n]";
+    const buffer = `${caseA}\n${caseB}`;
+    expect(groupTestCases(buffer, 2, 1)).toEqual({
+      cases: [caseA, caseB],
     });
   });
 

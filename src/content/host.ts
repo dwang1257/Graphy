@@ -18,6 +18,7 @@ const STYLE = `
   transition: height 160ms cubic-bezier(0.16, 1, 0.3, 1);
   display: none;
 }
+.shell[data-resizing="true"] { transition: none; }
 .shell[data-open="true"] { display: block; }
 .shell iframe { width: 100%; height: 100%; border: 0; display: block; }
 .launcher {
@@ -51,6 +52,8 @@ export class PanelHost {
   /** One queued message per type, so a theme change cannot drop a snapshot. */
   private pending = new Map<string, ToPanel>();
   private saveTimer: number | undefined;
+  private resizeFrame: number | undefined;
+  private pendingResize = { dx: 0, dy: 0 };
   /** Resolves once stored geometry has been applied. */
   readonly restored: Promise<void>;
 
@@ -190,11 +193,22 @@ export class PanelHost {
         this.clamp();
         break;
       case "resize":
-        this.state.width = Math.max(MIN_WIDTH, this.state.width + data.dx);
-        this.state.height = Math.max(MIN_HEIGHT, this.state.height + data.dy);
-        this.apply();
+        this.pendingResize.dx += data.dx;
+        this.pendingResize.dy += data.dy;
+        if (this.resizeFrame !== undefined) break;
+        this.shell.dataset.resizing = "true";
+        this.resizeFrame = requestAnimationFrame(() => {
+          this.resizeFrame = undefined;
+          const { dx, dy } = this.pendingResize;
+          this.pendingResize = { dx: 0, dy: 0 };
+          if (dx === 0 && dy === 0) return;
+          this.state.width = Math.max(MIN_WIDTH, this.state.width + dx);
+          this.state.height = Math.max(MIN_HEIGHT, this.state.height + dy);
+          this.apply();
+        });
         break;
       case "persist":
+        delete this.shell.dataset.resizing;
         this.persist();
         break;
     }

@@ -29,10 +29,7 @@ export function TitleBar(props: Props): JSX.Element {
 
   return (
     <div class={`titlebar${dragging ? " dragging" : ""}`} onPointerDown={onPointerDown}>
-      <span class="brand">
-        <span class="brand-mark" aria-hidden="true" />
-        Graphy
-      </span>
+      <span class="brand">Graphy</span>
 
       <span class="spacer" />
 
