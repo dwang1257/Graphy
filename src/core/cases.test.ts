@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { clampCaseIndex, groupTestCases } from "./cases.js";
+import { clampCaseIndex, groupTestCases, pickCaseBuffers } from "./cases.js";
 
 describe("groupTestCases", () => {
   it("groups a one-parameter buffer by case count", () => {
@@ -27,11 +27,23 @@ describe("groupTestCases", () => {
     });
   });
 
-  it("returns a capture error when counts do not divide cleanly", () => {
-    expect(groupTestCases("[1]\n[2]\n[3]", 2, 2)).toEqual({
-      cases: [],
-      captureError: "Could not separate test cases (2 cases × 2 params, found 3 values).",
+  it("drops trailing leftover values instead of failing the split", () => {
+    expect(groupTestCases("[1]\n[2]\n[3]\ntrue", 3, 1)).toEqual({
+      cases: ["[1]", "[2]", "[3]"],
     });
+  });
+
+  it("treats a selected-case buffer as one case when only that case is visible", () => {
+    expect(groupTestCases("[2,7,11,15]\n9", 3, 2)).toEqual({
+      cases: ["[2,7,11,15]\n9"],
+    });
+  });
+
+  it("still yields a drawable case when counts do not divide cleanly", () => {
+    const result = groupTestCases("[1]\n[2]\n[3]", 2, 2);
+    expect(result.captureError).toBeUndefined();
+    expect(result.cases.length).toBeGreaterThan(0);
+    expect(result.cases.join("\n")).toContain("[1]");
   });
 
   it("groups pretty-printed arrays that span multiple lines", () => {
@@ -52,6 +64,18 @@ describe("groupTestCases", () => {
 
   it("returns empty cases for an empty buffer", () => {
     expect(groupTestCases("  \n", 0, 0)).toEqual({ cases: [] });
+  });
+});
+
+describe("pickCaseBuffers", () => {
+  it("prefers the aggregate buffer over a duplicated selected-case editor", () => {
+    const aggregate = "[4,2,7,1,3,6,9]\n[2,1,3]\n[]";
+    const selected = "[4,2,7,1,3,6,9]";
+    expect(pickCaseBuffers([selected, aggregate], 3, 1)).toEqual([aggregate]);
+  });
+
+  it("keeps one buffer per case tab when they already match", () => {
+    expect(pickCaseBuffers(["[1]", "[2]"], 2, 1)).toEqual(["[1]", "[2]"]);
   });
 });
 

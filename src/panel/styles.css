@@ -275,6 +275,62 @@ body {
   color: var(--color-accent-ink);
 }
 
+/* ── Graph input ─────────────────────────────────────────── */
+
+.input-bar {
+  display: flex;
+  align-items: start;
+  gap: var(--space-2xs);
+  flex: 0 0 auto;
+  padding: 6px var(--space-xs);
+  border-top: 1px solid var(--color-rule);
+  background: var(--color-paper);
+  min-width: 0;
+}
+
+.input-bar-label {
+  flex: 0 0 auto;
+  padding-top: 6px;
+  font-family: var(--font-body);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-ink-3);
+  user-select: none;
+}
+
+.input-bar-field {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 44px;
+  margin: 0;
+  padding: 5px 8px;
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-sm);
+  background: var(--color-paper-2);
+  color: var(--color-ink);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  line-height: 1.4;
+  resize: none;
+  overflow: auto;
+}
+
+.input-bar-field::placeholder {
+  color: var(--color-ink-3);
+}
+
+.input-bar-field:hover {
+  border-color: var(--color-rule-strong);
+}
+
+.input-bar-field:focus {
+  outline: none;
+  border-color: var(--color-accent);
+  background: var(--color-paper);
+}
+
 /* ── Status bar ─────────────────────────────────────────── */
 
 .statusbar {

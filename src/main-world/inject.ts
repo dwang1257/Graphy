@@ -1,5 +1,4 @@
-import { groupTestCases, type CaseCapture } from "../core/cases.js";
-import { splitInputValues } from "../core/parse/value.js";
+import { groupTestCases, pickCaseBuffers, type CaseCapture } from "../core/cases.js";
 import { PAGE_CHANNEL, type Snapshot } from "../shared/protocol.js";
 
 /**
@@ -16,12 +15,10 @@ interface CMNode extends HTMLElement {
 
 const CODE_HINTS = /class\s+Solution|def\s+\w+\s*\(|func\s+\w+|impl\s+Solution|var\s+\w+\s*=\s*function|public\s+class|^\s*(?:int|char|void|double|bool|struct)\b[^=\n]*\(/m;
 
-/** Temporary: POST the aggregate custom-testcase buffer to a local terminal logger. */
-const DEBUG_BUFFER_URL = "http://127.0.0.1:7921/graphy-buffer";
-
 let last = "";
 let lastCases: string[] = [];
-let lastLoggedBuffer = "";
+let lastCode = "";
+let lastSlug = "";
 let timer: number | undefined;
 
 function docOf(content: CMNode): string | null {
@@ -30,65 +27,58 @@ function docOf(content: CMNode): string | null {
   return typeof text === "string" ? text : null;
 }
 
-function editorTexts(): string[] {
-  const out: string[] = [];
-  for (const el of document.querySelectorAll<CMNode>(".cm-content")) {
-    const text = docOf(el);
-    if (text !== null) out.push(text);
-  }
-  return out;
+function isResultEditor(el: CMNode): boolean {
+  return !!el.closest?.('[data-e2e-locator*="result"]');
+}
+
+interface DomCapture extends CaseCapture {
+  code: string;
+  buffer: string;
+  caseTags: number;
+  params: number;
+  editorCount: number;
 }
 
 /**
- * Reads the full custom-testcase buffer (every Case N), then splits it into
- * ordered cases for Graphy-owned tabs. Does not follow LeetCode's selected tab.
+ * Reads custom-testcase editors (never the Output/result pane), then splits
+ * them into ordered cases for Graphy-owned tabs.
  */
-function captureCases(): { code: string; buffer: string; caseTags: number; params: number } & CaseCapture {
-  const found = editorTexts();
-  // Only trust an editor as solution code when it looks like source. LeetCode
-  // often exposes only the testcase aggregate as `.cm-content`; guessing the
-  // longest buffer would swallow every Case N and leave Graphy empty.
-  const codeIndex = found.findIndex((text) => CODE_HINTS.test(text));
-  const code = codeIndex >= 0 ? found[codeIndex]! : "";
-
-  const inputs = found.filter((_, i) => i !== codeIndex);
-
-  // Prefer CodeMirror; fall back to mirrored textareas when CM is absent.
-  if (inputs.length === 0) {
-    for (const area of document.querySelectorAll<HTMLTextAreaElement>("textarea[data-cy], .lc-textarea textarea")) {
-      if (area.value) inputs.push(area.value);
-    }
+function captureCases(): DomCapture {
+  const found: Array<{ el: CMNode; text: string }> = [];
+  for (const el of document.querySelectorAll<CMNode>(".cm-content")) {
+    const text = docOf(el);
+    if (text !== null) found.push({ el, text });
   }
+
+  const codeIndex = found.findIndex((hit) => CODE_HINTS.test(hit.text));
+  const code = codeIndex >= 0 ? found[codeIndex]!.text : "";
+  const rest = found.filter((_, i) => i !== codeIndex);
+  const testcaseHits = rest.filter((hit) => !isResultEditor(hit.el));
 
   const caseTags = document.querySelectorAll('[data-e2e-locator="console-testcase-tag"]').length;
   const params = document.querySelectorAll('[data-e2e-locator="console-testcase-input"]').length;
 
-  // LeetCode sometimes renders one CodeMirror per case tab instead of one aggregate buffer.
-  if (caseTags > 0 && inputs.length === caseTags) {
-    const perCase = inputs.map((text) => splitInputValues(text).join("\n"));
-    const paramMismatch = params > 0 && perCase.some((text) => splitInputValues(text).length !== params);
-    if (!paramMismatch) {
-      const buffer = inputs.join("\n").trim();
-      return { code, buffer, caseTags, params, cases: perCase };
+  let candidates = testcaseHits.map((hit) => hit.text);
+  let textareaCount = 0;
+  if (candidates.length === 0) {
+    for (const area of document.querySelectorAll<HTMLTextAreaElement>("textarea[data-cy], .lc-textarea textarea")) {
+      if (area.value) {
+        candidates.push(area.value);
+        textareaCount += 1;
+      }
     }
   }
 
+  const inputs = pickCaseBuffers(candidates, caseTags, params);
   const buffer = inputs.join("\n").trim();
-  return { code, buffer, caseTags, params, ...groupTestCases(buffer, caseTags, params) };
-}
-
-/** Prints the whole custom-test collection in the local debug terminal (deduped). */
-function debugLogBuffer(buffer: string, caseTags: number, params: number): void {
-  if (buffer === lastLoggedBuffer) return;
-  lastLoggedBuffer = buffer;
-  void fetch(DEBUG_BUFFER_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ buffer, caseTags, params, at: Date.now() }),
-    mode: "cors",
-  }).catch(() => {
-    /* Logger may be down; never break capture. */
-  });
+  return {
+    code,
+    buffer,
+    caseTags,
+    params,
+    editorCount: testcaseHits.length + textareaCount,
+    ...groupTestCases(buffer, caseTags, params),
+  };
 }
 
 function slugOf(): string {
@@ -110,32 +100,59 @@ function post(snapshot: Snapshot): void {
   window.postMessage({ channel: PAGE_CHANNEL, type: "snapshot", payload: snapshot }, location.origin);
 }
 
+function stabilizeCases(fromDom: DomCapture, cases: string[], captureError: string | undefined): {
+  cases: string[];
+  captureError: string | undefined;
+} {
+  if (fromDom.editorCount === 0 && lastCases.length > 0) {
+    return { cases: lastCases, captureError: undefined };
+  }
+  if (
+    lastCases.length > 1
+    && lastCases.length === fromDom.caseTags
+    && cases.length > 0
+    && cases.length < lastCases.length
+  ) {
+    return { cases: lastCases, captureError: undefined };
+  }
+  return { cases, captureError };
+}
+
 function publish(source: Snapshot["source"], override?: Partial<Snapshot>): void {
   const slug = slugOf();
   if (!slug) return;
+  if (slug !== lastSlug) {
+    lastSlug = slug;
+    lastCases = [];
+    lastCode = "";
+    last = "";
+  }
 
   const fromDom = captureCases();
   let cases = fromDom.cases;
   let captureError = fromDom.captureError;
-  debugLogBuffer(fromDom.buffer, fromDom.caseTags, fromDom.params);
 
   if (source === "network") {
     const runCases = override?.cases;
-    // A Run only carries the executed case. Keep a multi-case DOM collection.
     if (cases.length <= 1 || captureError) {
-      if (runCases && runCases.length > 0) {
-        cases = runCases;
-        captureError = undefined;
-      } else if (lastCases.length > 1) {
+      if (lastCases.length > 1) {
         cases = lastCases;
+        captureError = undefined;
+      } else if (runCases && runCases.length > 0) {
+        cases = runCases;
         captureError = undefined;
       }
     }
   }
 
+  ({ cases, captureError } = stabilizeCases(fromDom, cases, captureError));
+
+  const code = override?.code ?? (fromDom.code || lastCode);
+  if (fromDom.code) lastCode = fromDom.code;
+
   const snapshot: Snapshot = {
     cases,
-    code: override?.code ?? fromDom.code,
+    code,
     lang: override?.lang ?? langOf(),
     slug,
     source,
@@ -146,7 +163,9 @@ function publish(source: Snapshot["source"], override?: Partial<Snapshot>): void
   const key = `${snapshot.cases.join("\u001f")}\u001e${snapshot.code}\u001e${snapshot.lang}\u001e${snapshot.captureError ?? ""}`;
   if (source === "editor" && key === last) return;
   last = key;
-  if (snapshot.cases.length > 1) lastCases = snapshot.cases;
+  if (cases.length > 0 && (fromDom.editorCount > 0 || source === "network")) {
+    if (fromDom.caseTags <= 1 || cases.length >= fromDom.caseTags) lastCases = cases;
+  }
   post(snapshot);
 }
 

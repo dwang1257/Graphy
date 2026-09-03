@@ -48,8 +48,10 @@ export function App(): JSX.Element {
   const [confirmedFor, setConfirmedFor] = useState<string | null>(null);
   const [fitCount, setFitCount] = useState(0);
   const [overrides, setOverrides] = useState<Record<string, Override>>({});
+  const [localInput, setLocalInput] = useState<string | null>(null);
 
   const liveUpdate = useRef(true);
+  const inputFocused = useRef(false);
   liveUpdate.current = settings.liveUpdate;
   const hasRendered = useRef(false);
   const lastSaved = useRef("");
@@ -91,13 +93,23 @@ export function App(): JSX.Element {
   const slug = snapshot?.slug ?? "";
   const cases = snapshot?.cases ?? [];
   const caseIndex = clampCaseIndex(activeCase, cases.length);
-  const caseInput = cases[caseIndex] ?? "";
+  const capturedInput = cases[caseIndex] ?? "";
+  const caseInput = localInput ?? capturedInput;
 
   useEffect(() => {
     if (slug === lastSlug.current) return;
     lastSlug.current = slug;
     setActiveCase(0);
+    setLocalInput(null);
   }, [slug]);
+
+  useEffect(() => {
+    setLocalInput(null);
+  }, [caseIndex]);
+
+  useEffect(() => {
+    if (!inputFocused.current) setLocalInput(null);
+  }, [capturedInput]);
 
   const override = overrides[slug] ?? {};
   const overrideKind = (override.kind as StructureKind | undefined) ?? "auto";
@@ -133,19 +145,21 @@ export function App(): JSX.Element {
   const paneSize = pane ? visibleNodeCount(pane.model) : 0;
   const confirmKey = `${slug}:${caseIndex}:${caseInput}:${overrideKind}`;
   const tooLarge = !!pane && paneSize > settings.nodeLimit && confirmedFor !== confirmKey;
+  const emptyStructure = !!pane && paneSize === 0 && !tooLarge;
 
   const dot = useMemo(() => {
-    if (!pane || tooLarge) return "";
+    if (!pane || tooLarge || emptyStructure) return "";
     try {
       return emitDot(pane.model, { palette, layout: settings.layout });
     } catch {
       return "";
     }
-  }, [pane, tooLarge, palette, settings.layout]);
+  }, [pane, tooLarge, emptyStructure, palette, settings.layout]);
 
   useEffect(() => {
     if (!dot) {
       setSvg("");
+      setError(null);
       return;
     }
     let cancelled = false;
@@ -234,6 +248,8 @@ export function App(): JSX.Element {
                   caseInput={caseInput}
                   error={error}
                   tooLarge={tooLarge}
+                  emptyStructure={emptyStructure}
+                  emptyNote={pane?.model.notes[0]}
                   nodeCount={paneSize}
                   failure={result.failures[0]?.reason}
                   onConfirmLarge={() => setConfirmedFor(confirmKey)}
@@ -241,6 +257,26 @@ export function App(): JSX.Element {
               )}
             </div>
           </div>
+
+          <label class="input-bar">
+            <span class="input-bar-label">Input</span>
+            <textarea
+              class="input-bar-field"
+              aria-label="Graph input"
+              placeholder="Paste a test case, e.g. [1,2,3]"
+              spellcheck={false}
+              rows={1}
+              value={caseInput}
+              onFocus={() => {
+                inputFocused.current = true;
+              }}
+              onBlur={() => {
+                inputFocused.current = false;
+              }}
+              onPointerDown={(event) => event.stopPropagation()}
+              onInput={(event) => setLocalInput((event.target as HTMLTextAreaElement).value)}
+            />
+          </label>
 
           <div class="statusbar">
             {cases.length > 1 && (
@@ -287,6 +323,8 @@ interface PlaceholderProps {
   caseInput: string;
   error: string | null;
   tooLarge: boolean;
+  emptyStructure: boolean;
+  emptyNote: string | undefined;
   nodeCount: number;
   failure: string | undefined;
   onConfirmLarge: () => void;
@@ -328,13 +366,24 @@ function Placeholder(props: PlaceholderProps): JSX.Element {
       </div>
     );
   }
-  if (!props.snapshot || !props.caseInput.trim()) {
+  if (props.emptyStructure) {
+    return (
+      <div class="placeholder">
+        <div class="placeholder-card">
+          <div class="placeholder-icon">∅</div>
+          <strong>Empty structure</strong>
+          <span>{props.emptyNote ?? "This test case has nothing to draw."}</span>
+        </div>
+      </div>
+    );
+  }
+  if (!props.caseInput.trim()) {
     return (
       <div class="placeholder">
         <div class="placeholder-card">
           <div class="placeholder-icon">∅</div>
           <strong>No test case yet</strong>
-          <span>Type a custom test case or hit Run.</span>
+          <span>Type a test case below, or hit Run on LeetCode.</span>
         </div>
       </div>
     );

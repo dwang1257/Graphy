@@ -4,14 +4,21 @@ export type LCValue = string | number | boolean | null | LCValue[];
 
 const TRAILING_COMMA = /,\s*([\]}])/g;
 
+function normalizeLiteral(raw: string): string {
+  return raw
+    .replace(/\bNone\b/g, "null")
+    .replace(/\bTrue\b/g, "true")
+    .replace(/\bFalse\b/g, "false")
+    .replace(/'/g, '"')
+    .replace(TRAILING_COMMA, "$1");
+}
+
 function lenient(raw: string): LCValue {
   try {
     return JSON.parse(raw) as LCValue;
   } catch {
-    // Tolerate single quotes and trailing commas before giving up.
-    const patched = raw.replace(/'/g, '"').replace(TRAILING_COMMA, "$1");
     try {
-      return JSON.parse(patched) as LCValue;
+      return JSON.parse(normalizeLiteral(raw)) as LCValue;
     } catch {
       return raw;
     }
