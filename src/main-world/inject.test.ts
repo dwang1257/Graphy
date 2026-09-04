@@ -12,11 +12,14 @@ interface PageHarness {
   snapshots: Array<{ payload: SnapshotPayload }>;
   flushCapture(): Promise<void>;
   selectedIndex(): number;
+  tabClicks(): number;
   pauseSelectionOf(index: number): void;
   dispatchInput(): void;
+  dispatchClick(): void;
   setPathname(pathname: string): void;
   whenSelected(index: number, fn: () => void): void;
   unmountConsole(): void;
+  setCheckState(state: string): void;
 }
 
 interface TabbedPageOptions {
@@ -64,29 +67,26 @@ function installTabbedPage(
   const listeners = new Map<string, Array<() => void>>();
   const timeouts = new Map<number, { fn: () => void; at: number }>();
   const rafs: FrameRequestCallback[] = [];
+  let checkState = "SUCCESS";
+  const interpretId = "interp-1";
 
   let selectedIndex = selected;
+  let tabClicks = 0;
   let paused: number | null = null;
   let now = 0;
   let nextTimerId = 1;
   let nextRafId = 1;
   const onceSelected: Array<{ index: number; fn: () => void; fired: boolean }> = [];
 
-  const codeText = options.code ?? "class Solution {};";
-  const codeEditor = cmContent(codeText);
-  const locationState = {
-    pathname: options.pathname ?? "/problems/example/",
-    origin: "https://leetcode.com",
-  };
-
-  const tabs = cases.map((_, index) => {
+  function makeTab(index: number): HTMLElement {
     return {
       getAttribute: (name: string) => {
         if (name === "aria-selected") return selectedIndex === index ? "true" : "false";
         return null;
       },
       click: () => {
-        if (paused !== index) selectedIndex = index;
+        tabClicks += 1;
+        selectedIndex = index;
         for (const listener of listeners.get("click") ?? []) listener();
         for (const hook of onceSelected) {
           if (hook.fired || hook.index !== index) continue;
@@ -95,7 +95,16 @@ function installTabbedPage(
         }
       },
     } as unknown as HTMLElement;
-  });
+  }
+
+  const codeText = options.code ?? "class Solution {};";
+  const codeEditor = cmContent(codeText);
+  const locationState = {
+    pathname: options.pathname ?? "/problems/example/",
+    origin: "https://leetcode.com",
+  };
+
+  const tabs = cases.map((_, index) => makeTab(index));
 
   const mountedWrappers = (options.mounted ?? []).map(inputWrapper);
 
@@ -131,11 +140,31 @@ function installTabbedPage(
   };
 
   const fakeWindow = {
-    fetch: () => Promise.resolve(new Response()),
     postMessage: (message: { payload: SnapshotPayload }) => {
       snapshots.push(message);
     },
     setInterval: () => 0,
+    fetch: (input: RequestInfo | URL) => {
+      const url =
+        typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (url.includes("interpret_solution")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ interpret_id: interpretId }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
+        );
+      }
+      if (url.includes("/check")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ state: checkState }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
+        );
+      }
+      return Promise.resolve(new Response());
+    },
     setTimeout: (fn: () => void, ms = 0) => {
       const id = nextTimerId++;
       timeouts.set(id, { fn, at: now + ms });
@@ -163,11 +192,13 @@ function installTabbedPage(
 
   async function flushCapture(): Promise<void> {
     let consecutiveRafs = 0;
+    let idle = 0;
     for (let i = 0; i < 500; i += 1) {
       await Promise.resolve();
 
       const raf = rafs.shift();
       if (raf) {
+        idle = 0;
         consecutiveRafs += 1;
         raf(now);
         if (consecutiveRafs > 6) {
@@ -185,6 +216,7 @@ function installTabbedPage(
 
       const due = [...timeouts.entries()].filter(([, timer]) => timer.at <= now);
       if (due.length > 0) {
+        idle = 0;
         for (const [id, timer] of due) {
           timeouts.delete(id);
           timer.fn();
@@ -194,12 +226,14 @@ function installTabbedPage(
 
       const next = earliestTimeout();
       if (next !== undefined) {
+        idle = 0;
         now = next;
         continue;
       }
 
       await Promise.resolve();
-      if (rafs.length === 0 && timeouts.size === 0) break;
+      idle += 1;
+      if (rafs.length === 0 && timeouts.size === 0 && idle > 8) break;
     }
   }
 
@@ -215,11 +249,15 @@ function installTabbedPage(
     snapshots,
     flushCapture,
     selectedIndex: () => selectedIndex,
+    tabClicks: () => tabClicks,
     pauseSelectionOf: (index: number) => {
       paused = index;
     },
     dispatchInput: () => {
       for (const listener of listeners.get("input") ?? []) listener();
+    },
+    dispatchClick: () => {
+      for (const listener of listeners.get("click") ?? []) listener();
     },
     setPathname: (pathname: string) => {
       locationState.pathname = pathname;
@@ -231,13 +269,246 @@ function installTabbedPage(
       tabs.splice(0, tabs.length);
       mountedWrappers.splice(0, mountedWrappers.length);
     },
+    setCheckState: (state: string) => {
+      checkState = state;
+    },
   };
 }
+
+const INTERPRET_ID = "interp-1";
+
+async function runCode(dataInput = "[1]"): Promise<void> {
+  await window.fetch("https://leetcode.com/problems/example/interpret_solution/", {
+    method: "POST",
+    body: JSON.stringify({ data_input: dataInput, typed_code: "class Solution {};", lang: "cpp" }),
+  });
+}
+
+async function finishCheck(id = INTERPRET_ID): Promise<void> {
+  await window.fetch(`https://leetcode.com/submissions/detail/${id}/check/`);
+}
+
+async function finishRun(page: PageHarness, dataInput = "[1]"): Promise<void> {
+  await runCode(dataInput);
+  await page.flushCapture();
+  await finishCheck();
+  await page.flushCapture();
+}
+
+class ResultNode {
+  tagName: string;
+  attributes: Record<string, string>;
+  className: string;
+  childNodes: ResultNode[];
+  parentElement: ResultNode | null = null;
+  text: string;
+  onClick?: () => void;
+
+  constructor(options: {
+    tag?: string;
+    attributes?: Record<string, string>;
+    className?: string;
+    text?: string;
+    children?: ResultNode[];
+    onClick?: () => void;
+  } = {}) {
+    this.tagName = (options.tag ?? "div").toUpperCase();
+    this.attributes = options.attributes ?? {};
+    this.className = options.className ?? "";
+    this.text = options.text ?? "";
+    this.childNodes = options.children ?? [];
+    this.onClick = options.onClick;
+    for (const child of this.childNodes) child.parentElement = this;
+  }
+
+  get children(): ResultNode[] {
+    return this.childNodes;
+  }
+
+  get textContent(): string {
+    return `${this.childNodes.map((child) => child.textContent).join("")}${this.text}`;
+  }
+
+  get nextElementSibling(): ResultNode | null {
+    if (!this.parentElement) return null;
+    const siblings = this.parentElement.childNodes;
+    const index = siblings.indexOf(this);
+    return index >= 0 ? (siblings[index + 1] ?? null) : null;
+  }
+
+  click(): void {
+    this.onClick?.();
+  }
+
+  getAttribute(name: string): string | null {
+    return this.attributes[name] ?? null;
+  }
+
+  matches(selector: string): boolean {
+    return selector.split(",").some((part) => resultMatches(this, part.trim()));
+  }
+
+  contains(other: ResultNode): boolean {
+    let node: ResultNode | null = other;
+    while (node) {
+      if (node === this) return true;
+      node = node.parentElement;
+    }
+    return false;
+  }
+
+  querySelector(selector: string): ResultNode | null {
+    return this.querySelectorAll(selector)[0] ?? null;
+  }
+
+  querySelectorAll(selector: string): ResultNode[] {
+    const found: ResultNode[] = [];
+    const visit = (node: ResultNode): void => {
+      if (node.matches(selector)) found.push(node);
+      for (const child of node.childNodes) visit(child);
+    };
+    for (const child of this.childNodes) visit(child);
+    return found;
+  }
+}
+
+function resultMatches(node: ResultNode, selector: string): boolean {
+  const attr = selector.match(/^\[([^=]+)="([^"]+)"\]$/);
+  if (attr) return node.getAttribute(attr[1]!) === attr[2];
+  if (selector.startsWith(".")) return node.className.split(/\s+/).includes(selector.slice(1));
+  return node.tagName === selector.toUpperCase();
+}
+
+function installResultPage(options: { cases: string[][]; selected: number }): PageHarness {
+  const page = installTabbedPage([], options.selected, { code: "class Solution {};" });
+  let selectedIndex = options.selected;
+
+  const inputValues = (): ResultNode[] =>
+    (options.cases[selectedIndex] ?? []).map(
+      (value) =>
+        new ResultNode({
+          children: [new ResultNode({ className: "font-menlo whitespace-pre-wrap", text: value })],
+        }),
+    );
+
+  const heading = new ResultNode({ className: "mb-2 text-xs font-medium", text: "Input" });
+  const section = new ResultNode({ className: "space-y-2", children: inputValues() });
+  const pills = options.cases.map((_, index) => {
+    return new ResultNode({
+      className: `cursor-pointer rounded-lg px-4 py-1 font-medium${
+        index === selectedIndex ? " bg-fill-3" : ""
+      }`,
+      onClick: () => {
+        selectedIndex = index;
+        section.childNodes.splice(0, section.childNodes.length, ...inputValues());
+        for (const child of section.childNodes) child.parentElement = section;
+        for (const [pillIndex, pill] of pills.entries()) {
+          pill.className = `cursor-pointer rounded-lg px-4 py-1 font-medium${
+            pillIndex === selectedIndex ? " bg-fill-3" : ""
+          }`;
+        }
+      },
+      children: [new ResultNode({ text: `Case ${index + 1}` })],
+    });
+  });
+
+  const panel = new ResultNode({
+    className: "mx-5 my-4 space-y-4",
+    children: [
+      new ResultNode({ attributes: { "data-e2e-locator": "console-result" }, text: "Accepted" }),
+      new ResultNode({ className: "flex flex-wrap", children: pills }),
+      new ResultNode({ children: [heading, section] }),
+    ],
+  });
+  const root = new ResultNode({ children: [panel] });
+
+  const originalDocument = document as unknown as {
+    querySelector: (selector: string) => unknown;
+    querySelectorAll: (selector: string) => unknown;
+  };
+  const previousAll = originalDocument.querySelectorAll.bind(originalDocument);
+  const previousOne = originalDocument.querySelector.bind(originalDocument);
+
+  originalDocument.querySelector = (selector: string) =>
+    root.querySelector(selector) ?? previousOne(selector);
+  originalDocument.querySelectorAll = (selector: string) => {
+    if (selector === '[data-e2e-locator="console-testcase-tag"]') return [];
+    if (selector === '[data-e2e-locator="console-testcase-input"]') return [];
+    if (selector === ".cm-content") return previousAll(selector);
+    const fromTree = root.querySelectorAll(selector);
+    return fromTree.length > 0 ? fromTree : previousAll(selector);
+  };
+
+  return {
+    ...page,
+    selectedIndex: () => selectedIndex,
+  };
+}
+
+test("walks case tabs after Run results succeed, not on load or send", async () => {
+  const page = installTabbedPage([["[1]"], ["[2]"], ["[3]"]], 1);
+  await import("./inject.js");
+  await page.flushCapture();
+  expect(page.tabClicks()).toBe(0);
+  expect(page.snapshots).toEqual([]);
+
+  await runCode("[1]");
+  await page.flushCapture();
+  expect(page.tabClicks()).toBe(0);
+  expect(page.snapshots).toEqual([]);
+
+  await finishCheck();
+  await page.flushCapture();
+  expect(page.snapshots.at(-1)?.payload.cases).toEqual(["[1]", "[2]", "[3]"]);
+  const clicksAfterResults = page.tabClicks();
+  expect(clicksAfterResults).toBeGreaterThan(0);
+  expect(page.selectedIndex()).toBe(1);
+
+  page.dispatchInput();
+  page.dispatchClick();
+  await page.flushCapture();
+  expect(page.tabClicks()).toBe(clicksAfterResults);
+});
+
+test("does not walk while a Run check is still in flight", async () => {
+  const page = installTabbedPage([["[1]"], ["[2]"]], 0);
+  await import("./inject.js");
+
+  page.setCheckState("PENDING");
+  await runCode("[1]");
+  await page.flushCapture();
+  await finishCheck();
+  await page.flushCapture();
+  expect(page.tabClicks()).toBe(0);
+  expect(page.snapshots).toEqual([]);
+
+  page.setCheckState("STARTED");
+  await finishCheck();
+  await page.flushCapture();
+  expect(page.tabClicks()).toBe(0);
+  expect(page.snapshots).toEqual([]);
+
+  page.setCheckState("SUCCESS");
+  await finishCheck();
+  await page.flushCapture();
+  expect(page.snapshots.at(-1)?.payload.cases).toEqual(["[1]", "[2]"]);
+});
+
+test("ignores a check for a different submission id", async () => {
+  const page = installTabbedPage([["[1]"], ["[2]"]], 0);
+  await import("./inject.js");
+  await runCode("[1]");
+  await page.flushCapture();
+  await finishCheck("other-id");
+  await page.flushCapture();
+  expect(page.tabClicks()).toBe(0);
+  expect(page.snapshots).toEqual([]);
+});
 
 test("publishes one atomic snapshot containing every visited Case tab", async () => {
   const page = installTabbedPage([["[1]"], ["[2]", "4"], ["[3]"]], 1);
   await import("./inject.js");
-  await page.flushCapture();
+  await finishRun(page);
   expect(page.snapshots.at(-1)?.payload.cases).toEqual(["[1]", "[2]\n4", "[3]"]);
   expect(page.selectedIndex()).toBe(1);
 });
@@ -246,45 +517,31 @@ function isSubsetCollection(cases: string[] | undefined, complete: string[]): bo
   return !!cases && cases.length > 0 && cases.length < complete.length;
 }
 
-test("keeps the last complete collection when a refresh is cancelled", async () => {
+test("keeps the last complete collection when a later Run cannot walk cases", async () => {
   const page = installTabbedPage([["[1]"], ["[2]"], ["[3]"]], 1);
   await import("./inject.js");
-  await page.flushCapture();
+  await finishRun(page);
   const complete = page.snapshots.at(-1)?.payload.cases ?? [];
+  const clicksAfterFirst = page.tabClicks();
 
-  page.whenSelected(0, () => {
-    page.dispatchInput();
-  });
-  page.dispatchInput();
-  await page.flushCapture();
+  page.pauseSelectionOf(0);
+  await finishRun(page, "[2]");
 
   expect(complete).toEqual(["[1]", "[2]", "[3]"]);
   expect(page.snapshots.at(-1)?.payload.cases).toEqual(complete);
-  expect(page.snapshots.some((snapshot) => isSubsetCollection(snapshot.payload.cases, complete))).toBe(
-    false,
-  );
+  expect(page.tabClicks()).toBeGreaterThan(clicksAfterFirst);
   expect(page.selectedIndex()).toBe(1);
 });
 
-test("does not post a subset when a second generation starts mid-traversal", async () => {
+test("does not post a subset while walking cases after results", async () => {
   const page = installTabbedPage([["[1]"], ["[2]"], ["[3]"]], 1);
   await import("./inject.js");
-  await page.flushCapture();
-  const complete = page.snapshots.at(-1)?.payload.cases ?? [];
-  const posted = page.snapshots.length;
+  await finishRun(page);
 
-  page.whenSelected(0, () => {
-    void window.fetch("https://leetcode.com/problems/example/interpret_solution/", {
-      method: "POST",
-      body: JSON.stringify({ data_input: "[2]", typed_code: "class Solution {};", lang: "cpp" }),
-    });
-  });
-  page.dispatchInput();
-  await page.flushCapture();
-
-  const extra = page.snapshots.slice(posted);
-  expect(complete).toEqual(["[1]", "[2]", "[3]"]);
-  expect(extra.some((snapshot) => isSubsetCollection(snapshot.payload.cases, complete))).toBe(false);
+  const complete = ["[1]", "[2]", "[3]"];
+  expect(page.snapshots.some((snapshot) => isSubsetCollection(snapshot.payload.cases, complete))).toBe(
+    false,
+  );
   expect(page.snapshots.at(-1)?.payload.cases).toEqual(complete);
   expect(page.selectedIndex()).toBe(1);
 });
@@ -292,13 +549,8 @@ test("does not post a subset when a second generation starts mid-traversal", asy
 test("Run never replaces a complete collection with data_input", async () => {
   const page = installTabbedPage([["[1]"], ["[2]"], ["[3]"]], 0);
   await import("./inject.js");
-  await page.flushCapture();
-
-  await window.fetch("https://leetcode.com/problems/example/interpret_solution/", {
-    method: "POST",
-    body: JSON.stringify({ data_input: "[2]", typed_code: "class Solution {};", lang: "cpp" }),
-  });
-  await page.flushCapture();
+  await finishRun(page);
+  await finishRun(page, "[2]");
 
   expect(page.snapshots.at(-1)?.payload.cases).toEqual(["[1]", "[2]", "[3]"]);
 });
@@ -306,24 +558,22 @@ test("Run never replaces a complete collection with data_input", async () => {
 test("clears the last complete cache when the problem slug changes", async () => {
   const page = installTabbedPage([["[1]"], ["[2]"]], 0);
   await import("./inject.js");
-  await page.flushCapture();
+  await finishRun(page);
   expect(page.snapshots.at(-1)?.payload.cases).toEqual(["[1]", "[2]"]);
 
   page.setPathname("/problems/other/");
-  page.pauseSelectionOf(0);
-  page.dispatchInput();
-  await page.flushCapture();
+  page.unmountConsole();
+  await finishRun(page, "[9]");
 
   expect(page.snapshots.at(-1)?.payload.slug).toBe("other");
-  expect(page.snapshots.at(-1)?.payload.cases).toEqual([]);
-  expect(page.snapshots.at(-1)?.payload.captureError).toBeDefined();
+  expect(page.snapshots.at(-1)?.payload.cases).toEqual(["[9]"]);
 });
 
 test("publishes empty cases and captureError when the first traversal fails", async () => {
   const page = installTabbedPage([["[1]"], ["[2]"]], 0);
   page.pauseSelectionOf(0);
   await import("./inject.js");
-  await page.flushCapture();
+  await finishRun(page);
 
   expect(page.snapshots.at(-1)?.payload.cases).toEqual([]);
   expect(page.snapshots.at(-1)?.payload.captureError).toBeDefined();
@@ -332,7 +582,7 @@ test("publishes empty cases and captureError when the first traversal fails", as
 test("publishes one mounted case when no Case tabs exist", async () => {
   const page = installTabbedPage([], -1, { mounted: ["[1,2,3]", "2"] });
   await import("./inject.js");
-  await page.flushCapture();
+  await finishRun(page);
 
   expect(page.snapshots.at(-1)?.payload.cases).toEqual(["[1,2,3]\n2"]);
 });
@@ -340,16 +590,12 @@ test("publishes one mounted case when no Case tabs exist", async () => {
 test("keeps the cached collection when a later capture finds no tabs or inputs", async () => {
   const page = installTabbedPage([["[1]"], ["[2]"], ["[3]"]], 0);
   await import("./inject.js");
-  await page.flushCapture();
+  await finishRun(page);
   const complete = page.snapshots.at(-1)?.payload.cases;
   expect(complete).toEqual(["[1]", "[2]", "[3]"]);
 
   page.unmountConsole();
-  await window.fetch("https://leetcode.com/problems/example/interpret_solution/", {
-    method: "POST",
-    body: JSON.stringify({ data_input: "[2]", typed_code: "class Solution {};", lang: "cpp" }),
-  });
-  await page.flushCapture();
+  await finishRun(page, "[2]");
 
   expect(page.snapshots.at(-1)?.payload.cases).toEqual(complete);
   expect(page.snapshots.at(-1)?.payload.captureError).toBeUndefined();
@@ -364,13 +610,29 @@ test("Run may use data_input only when no tabs and no complete cache exist", asy
   const page = installTabbedPage([], -1);
   await import("./inject.js");
   await page.flushCapture();
-  expect(page.snapshots.at(-1)?.payload.cases).toEqual([]);
+  expect(page.snapshots).toEqual([]);
 
-  await window.fetch("https://leetcode.com/problems/example/interpret_solution/", {
-    method: "POST",
-    body: JSON.stringify({ data_input: "[2]", typed_code: "class Solution {};", lang: "cpp" }),
-  });
-  await page.flushCapture();
+  await finishRun(page, "[2]");
 
   expect(page.snapshots.at(-1)?.payload.cases).toEqual(["[2]"]);
+});
+
+test("publishes every Test Result case from the Input section", async () => {
+  const page = installResultPage({
+    cases: [
+      ["[2,7,11,15]", "9"],
+      ["[3,2,4]", "6"],
+      ["[3,3]", "6"],
+    ],
+    selected: 0,
+  });
+  await import("./inject.js");
+  await finishRun(page);
+
+  expect(page.snapshots.at(-1)?.payload.cases).toEqual([
+    "[2,7,11,15]\n9",
+    "[3,2,4]\n6",
+    "[3,3]\n6",
+  ]);
+  expect(page.selectedIndex()).toBe(0);
 });

@@ -25,14 +25,25 @@ interface CodeMirrorContent extends HTMLElement {
 
 const TAB_SELECTOR = '[data-e2e-locator="console-testcase-tag"]';
 const INPUT_SELECTOR = '[data-e2e-locator="console-testcase-input"]';
+const RESULT_SELECTOR = '[data-e2e-locator="console-result"]';
+const CASE_PILL_TEXT = /^Case\s+\d+$/i;
+const INPUT_HEADING = /^(Input|输入)$/;
 const SETTLE_TIMEOUT_MS = 2_000;
 
-function isSelected(element: HTMLElement): boolean {
+function normalizeText(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function isOfficiallySelected(element: HTMLElement): boolean {
   return (
     element.getAttribute("aria-selected") === "true" ||
     element.getAttribute("aria-current") === "true" ||
     element.getAttribute("data-state") === "active"
   );
+}
+
+function isVisuallySelected(element: HTMLElement): boolean {
+  return String(element.className).includes("bg-fill-3");
 }
 
 function textareaValue(element: HTMLElement): string | null {
@@ -43,31 +54,116 @@ function textareaValue(element: HTMLElement): string | null {
   return element.querySelector<HTMLTextAreaElement>("textarea")?.value ?? null;
 }
 
+function parameterValue(wrapper: HTMLElement): string | null {
+  const content = wrapper.querySelector<CodeMirrorContent>(".cm-content");
+  const codeMirrorValue = content?.cmView?.rootView?.view?.state?.doc?.toString();
+  if (typeof codeMirrorValue === "string") return codeMirrorValue;
+
+  const fromTextarea = textareaValue(wrapper);
+  if (fromTextarea !== null) return fromTextarea;
+
+  return typeof wrapper.textContent === "string" ? wrapper.textContent : null;
+}
+
+function firstMatch(root: ParentNode, selector: string): HTMLElement | null {
+  return (
+    root.querySelector?.<HTMLElement>(selector) ??
+    root.querySelectorAll?.<HTMLElement>(selector)[0] ??
+    null
+  );
+}
+
+function isCasePillLabel(element: HTMLElement): boolean {
+  return CASE_PILL_TEXT.test(normalizeText(element.textContent ?? ""));
+}
+
+function collectResultPills(root: ParentNode): HTMLElement[] {
+  const labeled = Array.from(root.querySelectorAll<HTMLElement>("div,button")).filter(isCasePillLabel);
+  const clickable = labeled.filter((element) => {
+    const className = String(element.className);
+    return element.tagName === "BUTTON" || className.includes("cursor-pointer");
+  });
+  const pool = clickable.length > 0 ? clickable : labeled;
+  return pool.filter((element) => !pool.some((other) => other !== element && other.contains?.(element)));
+}
+
+function findResultPanel(doc: Document): HTMLElement | null {
+  const badge = firstMatch(doc, RESULT_SELECTOR);
+  if (!badge) return null;
+
+  let node: HTMLElement | null = badge;
+  for (let depth = 0; depth < 10 && node; depth += 1) {
+    if (collectResultPills(node).length > 0) return node;
+    node = node.parentElement;
+  }
+  return badge.parentElement;
+}
+
+function resultParamValue(block: HTMLElement): string | null {
+  const menlo = Array.from(block.querySelectorAll<HTMLElement>("div")).find((element) =>
+    String(element.className).includes("font-menlo"),
+  );
+  if (menlo) return (menlo.textContent ?? "").trim();
+
+  const text = (block.textContent ?? "").trim();
+  if (!text) return null;
+  return text.replace(/^[^\n=]*=\s*/, "").trim() || null;
+}
+
+function readResultParameters(doc: Document): string[] | null {
+  const panel = findResultPanel(doc);
+  if (!panel) return null;
+
+  const heading = Array.from(panel.querySelectorAll<HTMLElement>("div")).find(
+    (element) =>
+      INPUT_HEADING.test(normalizeText(element.textContent ?? "")) && element.children.length === 0,
+  );
+  const section = heading?.nextElementSibling as HTMLElement | null;
+  if (!section) return null;
+
+  const values = Array.from(section.children, (child) => resultParamValue(child as HTMLElement));
+  return values.length > 0 && values.every((value): value is string => value !== null) ? values : null;
+}
+
+function readOfficialParameters(doc: Document): string[] | null {
+  const wrappers = Array.from(doc.querySelectorAll<HTMLElement>(INPUT_SELECTOR));
+  if (wrappers.length === 0) return null;
+
+  const values = wrappers.map(parameterValue);
+  return values.every((value): value is string => value !== null) ? values : null;
+}
+
 export function createTestcaseDomAdapter(
   doc: Document,
   win: Window,
 ): TestcaseDomAdapter {
-  const tabs = (): CaseTab[] =>
-    Array.from(doc.querySelectorAll<HTMLElement>(TAB_SELECTOR), (element, index) => ({
+  let lastClicked: HTMLElement | null = null;
+
+  const tabs = (): CaseTab[] => {
+    const official = Array.from(doc.querySelectorAll<HTMLElement>(TAB_SELECTOR), (element, index) => ({
       element,
       index,
     }));
+    if (official.length > 0) return official;
 
-  const selectedIndex = (caseTabs: CaseTab[]): number =>
-    caseTabs.find((tab) => isSelected(tab.element))?.index ?? -1;
-
-  const readMountedParameters = (): string[] | null => {
-    const wrappers = Array.from(doc.querySelectorAll<HTMLElement>(INPUT_SELECTOR));
-    if (wrappers.length === 0) return null;
-
-    const values = wrappers.map((wrapper) => {
-      const content = wrapper.querySelector<CodeMirrorContent>(".cm-content");
-      const codeMirrorValue = content?.cmView?.rootView?.view?.state?.doc?.toString();
-      return codeMirrorValue ?? textareaValue(wrapper);
-    });
-
-    return values.every((value): value is string => value !== null) ? values : null;
+    const panel = findResultPanel(doc);
+    if (!panel) return [];
+    return collectResultPills(panel).map((element, index) => ({ element, index }));
   };
+
+  const selectedIndex = (caseTabs: CaseTab[]): number => {
+    if (lastClicked) {
+      const clicked = caseTabs.find((tab) => tab.element === lastClicked);
+      if (clicked) return clicked.index;
+    }
+    return (
+      caseTabs.find((tab) => isOfficiallySelected(tab.element) || isVisuallySelected(tab.element))
+        ?.index ?? -1
+    );
+  };
+
+  const readMountedParameters = (): string[] | null =>
+    readOfficialParameters(doc) ?? readResultParameters(doc);
 
   const waitUntilSettled = (
     tab: CaseTab,
@@ -117,7 +213,10 @@ export function createTestcaseDomAdapter(
   return {
     tabs,
     selectedIndex,
-    select: (tab) => tab.element.click(),
+    select: (tab) => {
+      lastClicked = tab.element;
+      tab.element.click();
+    },
     readMountedParameters,
     waitUntilSettled,
   };

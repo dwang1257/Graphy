@@ -26,9 +26,13 @@ export function selectPrimaryPane(
 }
 
 /**
- * Maps `data_input` lines onto signature parameters, then renders every
- * visualizable parameter into its own pane. Scalars like `n` and `pos` are not
- * panes of their own - they feed the linked-list builder.
+ * Maps `data_input` values onto signature parameters, then renders visualizable
+ * parameters into panes. Scalars like `n` and `pos` are not panes of their own
+ * - they feed the linked-list builder.
+ *
+ * When the user picks a structure, LeetCode tree / list / matrix cases are
+ * always: one array (the structure), then however many trailing args the
+ * problem has. Only that first array is drawn.
  */
 export function buildPanes(
   input: string,
@@ -46,10 +50,9 @@ export function buildPanes(
 
   const cyclePos = numberFor(entries, "cycle-pos");
 
-  const visual = entries.filter((e) => isStructure(e.role.kind));
-  const targets = visual.length > 0 || !options.override
-    ? visual
-    : entries.filter((e) => Array.isArray(e.value)).slice(0, 1);
+  const targets = options.override
+    ? firstArrayEntry(entries)
+    : entries.filter((e) => isStructure(e.role.kind));
 
   for (const entry of targets) {
     const kind = options.override ?? (entry.role.kind as StructureKind);
@@ -75,6 +78,11 @@ export function buildPanes(
     });
   }
   return result;
+}
+
+function firstArrayEntry<T extends { value: LCValue }>(entries: T[]): T[] {
+  const hit = entries.find((e) => Array.isArray(e.value));
+  return hit ? [hit] : [];
 }
 
 interface BuildContext {

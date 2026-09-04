@@ -18,10 +18,8 @@ import {
 import { PANEL_CHANNEL, isToPanel, type FromPanel, type Snapshot } from "../shared/protocol.js";
 
 import { GraphView } from "./GraphView.js";
-import { pointerDragHandler } from "./usePointerDrag.js";
 import { SettingsDrawer } from "./SettingsDrawer.js";
 import { TitleBar } from "./TitleBar.js";
-import { GripIcon } from "./icons.js";
 import { preload, renderDot } from "./graphviz.js";
 import { detectParentOrigin, isAllowedParentOrigin } from "./parentOrigin.js";
 
@@ -46,7 +44,6 @@ export function App(): JSX.Element {
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [pageIsDark, setPageIsDark] = useState(false);
-  const [collapsed, setCollapsed] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [activeCase, setActiveCase] = useState(0);
   const [svg, setSvg] = useState("");
@@ -202,11 +199,6 @@ export function App(): JSX.Element {
     }, 300);
   }, []);
 
-  const onResizeGrip = pointerDragHandler<HTMLSpanElement>({
-    onMove: (dx, dy) => toHost({ channel: PANEL_CHANNEL, type: "resize", dx, dy }),
-    onEnd: () => toHost({ channel: PANEL_CHANNEL, type: "persist" }),
-  });
-
   const stageStyle = useMemo((): JSX.CSSProperties => {
     const style: JSX.CSSProperties = { backgroundColor: palette.background };
     if (palette.backgroundImage) {
@@ -221,89 +213,69 @@ export function App(): JSX.Element {
   return (
     <div class={`panel${paletteName === "dark" ? " dark" : ""}`}>
       <TitleBar
-        collapsed={collapsed}
         showSettings={showSettings}
         selectedKind={selectedKind}
         onKindChange={setKind}
         onFit={() => setFitCount((n) => n + 1)}
         onToggleSettings={() => setShowSettings((v) => !v)}
-        onCollapse={() => {
-          const next = !collapsed;
-          setCollapsed(next);
-          toHost({ channel: PANEL_CHANNEL, type: "collapse", collapsed: next });
-        }}
         onClose={() => toHost({ channel: PANEL_CHANNEL, type: "close" })}
         onDrag={(dx, dy) => toHost({ channel: PANEL_CHANNEL, type: "move", dx, dy })}
         onDragEnd={() => toHost({ channel: PANEL_CHANNEL, type: "persist" })}
       />
 
-      {!collapsed && (
-        <>
-          <div class={`stage-wrap${showSettings ? " with-rail" : ""}`}>
-            {showSettings && (
-              <SettingsDrawer
-                settings={settings}
-                activePalette={paletteName}
-                onChange={updateSettings}
-                onClose={() => setShowSettings(false)}
-              />
-            )}
-            <div class="stage-area stage-bg" style={stageStyle}>
-              {svg ? (
-                <GraphView
-                  svg={svg}
-                  fitKey={`${slug}:${caseIndex}:${pane?.id ?? ""}:${fitCount}`}
-                  nodeBackgroundImage={palette.nodeBackgroundImage}
-                />
-              ) : (
-                <div class="stage" />
-              )}
-              {!svg && (
-                <Placeholder
-                  snapshot={snapshot}
-                  caseInput={caseInput}
-                  error={error}
-                  tooLarge={tooLarge}
-                  nodeCount={paneSize}
-                  failure={result.failures[0]?.reason}
-                  onConfirmLarge={() => setConfirmedFor(confirmKey)}
-                />
-              )}
-            </div>
-          </div>
+      <div class="stage-wrap">
+        {showSettings && (
+          <SettingsDrawer
+            settings={settings}
+            activePalette={paletteName}
+            onChange={updateSettings}
+            onClose={() => setShowSettings(false)}
+          />
+        )}
+        <div class="stage-area stage-bg" style={stageStyle}>
+          {svg ? (
+            <GraphView
+              svg={svg}
+              fitKey={`${slug}:${caseIndex}:${pane?.id ?? ""}:${fitCount}`}
+              nodeBackgroundImage={palette.nodeBackgroundImage}
+            />
+          ) : (
+            <div class="stage" />
+          )}
+          {!svg && (
+            <Placeholder
+              snapshot={snapshot}
+              caseInput={caseInput}
+              error={error}
+              tooLarge={tooLarge}
+              nodeCount={paneSize}
+              failure={result.failures[0]?.reason}
+              onConfirmLarge={() => setConfirmedFor(confirmKey)}
+            />
+          )}
+        </div>
+      </div>
 
-          <div class="statusbar">
-            {cases.length > 1 && (
-              <div class="case-switcher" role="tablist" aria-label="Test cases">
-                {cases.map((_, i) => (
-                  <button
-                    class="case-pill"
-                    role="tab"
-                    key={i}
-                    type="button"
-                    aria-selected={i === caseIndex}
-                    aria-label={`Case ${i + 1}`}
-                    onClick={() => setActiveCase(i)}
-                  >
-                    Case {i + 1}
-                  </button>
-                ))}
-              </div>
-            )}
-            <span>{countLabel(pane?.model)}</span>
-            <span class="spacer" />
-            {snapshot && (
-              <>
-                <span class={`status-dot${snapshot.source === "network" ? "" : " idle"}`} aria-hidden="true" />
-                <span>{snapshot.source === "network" ? "run" : "live"}</span>
-              </>
-            )}
-            <span class="grip" onPointerDown={onResizeGrip} title="Resize" tabIndex={0} role="button" aria-label="Resize panel">
-              <GripIcon />
-            </span>
+      <div class="statusbar">
+        {cases.length > 1 && (
+          <div class="case-switcher" role="tablist" aria-label="Test cases">
+            {cases.map((_, i) => (
+              <button
+                class="case-pill"
+                role="tab"
+                key={i}
+                type="button"
+                aria-selected={i === caseIndex}
+                aria-label={`Case ${i + 1}`}
+                onClick={() => setActiveCase(i)}
+              >
+                Case {i + 1}
+              </button>
+            ))}
           </div>
-        </>
-      )}
+        )}
+        <span>{countLabel(pane?.model)}</span>
+      </div>
     </div>
   );
 }

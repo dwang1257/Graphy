@@ -56,3 +56,38 @@ test("visualizes a sparse tree when binary-tree is selected", () => {
   expect(result.failures).toEqual([]);
   expect(result.panes[0]?.model.kind).toBe("binary-tree");
 });
+
+test("with a structure selected, only the first array is drawn", () => {
+  // LeetCode LCA-style input: tree array, then node values typed as TreeNode*.
+  const result = buildPanes("[4,2,6,3,1,5]\n1\n2", {
+    method: "lowestCommonAncestor",
+    params: [
+      { type: "TreeNode*", name: "root" },
+      { type: "TreeNode*", name: "p" },
+      { type: "TreeNode*", name: "q" },
+    ],
+  }, { override: "binary-tree" });
+
+  expect(result.failures).toEqual([]);
+  expect(result.panes).toHaveLength(1);
+  expect(result.panes[0]?.model.nodes.some((n) => n.role === "root")).toBe(true);
+});
+
+test("with a structure selected, skips leading scalars and uses the first array", () => {
+  const result = buildPanes("2\n[[1,0],[0,1]]", null, { override: "matrix" });
+
+  expect(result.failures).toEqual([]);
+  expect(result.panes).toHaveLength(1);
+  expect(result.panes[0]?.model.kind).toBe("matrix");
+});
+
+test("draws a pretty-printed tree plus trailing args when binary-tree is selected", () => {
+  const result = buildPanes("[\n  4,\n  2,\n  6,\n  3,\n  1,\n  5\n]\n1\n2", null, {
+    override: "binary-tree",
+  });
+
+  expect(result.failures).toEqual([]);
+  expect(result.panes).toHaveLength(1);
+  expect(result.panes[0]?.model.kind).toBe("binary-tree");
+  expect(result.panes[0]?.model.nodes.some((n) => n.role === "root")).toBe(true);
+});

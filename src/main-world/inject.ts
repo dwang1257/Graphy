@@ -3,9 +3,9 @@ import { captureCasesFromTabs } from "./testcaseCapture.js";
 import { createTestcaseDomAdapter, type TestcaseDomAdapter } from "./testcaseDom.js";
 
 /**
- * Runs in the page world. Case tabs are visited one at a time through the DOM
- * adapter; Graphy publishes only a complete collection. The Run request is a
- * one-case fallback when no tabs and no complete cache exist.
+ * Runs in the page world. Case tabs are visited after a Run's check returns a
+ * terminal state. The last complete cache is reused if that walk fails; a Run
+ * may fall back to data_input only when no cache exists.
  */
 
 interface CMNode extends HTMLElement {
@@ -14,23 +14,10 @@ interface CMNode extends HTMLElement {
 
 const CODE_HINTS = /class\s+Solution|def\s+\w+\s*\(|func\s+\w+|impl\s+Solution|var\s+\w+\s*=\s*function|public\s+class|^\s*(?:int|char|void|double|bool|struct)\b[^=\n]*\(/m;
 
-const rawAdapter = createTestcaseDomAdapter(document, window);
-let suppressClick = false;
-const adapter: TestcaseDomAdapter = {
-  ...rawAdapter,
-  select: (tab) => {
-    suppressClick = true;
-    try {
-      rawAdapter.select(tab);
-    } finally {
-      suppressClick = false;
-    }
-  },
-};
+const adapter: TestcaseDomAdapter = createTestcaseDomAdapter(document, window);
 
 let last = "";
 let generation = 0;
-let timer: number | undefined;
 let cache: { slug: string; cases: string[] } | null = null;
 let flight: Promise<void> = Promise.resolve();
 
@@ -73,7 +60,7 @@ function beginGeneration(): number {
   return generation;
 }
 
-function publish(source: Snapshot["source"], override?: Partial<Snapshot>): void {
+function publish(source: Snapshot["source"], override?: Partial<Snapshot>, walk = false): void {
   const slug = slugOf();
   if (!slug) return;
 
@@ -82,34 +69,39 @@ function publish(source: Snapshot["source"], override?: Partial<Snapshot>): void
     if (gen !== generation) return;
 
     const isCurrent = () => gen === generation;
-    const fromDom = await captureCasesFromTabs(adapter, isCurrent);
-    if (!isCurrent()) return;
+    if (cache && cache.slug !== slug) cache = null;
 
-    const liveSlug = slugOf();
-    if (!liveSlug) return;
-    if (cache && cache.slug !== liveSlug) cache = null;
+    let cases: string[] = cache?.cases ?? [];
+    let captureError: string | undefined;
 
-    let cases = fromDom.cases;
-    let captureError = fromDom.captureError;
-    const completeCache = cache && cache.cases.length > 0 ? cache : null;
-
-    if (captureError || cases.length === 0) {
-      if (completeCache) {
-        cases = completeCache.cases;
-        captureError = undefined;
-      } else if (captureError) {
-        cases = [];
+    if (walk) {
+      const fromDom = await captureCasesFromTabs(adapter, isCurrent);
+      if (!isCurrent()) return;
+      const liveSlug = slugOf();
+      if (!liveSlug) return;
+      if (cache && cache.slug !== liveSlug) cache = null;
+      cases = fromDom.cases;
+      captureError = fromDom.captureError;
+      const completeCache = cache && cache.cases.length > 0 ? cache : null;
+      if (captureError || cases.length === 0) {
+        if (completeCache) {
+          cases = completeCache.cases;
+          captureError = undefined;
+        } else if (captureError) {
+          cases = [];
+        }
+      } else {
+        cache = { slug: liveSlug, cases };
       }
-    } else {
-      cache = { slug: liveSlug, cases };
     }
 
     if (source === "network") {
       const runCases = override?.cases;
-      const noTabs = adapter.tabs().length === 0;
       const noCache = !cache || cache.cases.length === 0;
-      if (noTabs && noCache && runCases && runCases.length > 0) {
+      if (noCache && !captureError && runCases && runCases.length > 0) {
         cases = runCases;
+      } else if (cache && cache.cases.length > 0) {
+        cases = cache.cases;
         captureError = undefined;
       }
     }
@@ -118,7 +110,7 @@ function publish(source: Snapshot["source"], override?: Partial<Snapshot>): void
       cases,
       code: override?.code ?? captureCode(),
       lang: override?.lang ?? langOf(),
-      slug: liveSlug,
+      slug,
       source,
       at: Date.now(),
     };
@@ -130,15 +122,6 @@ function publish(source: Snapshot["source"], override?: Partial<Snapshot>): void
     post(snapshot);
   });
   flight = queued.then(() => undefined, () => undefined);
-}
-
-function schedule(): void {
-  if (suppressClick) return;
-  beginGeneration();
-  window.clearTimeout(timer);
-  timer = window.setTimeout(() => {
-    void publish("editor");
-  }, 250);
 }
 
 /** Reads `data_input` out of a Run request - exactly what LeetCode will execute. */
@@ -158,6 +141,15 @@ function fromRunBody(body: unknown): Partial<Snapshot> | null {
 }
 
 const RUN_URL = /\/interpret_solution\/?$|\/interpret_solution\//;
+const CHECK_URL = /\/submissions\/detail\/([^/?]+)\/check\/?/;
+const IN_FLIGHT = new Set(["PENDING", "STARTED"]);
+
+interface PendingRun {
+  override?: Partial<Snapshot>;
+  id?: string;
+}
+
+let pendingRun: PendingRun | null = null;
 
 function requestUrl(input: RequestInfo | URL): string {
   if (typeof input === "string") return input;
@@ -165,17 +157,73 @@ function requestUrl(input: RequestInfo | URL): string {
   return input.url;
 }
 
+function asObject(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : null;
+}
+
+function parseObject(text: string): Record<string, unknown> | null {
+  try {
+    return asObject(JSON.parse(text));
+  } catch {
+    return null;
+  }
+}
+
+async function readResponseJson(response: Response): Promise<Record<string, unknown> | null> {
+  try {
+    return asObject(await response.clone().json());
+  } catch {
+    return null;
+  }
+}
+
+function interpretIdOf(body: Record<string, unknown> | null): string | undefined {
+  const id = body?.interpret_id;
+  return typeof id === "string" && id.length > 0 ? id : undefined;
+}
+
+function rememberRun(body: unknown): void {
+  pendingRun = { override: fromRunBody(body) ?? undefined };
+}
+
+function rememberInterpretId(body: Record<string, unknown> | null): void {
+  const id = interpretIdOf(body);
+  if (id && pendingRun) pendingRun.id = id;
+}
+
+function maybeWalkResults(url: string, body: Record<string, unknown> | null): void {
+  if (!pendingRun) return;
+  const state = body?.state;
+  if (typeof state !== "string" || IN_FLIGHT.has(state)) return;
+  const checkId = CHECK_URL.exec(url)?.[1];
+  if (pendingRun.id && checkId !== pendingRun.id) return;
+
+  const override = pendingRun.override;
+  pendingRun = null;
+  void publish("network", override, true);
+}
+
 function patchNetwork(): void {
   const nativeFetch = window.fetch;
   window.fetch = function patched(this: typeof globalThis, input: RequestInfo | URL, init?: RequestInit) {
+    const url = requestUrl(input);
     try {
-      if (RUN_URL.test(requestUrl(input))) {
-        void publish("network", fromRunBody(init?.body) ?? undefined);
-      }
+      if (RUN_URL.test(url)) rememberRun(init?.body);
     } catch {
       /* Never let instrumentation break the page's own request. */
     }
-    return nativeFetch.call(this, input as RequestInfo, init);
+
+    const request = nativeFetch.call(this, input as RequestInfo, init);
+    void request
+      .then(async (response) => {
+        if (RUN_URL.test(url)) {
+          rememberInterpretId(await readResponseJson(response));
+          return;
+        }
+        if (CHECK_URL.test(url)) maybeWalkResults(url, await readResponseJson(response));
+      })
+      .catch(() => undefined);
+    return request;
   };
 
   const nativeOpen = XMLHttpRequest.prototype.open;
@@ -188,22 +236,24 @@ function patchNetwork(): void {
   } as typeof XMLHttpRequest.prototype.open;
 
   XMLHttpRequest.prototype.send = function send(this: XMLHttpRequest, body?: Document | XMLHttpRequestBodyInit | null) {
+    const url = urls.get(this) ?? "";
     try {
-      if (RUN_URL.test(urls.get(this) ?? "")) {
-        void publish("network", fromRunBody(body) ?? undefined);
-      }
+      if (RUN_URL.test(url)) rememberRun(body);
     } catch {
       /* Same - instrumentation must never be fatal. */
     }
+
+    this.addEventListener("load", () => {
+      try {
+        const parsed = parseObject(String(this.responseText ?? ""));
+        if (RUN_URL.test(url)) rememberInterpretId(parsed);
+        else if (CHECK_URL.test(url)) maybeWalkResults(url, parsed);
+      } catch {
+        /* Same - instrumentation must never be fatal. */
+      }
+    });
     return nativeSend.call(this, body ?? null);
   };
 }
 
 patchNetwork();
-document.addEventListener("input", schedule, true);
-document.addEventListener("paste", schedule, true);
-document.addEventListener("click", schedule, true);
-window.setInterval(() => {
-  void publish("editor");
-}, 1500);
-void publish("editor");
