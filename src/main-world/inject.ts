@@ -1,12 +1,11 @@
-import { groupTestCases, type CaseCapture } from "../core/cases.js";
 import { PAGE_CHANNEL, type Snapshot } from "../shared/protocol.js";
+import { captureCasesFromTabs } from "./testcaseCapture.js";
+import { createTestcaseDomAdapter, type TestcaseDomAdapter } from "./testcaseDom.js";
 
 /**
- * Runs in the page world. CodeMirror 6 virtualizes its lines, so reading
- * `textContent` off the DOM silently truncates long test cases. Instead we reach
- * the EditorView through the `cmView` property CodeMirror hangs on its own DOM
- * nodes and read the full document. The Run request is a one-case fallback when
- * the full Case collection is unavailable.
+ * Runs in the page world. Case tabs are visited one at a time through the DOM
+ * adapter; Graphy publishes only a complete collection. The Run request is a
+ * one-case fallback when no tabs and no complete cache exist.
  */
 
 interface CMNode extends HTMLElement {
@@ -15,13 +14,24 @@ interface CMNode extends HTMLElement {
 
 const CODE_HINTS = /class\s+Solution|def\s+\w+\s*\(|func\s+\w+|impl\s+Solution|var\s+\w+\s*=\s*function|public\s+class|^\s*(?:int|char|void|double|bool|struct)\b[^=\n]*\(/m;
 
-/** Temporary: POST the aggregate custom-testcase buffer to a local terminal logger. */
-const DEBUG_BUFFER_URL = "http://127.0.0.1:7921/graphy-buffer";
+const rawAdapter = createTestcaseDomAdapter(document, window);
+let suppressClick = false;
+const adapter: TestcaseDomAdapter = {
+  ...rawAdapter,
+  select: (tab) => {
+    suppressClick = true;
+    try {
+      rawAdapter.select(tab);
+    } finally {
+      suppressClick = false;
+    }
+  },
+};
 
 let last = "";
-let lastCases: string[] = [];
-let lastLoggedBuffer = "";
+let generation = 0;
 let timer: number | undefined;
+let cache: { slug: string; cases: string[] } | null = null;
 
 function docOf(content: CMNode): string | null {
   const view = content.cmView?.rootView?.view;
@@ -29,54 +39,13 @@ function docOf(content: CMNode): string | null {
   return typeof text === "string" ? text : null;
 }
 
-function editorTexts(): string[] {
-  const out: string[] = [];
+/** Solution text only. Testcase editors are collected by the tab adapter. */
+function captureCode(): string {
   for (const el of document.querySelectorAll<CMNode>(".cm-content")) {
     const text = docOf(el);
-    if (text !== null) out.push(text);
+    if (text !== null && CODE_HINTS.test(text)) return text;
   }
-  return out;
-}
-
-/**
- * Reads the full custom-testcase buffer (every Case N), then splits it into
- * ordered cases for Graphy-owned tabs. Does not follow LeetCode's selected tab.
- */
-function captureCases(): { code: string; buffer: string; caseTags: number; params: number } & CaseCapture {
-  const found = editorTexts();
-  // Only trust an editor as solution code when it looks like source. LeetCode
-  // often exposes only the testcase aggregate as `.cm-content`; guessing the
-  // longest buffer would swallow every Case N and leave Graphy empty.
-  const codeIndex = found.findIndex((text) => CODE_HINTS.test(text));
-  const code = codeIndex >= 0 ? found[codeIndex]! : "";
-
-  const inputs = found.filter((_, i) => i !== codeIndex);
-
-  // Prefer CodeMirror; fall back to mirrored textareas when CM is absent.
-  if (inputs.length === 0) {
-    for (const area of document.querySelectorAll<HTMLTextAreaElement>("textarea[data-cy], .lc-textarea textarea")) {
-      if (area.value) inputs.push(area.value);
-    }
-  }
-
-  const buffer = inputs.join("\n").trim();
-  const caseTags = document.querySelectorAll('[data-e2e-locator="console-testcase-tag"]').length;
-  const params = document.querySelectorAll('[data-e2e-locator="console-testcase-input"]').length;
-  return { code, buffer, caseTags, params, ...groupTestCases(buffer, caseTags, params) };
-}
-
-/** Prints the whole custom-test collection in the local debug terminal (deduped). */
-function debugLogBuffer(buffer: string, caseTags: number, params: number): void {
-  if (buffer === lastLoggedBuffer) return;
-  lastLoggedBuffer = buffer;
-  void fetch(DEBUG_BUFFER_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ buffer, caseTags, params, at: Date.now() }),
-    mode: "cors",
-  }).catch(() => {
-    /* Logger may be down; never break capture. */
-  });
+  return "";
 }
 
 function slugOf(): string {
@@ -98,32 +67,49 @@ function post(snapshot: Snapshot): void {
   window.postMessage({ channel: PAGE_CHANNEL, type: "snapshot", payload: snapshot }, location.origin);
 }
 
-function publish(source: Snapshot["source"], override?: Partial<Snapshot>): void {
+function beginGeneration(): number {
+  generation += 1;
+  return generation;
+}
+
+async function publish(source: Snapshot["source"], override?: Partial<Snapshot>): Promise<void> {
   const slug = slugOf();
   if (!slug) return;
 
-  const fromDom = captureCases();
+  const gen = beginGeneration();
+  const isCurrent = () => gen === generation;
+  const fromDom = await captureCasesFromTabs(adapter, isCurrent);
+  if (!isCurrent()) return;
+
+  if (cache && cache.slug !== slug) cache = null;
+
   let cases = fromDom.cases;
   let captureError = fromDom.captureError;
-  debugLogBuffer(fromDom.buffer, fromDom.caseTags, fromDom.params);
+
+  if (captureError) {
+    if (cache && cache.cases.length > 0) {
+      cases = cache.cases;
+      captureError = undefined;
+    } else {
+      cases = [];
+    }
+  } else if (cases.length > 0) {
+    cache = { slug, cases };
+  }
 
   if (source === "network") {
     const runCases = override?.cases;
-    // A Run only carries the executed case. Keep a multi-case DOM collection.
-    if (cases.length <= 1 || captureError) {
-      if (runCases && runCases.length > 0) {
-        cases = runCases;
-        captureError = undefined;
-      } else if (lastCases.length > 1) {
-        cases = lastCases;
-        captureError = undefined;
-      }
+    const noTabs = adapter.tabs().length === 0;
+    const noCache = !cache || cache.cases.length === 0;
+    if (noTabs && noCache && runCases && runCases.length > 0) {
+      cases = runCases;
+      captureError = undefined;
     }
   }
 
   const snapshot: Snapshot = {
     cases,
-    code: override?.code ?? fromDom.code,
+    code: override?.code ?? captureCode(),
     lang: override?.lang ?? langOf(),
     slug,
     source,
@@ -134,13 +120,16 @@ function publish(source: Snapshot["source"], override?: Partial<Snapshot>): void
   const key = `${snapshot.cases.join("\u001f")}\u001e${snapshot.code}\u001e${snapshot.lang}\u001e${snapshot.captureError ?? ""}`;
   if (source === "editor" && key === last) return;
   last = key;
-  if (snapshot.cases.length > 1) lastCases = snapshot.cases;
   post(snapshot);
 }
 
 function schedule(): void {
+  if (suppressClick) return;
+  beginGeneration();
   window.clearTimeout(timer);
-  timer = window.setTimeout(() => publish("editor"), 250);
+  timer = window.setTimeout(() => {
+    void publish("editor");
+  }, 250);
 }
 
 /** Reads `data_input` out of a Run request - exactly what LeetCode will execute. */
@@ -172,8 +161,7 @@ function patchNetwork(): void {
   window.fetch = function patched(this: typeof globalThis, input: RequestInfo | URL, init?: RequestInit) {
     try {
       if (RUN_URL.test(requestUrl(input))) {
-        const captured = fromRunBody(init?.body);
-        if (captured) publish("network", captured);
+        void publish("network", fromRunBody(init?.body) ?? undefined);
       }
     } catch {
       /* Never let instrumentation break the page's own request. */
@@ -193,8 +181,7 @@ function patchNetwork(): void {
   XMLHttpRequest.prototype.send = function send(this: XMLHttpRequest, body?: Document | XMLHttpRequestBodyInit | null) {
     try {
       if (RUN_URL.test(urls.get(this) ?? "")) {
-        const captured = fromRunBody(body);
-        if (captured) publish("network", captured);
+        void publish("network", fromRunBody(body) ?? undefined);
       }
     } catch {
       /* Same - instrumentation must never be fatal. */
@@ -207,6 +194,7 @@ patchNetwork();
 document.addEventListener("input", schedule, true);
 document.addEventListener("paste", schedule, true);
 document.addEventListener("click", schedule, true);
-// CodeMirror mutations from undo, formatting, or route changes skip `input`.
-window.setInterval(() => publish("editor"), 1500);
-publish("editor");
+window.setInterval(() => {
+  void publish("editor");
+}, 1500);
+void publish("editor");
