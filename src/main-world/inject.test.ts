@@ -15,6 +15,7 @@ interface PageHarness {
   pauseSelectionOf(index: number): void;
   dispatchInput(): void;
   setPathname(pathname: string): void;
+  whenSelected(index: number, fn: () => void): void;
 }
 
 interface TabbedPageOptions {
@@ -68,6 +69,7 @@ function installTabbedPage(
   let now = 0;
   let nextTimerId = 1;
   let nextRafId = 1;
+  const onceSelected: Array<{ index: number; fn: () => void; fired: boolean }> = [];
 
   const codeText = options.code ?? "class Solution {};";
   const codeEditor = cmContent(codeText);
@@ -83,8 +85,13 @@ function installTabbedPage(
         return null;
       },
       click: () => {
-        if (paused === index) return;
-        selectedIndex = index;
+        if (paused !== index) selectedIndex = index;
+        for (const listener of listeners.get("click") ?? []) listener();
+        for (const hook of onceSelected) {
+          if (hook.fired || hook.index !== index) continue;
+          hook.fired = true;
+          hook.fn();
+        }
       },
     } as unknown as HTMLElement;
   });
@@ -216,6 +223,9 @@ function installTabbedPage(
     setPathname: (pathname: string) => {
       locationState.pathname = pathname;
     },
+    whenSelected: (index: number, fn: () => void) => {
+      onceSelected.push({ index, fn, fired: false });
+    },
   };
 }
 
@@ -227,19 +237,51 @@ test("publishes one atomic snapshot containing every visited Case tab", async ()
   expect(page.selectedIndex()).toBe(1);
 });
 
+function isSubsetCollection(cases: string[] | undefined, complete: string[]): boolean {
+  return !!cases && cases.length > 0 && cases.length < complete.length;
+}
+
 test("keeps the last complete collection when a refresh is cancelled", async () => {
-  const page = installTabbedPage([["[1]"], ["[2]"], ["[3]"]], 0);
+  const page = installTabbedPage([["[1]"], ["[2]"], ["[3]"]], 1);
   await import("./inject.js");
   await page.flushCapture();
-  const complete = page.snapshots.at(-1)?.payload.cases;
+  const complete = page.snapshots.at(-1)?.payload.cases ?? [];
 
-  page.pauseSelectionOf(1);
-  page.dispatchInput();
+  page.whenSelected(0, () => {
+    page.dispatchInput();
+  });
   page.dispatchInput();
   await page.flushCapture();
 
   expect(complete).toEqual(["[1]", "[2]", "[3]"]);
   expect(page.snapshots.at(-1)?.payload.cases).toEqual(complete);
+  expect(page.snapshots.some((snapshot) => isSubsetCollection(snapshot.payload.cases, complete))).toBe(
+    false,
+  );
+  expect(page.selectedIndex()).toBe(1);
+});
+
+test("does not post a subset when a second generation starts mid-traversal", async () => {
+  const page = installTabbedPage([["[1]"], ["[2]"], ["[3]"]], 1);
+  await import("./inject.js");
+  await page.flushCapture();
+  const complete = page.snapshots.at(-1)?.payload.cases ?? [];
+  const posted = page.snapshots.length;
+
+  page.whenSelected(0, () => {
+    void window.fetch("https://leetcode.com/problems/example/interpret_solution/", {
+      method: "POST",
+      body: JSON.stringify({ data_input: "[2]", typed_code: "class Solution {};", lang: "cpp" }),
+    });
+  });
+  page.dispatchInput();
+  await page.flushCapture();
+
+  const extra = page.snapshots.slice(posted);
+  expect(complete).toEqual(["[1]", "[2]", "[3]"]);
+  expect(extra.some((snapshot) => isSubsetCollection(snapshot.payload.cases, complete))).toBe(false);
+  expect(page.snapshots.at(-1)?.payload.cases).toEqual(complete);
+  expect(page.selectedIndex()).toBe(1);
 });
 
 test("Run never replaces a complete collection with data_input", async () => {

@@ -32,6 +32,7 @@ let last = "";
 let generation = 0;
 let timer: number | undefined;
 let cache: { slug: string; cases: string[] } | null = null;
+let flight: Promise<void> = Promise.resolve();
 
 function docOf(content: CMNode): string | null {
   const view = content.cmView?.rootView?.view;
@@ -72,55 +73,60 @@ function beginGeneration(): number {
   return generation;
 }
 
-async function publish(source: Snapshot["source"], override?: Partial<Snapshot>): Promise<void> {
+function publish(source: Snapshot["source"], override?: Partial<Snapshot>): void {
   const slug = slugOf();
   if (!slug) return;
 
   const gen = beginGeneration();
-  const isCurrent = () => gen === generation;
-  const fromDom = await captureCasesFromTabs(adapter, isCurrent);
-  if (!isCurrent()) return;
+  const queued = flight.then(async () => {
+    if (gen !== generation) return;
 
-  if (cache && cache.slug !== slug) cache = null;
+    const isCurrent = () => gen === generation;
+    const fromDom = await captureCasesFromTabs(adapter, isCurrent);
+    if (!isCurrent()) return;
 
-  let cases = fromDom.cases;
-  let captureError = fromDom.captureError;
+    if (cache && cache.slug !== slug) cache = null;
 
-  if (captureError) {
-    if (cache && cache.cases.length > 0) {
-      cases = cache.cases;
-      captureError = undefined;
-    } else {
-      cases = [];
+    let cases = fromDom.cases;
+    let captureError = fromDom.captureError;
+
+    if (captureError) {
+      if (cache && cache.cases.length > 0) {
+        cases = cache.cases;
+        captureError = undefined;
+      } else {
+        cases = [];
+      }
+    } else if (cases.length > 0) {
+      cache = { slug, cases };
     }
-  } else if (cases.length > 0) {
-    cache = { slug, cases };
-  }
 
-  if (source === "network") {
-    const runCases = override?.cases;
-    const noTabs = adapter.tabs().length === 0;
-    const noCache = !cache || cache.cases.length === 0;
-    if (noTabs && noCache && runCases && runCases.length > 0) {
-      cases = runCases;
-      captureError = undefined;
+    if (source === "network") {
+      const runCases = override?.cases;
+      const noTabs = adapter.tabs().length === 0;
+      const noCache = !cache || cache.cases.length === 0;
+      if (noTabs && noCache && runCases && runCases.length > 0) {
+        cases = runCases;
+        captureError = undefined;
+      }
     }
-  }
 
-  const snapshot: Snapshot = {
-    cases,
-    code: override?.code ?? captureCode(),
-    lang: override?.lang ?? langOf(),
-    slug,
-    source,
-    at: Date.now(),
-  };
-  if (captureError) snapshot.captureError = captureError;
+    const snapshot: Snapshot = {
+      cases,
+      code: override?.code ?? captureCode(),
+      lang: override?.lang ?? langOf(),
+      slug,
+      source,
+      at: Date.now(),
+    };
+    if (captureError) snapshot.captureError = captureError;
 
-  const key = `${snapshot.cases.join("\u001f")}\u001e${snapshot.code}\u001e${snapshot.lang}\u001e${snapshot.captureError ?? ""}`;
-  if (source === "editor" && key === last) return;
-  last = key;
-  post(snapshot);
+    const key = `${snapshot.cases.join("\u001f")}\u001e${snapshot.code}\u001e${snapshot.lang}\u001e${snapshot.captureError ?? ""}`;
+    if (source === "editor" && key === last) return;
+    last = key;
+    post(snapshot);
+  });
+  flight = queued.then(() => undefined, () => undefined);
 }
 
 function schedule(): void {
