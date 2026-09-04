@@ -43,6 +43,14 @@ describe("parseInput", () => {
       ["None", null, "True", true],
     ]);
   });
+
+  it("parses single-quoted string literals", () => {
+    expect(parseInput("'hello'")).toEqual(["hello"]);
+  });
+
+  it("does not strip trailing commas inside quoted strings", () => {
+    expect(parseInput('["x,]", None]')).toEqual([["x,]", null]]);
+  });
 });
 
 describe("scanInputValues", () => {

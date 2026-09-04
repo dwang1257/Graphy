@@ -2,7 +2,7 @@
 
 export type LCValue = string | number | boolean | null | LCValue[];
 
-const TRAILING_COMMA = /,\s*([\]}])/g;
+const TRAILING_CLOSE = /[\]}]/;
 
 const OPEN_DELIMITERS: Record<string, string> = {
   "[": "]",
@@ -40,10 +40,12 @@ function normalizeLiteral(raw: string): string {
     const c = raw[i]!;
 
     if (inString) {
-      result += c;
       if (c === quote && !isEscapedQuote(raw, i)) {
         inString = false;
         quote = "";
+        result += '"';
+      } else {
+        result += c;
       }
       continue;
     }
@@ -73,10 +75,16 @@ function normalizeLiteral(raw: string): string {
       continue;
     }
 
+    if (c === ",") {
+      let j = i + 1;
+      while (j < raw.length && /\s/.test(raw[j]!)) j += 1;
+      if (j < raw.length && TRAILING_CLOSE.test(raw[j]!)) continue;
+    }
+
     result += c;
   }
 
-  return result.replace(TRAILING_COMMA, "$1");
+  return result;
 }
 
 function lenient(raw: string): LCValue {
