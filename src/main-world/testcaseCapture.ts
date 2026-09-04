@@ -58,8 +58,8 @@ async function restoreSelection(
   if (!originalTab) return;
   if (adapter.selectedIndex(tabs) === originalIndex) return;
 
-  adapter.select(originalTab);
   try {
+    adapter.select(originalTab);
     await adapter.waitUntilSettled(originalTab, () => true);
   } catch {
     /* Restoration must not replace the capture result. */

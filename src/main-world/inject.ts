@@ -85,20 +85,23 @@ function publish(source: Snapshot["source"], override?: Partial<Snapshot>): void
     const fromDom = await captureCasesFromTabs(adapter, isCurrent);
     if (!isCurrent()) return;
 
-    if (cache && cache.slug !== slug) cache = null;
+    const liveSlug = slugOf();
+    if (!liveSlug) return;
+    if (cache && cache.slug !== liveSlug) cache = null;
 
     let cases = fromDom.cases;
     let captureError = fromDom.captureError;
+    const completeCache = cache && cache.cases.length > 0 ? cache : null;
 
-    if (captureError) {
-      if (cache && cache.cases.length > 0) {
-        cases = cache.cases;
+    if (captureError || cases.length === 0) {
+      if (completeCache) {
+        cases = completeCache.cases;
         captureError = undefined;
-      } else {
+      } else if (captureError) {
         cases = [];
       }
-    } else if (cases.length > 0) {
-      cache = { slug, cases };
+    } else {
+      cache = { slug: liveSlug, cases };
     }
 
     if (source === "network") {
@@ -115,7 +118,7 @@ function publish(source: Snapshot["source"], override?: Partial<Snapshot>): void
       cases,
       code: override?.code ?? captureCode(),
       lang: override?.lang ?? langOf(),
-      slug,
+      slug: liveSlug,
       source,
       at: Date.now(),
     };

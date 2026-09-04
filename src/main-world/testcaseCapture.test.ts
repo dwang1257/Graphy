@@ -88,6 +88,24 @@ it("returns one mounted case when no tabs exist", async () => {
   });
 });
 
+it("keeps the capture result when restoring the original tab throws", async () => {
+  const adapter = fakeAdapter({
+    selected: 0,
+    cases: [["[1]"], ["[2]"]],
+  });
+  const originalSelect = adapter.select.bind(adapter);
+  adapter.select = (tab) => {
+    if (tab.index === 0 && adapter.currentIndex() !== 0) {
+      throw new Error("restore failed");
+    }
+    originalSelect(tab);
+  };
+
+  await expect(captureCasesFromTabs(adapter)).resolves.toEqual({
+    cases: ["[1]", "[2]"],
+  });
+});
+
 it("restores selection and returns no partial cases after cancellation", async () => {
   const adapter = fakeAdapter({
     selected: 2,

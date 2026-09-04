@@ -16,6 +16,7 @@ interface PageHarness {
   dispatchInput(): void;
   setPathname(pathname: string): void;
   whenSelected(index: number, fn: () => void): void;
+  unmountConsole(): void;
 }
 
 interface TabbedPageOptions {
@@ -226,6 +227,10 @@ function installTabbedPage(
     whenSelected: (index: number, fn: () => void) => {
       onceSelected.push({ index, fn, fired: false });
     },
+    unmountConsole: () => {
+      tabs.splice(0, tabs.length);
+      mountedWrappers.splice(0, mountedWrappers.length);
+    },
   };
 }
 
@@ -330,6 +335,29 @@ test("publishes one mounted case when no Case tabs exist", async () => {
   await page.flushCapture();
 
   expect(page.snapshots.at(-1)?.payload.cases).toEqual(["[1,2,3]\n2"]);
+});
+
+test("keeps the cached collection when a later capture finds no tabs or inputs", async () => {
+  const page = installTabbedPage([["[1]"], ["[2]"], ["[3]"]], 0);
+  await import("./inject.js");
+  await page.flushCapture();
+  const complete = page.snapshots.at(-1)?.payload.cases;
+  expect(complete).toEqual(["[1]", "[2]", "[3]"]);
+
+  page.unmountConsole();
+  await window.fetch("https://leetcode.com/problems/example/interpret_solution/", {
+    method: "POST",
+    body: JSON.stringify({ data_input: "[2]", typed_code: "class Solution {};", lang: "cpp" }),
+  });
+  await page.flushCapture();
+
+  expect(page.snapshots.at(-1)?.payload.cases).toEqual(complete);
+  expect(page.snapshots.at(-1)?.payload.captureError).toBeUndefined();
+
+  page.dispatchInput();
+  await page.flushCapture();
+  expect(page.snapshots.at(-1)?.payload.cases).toEqual(complete);
+  expect(page.snapshots.at(-1)?.payload.captureError).toBeUndefined();
 });
 
 test("Run may use data_input only when no tabs and no complete cache exist", async () => {
