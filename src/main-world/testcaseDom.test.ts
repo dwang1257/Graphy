@@ -5,7 +5,9 @@ import { createTestcaseDomAdapter } from "./testcaseDom.js";
 interface FakeElementOptions {
   attributes?: Record<string, string>;
   editorText?: string;
+  isTextarea?: boolean;
   textareaValue?: string;
+  descendantTextareaValue?: string;
   onClick?: () => void;
 }
 
@@ -26,20 +28,20 @@ function fakeElement(options: FakeElementOptions = {}): HTMLElement {
           },
         } as unknown as HTMLElement);
   const textarea =
-    options.textareaValue === undefined
+    options.descendantTextareaValue === undefined
       ? null
-      : ({ value: options.textareaValue } as HTMLTextAreaElement);
+      : ({ value: options.descendantTextareaValue } as HTMLTextAreaElement);
 
   return {
     click: () => options.onClick?.(),
     getAttribute: (name: string) => attributes[name] ?? null,
-    matches: (selector: string) => selector === "textarea" && textarea !== null,
+    matches: (selector: string) => selector === "textarea" && options.isTextarea === true,
     querySelector: (selector: string) => {
       if (selector === ".cm-content") return editor;
       if (selector === "textarea") return textarea;
       return null;
     },
-    ...(textarea ?? {}),
+    ...(options.isTextarea ? { value: options.textareaValue ?? "" } : {}),
   } as unknown as HTMLElement;
 }
 
@@ -87,7 +89,10 @@ it("reads only editors owned by testcase input wrappers", () => {
 
 it("falls back to textarea values inside testcase input wrappers", () => {
   const doc = fakeDocument({
-    wrappers: [fakeElement({ textareaValue: "[4,5]" }), fakeElement({ textareaValue: "3" })],
+    wrappers: [
+      fakeElement({ descendantTextareaValue: "[4,5]" }),
+      fakeElement({ descendantTextareaValue: "3" }),
+    ],
   });
 
   const adapter = createTestcaseDomAdapter(doc, fakeWindow());
@@ -96,7 +101,7 @@ it("falls back to textarea values inside testcase input wrappers", () => {
 });
 
 it("reads a testcase input wrapper that is itself a textarea", () => {
-  const textarea = fakeElement({ textareaValue: "[9]" });
+  const textarea = fakeElement({ isTextarea: true, textareaValue: "[9]" });
 
   const adapter = createTestcaseDomAdapter(
     fakeDocument({ wrappers: [textarea] }),
