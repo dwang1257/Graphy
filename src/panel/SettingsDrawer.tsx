@@ -6,6 +6,7 @@ import {
   type NodeShape,
   type Palette,
   type Settings,
+  type ThemeMode,
 } from "../settings/schema.js";
 import { CloseIcon } from "./icons.js";
 
@@ -20,6 +21,11 @@ const SHAPES: Array<{ value: NodeShape; label: string; icon: string }> = [
   { value: "circle", label: "Circle", icon: "○" },
   { value: "box", label: "Box", icon: "□" },
   { value: "diamond", label: "Diamond", icon: "◇" },
+];
+
+const MODES: Array<{ value: ThemeMode; label: string }> = [
+  { value: "light", label: "Light" },
+  { value: "dark", label: "Dark" },
 ];
 
 const NODE_SIZE_MIN = 0.85;
@@ -77,6 +83,23 @@ export function SettingsDrawer({ settings, activePalette, onChange, onClose }: P
       </header>
 
       <div class="style-rail-body">
+        <section class="style-section">
+          <h3 class="style-section-title">Appearance</h3>
+          <div class="shape-group" role="group" aria-label="Color mode">
+            {MODES.map(({ value, label }) => (
+              <button
+                key={value}
+                type="button"
+                class="shape-btn"
+                aria-pressed={settings.mode === value}
+                onClick={() => onChange({ ...settings, mode: value })}
+              >
+                <span class="shape-label">{label}</span>
+              </button>
+            ))}
+          </div>
+        </section>
+
         <section class="style-section">
           <h3 class="style-section-title">Node shape</h3>
           <div class="shape-group" role="group" aria-label="Node shape">

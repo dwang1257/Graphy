@@ -1,6 +1,9 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { JSX } from "preact";
+import type { TraceFrame } from "../core/trace.js";
+import { inkFromDataUrl } from "./imageInk.js";
 import { applyNodeBackgroundImage } from "./nodeBackground.js";
+import { applyTraceOverlay, clearTraceOverlay } from "./traceOverlay.js";
 import { pointerDragHandler } from "./usePointerDrag.js";
 import { normalizeWheelDelta, zoomAtPoint } from "./zoom.js";
 import type { View } from "./zoom.js";
@@ -11,9 +14,15 @@ interface Props {
   fitKey: string;
   /** Data URL painted onto node shapes after Graphviz layout, or null. */
   nodeBackgroundImage?: string | null;
+  /** Current playback frame to highlight, or null to clear. */
+  traceFrame?: TraceFrame | null;
 }
 
-function prepareSvg(svg: string, nodeBackgroundImage: string | null | undefined): string {
+function prepareSvg(
+  svg: string,
+  nodeBackgroundImage: string | null | undefined,
+  ink?: string,
+): string {
   const document = new DOMParser().parseFromString(svg, "image/svg+xml");
   if (document.querySelector("parsererror")) return "";
 
@@ -26,23 +35,63 @@ function prepareSvg(svg: string, nodeBackgroundImage: string | null | undefined)
     }
   }
 
+  // Keep cell addresses for overlays; drop live hrefs so clicks cannot navigate.
+  for (const anchor of document.querySelectorAll("a")) {
+    const href =
+      anchor.getAttribute("href") ||
+      anchor.getAttribute("xlink:href") ||
+      anchor.getAttributeNS("http://www.w3.org/1999/xlink", "href");
+    if (href && href.startsWith("graphy://")) {
+      anchor.setAttribute("data-graphy-href", href);
+      anchor.removeAttribute("href");
+      anchor.removeAttribute("xlink:href");
+      anchor.removeAttributeNS("http://www.w3.org/1999/xlink", "href");
+    }
+  }
+
   if (nodeBackgroundImage) {
-    applyNodeBackgroundImage(document.documentElement, nodeBackgroundImage);
+    applyNodeBackgroundImage(document.documentElement, nodeBackgroundImage, ink);
   }
 
   return new XMLSerializer().serializeToString(document.documentElement);
 }
 
 /** Zoom/pan surface for the rendered SVG. */
-export function GraphView({ svg, fitKey, nodeBackgroundImage = null }: Props): JSX.Element {
+export function GraphView({
+  svg,
+  fitKey,
+  nodeBackgroundImage = null,
+  traceFrame = null,
+}: Props): JSX.Element {
   const stage = useRef<HTMLDivElement>(null);
   const viewport = useRef<HTMLDivElement>(null);
   const view = useRef<View>({ x: 0, y: 0, scale: 1 });
   const paintFrame = useRef<number | null>(null);
   const [panning, setPanning] = useState(false);
+  const [nodeInk, setNodeInk] = useState<string | undefined>(undefined);
+
+  useEffect(() => {
+    if (!nodeBackgroundImage) {
+      setNodeInk(undefined);
+      return;
+    }
+    setNodeInk(undefined);
+    let cancelled = false;
+    void inkFromDataUrl(nodeBackgroundImage)
+      .then((ink) => {
+        if (!cancelled) setNodeInk(ink);
+      })
+      .catch(() => {
+        if (!cancelled) setNodeInk(undefined);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [nodeBackgroundImage]);
+
   const sanitizedSvg = useMemo(
-    () => prepareSvg(svg, nodeBackgroundImage),
-    [svg, nodeBackgroundImage],
+    () => prepareSvg(svg, nodeBackgroundImage, nodeInk),
+    [svg, nodeBackgroundImage, nodeInk],
   );
 
   const paintView = (): void => {
@@ -81,6 +130,16 @@ export function GraphView({ svg, fitKey, nodeBackgroundImage = null }: Props): J
   };
 
   useLayoutEffect(fit, [fitKey, svg]);
+
+  useLayoutEffect(() => {
+    const root = viewport.current?.querySelector("svg");
+    if (!root) return;
+    if (!traceFrame) {
+      clearTraceOverlay(root);
+      return;
+    }
+    applyTraceOverlay(root, traceFrame);
+  }, [sanitizedSvg, traceFrame]);
 
   useEffect(() => {
     const el = stage.current;

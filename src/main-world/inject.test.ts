@@ -1,15 +1,8 @@
 import { afterEach, expect, test, vi } from "vitest";
 
-interface SnapshotPayload {
-  cases: string[];
-  captureError?: string;
-  source: string;
-  slug?: string;
-  code?: string;
-}
-
 interface PageHarness {
   snapshots: Array<{ payload: SnapshotPayload }>;
+  sentBodies: string[];
   flushCapture(): Promise<void>;
   selectedIndex(): number;
   tabClicks(): number;
@@ -20,6 +13,16 @@ interface PageHarness {
   whenSelected(index: number, fn: () => void): void;
   unmountConsole(): void;
   setCheckState(state: string): void;
+  setCheckStdout(lines: string[] | undefined): void;
+}
+
+interface SnapshotPayload {
+  cases: string[];
+  captureError?: string;
+  source: string;
+  slug?: string;
+  code?: string;
+  stdout?: string;
 }
 
 interface TabbedPageOptions {
@@ -64,10 +67,12 @@ function installTabbedPage(
   options: TabbedPageOptions = {},
 ): PageHarness {
   const snapshots: Array<{ payload: SnapshotPayload }> = [];
+  const sentBodies: string[] = [];
   const listeners = new Map<string, Array<() => void>>();
   const timeouts = new Map<number, { fn: () => void; at: number }>();
   const rafs: FrameRequestCallback[] = [];
   let checkState = "SUCCESS";
+  let checkStdout: string[] | undefined;
   const interpretId = "interp-1";
 
   let selectedIndex = selected;
@@ -144,9 +149,12 @@ function installTabbedPage(
       snapshots.push(message);
     },
     setInterval: () => 0,
-    fetch: (input: RequestInfo | URL) => {
+    fetch: (input: RequestInfo | URL, init?: RequestInit) => {
       const url =
         typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (url.includes("interpret_solution") && typeof init?.body === "string") {
+        sentBodies.push(init.body);
+      }
       if (url.includes("interpret_solution")) {
         return Promise.resolve(
           new Response(JSON.stringify({ interpret_id: interpretId }), {
@@ -156,8 +164,10 @@ function installTabbedPage(
         );
       }
       if (url.includes("/check")) {
+        const body: Record<string, unknown> = { state: checkState };
+        if (checkStdout) body.code_output = checkStdout;
         return Promise.resolve(
-          new Response(JSON.stringify({ state: checkState }), {
+          new Response(JSON.stringify(body), {
             status: 200,
             headers: { "Content-Type": "application/json" },
           }),
@@ -247,6 +257,7 @@ function installTabbedPage(
 
   return {
     snapshots,
+    sentBodies,
     flushCapture,
     selectedIndex: () => selectedIndex,
     tabClicks: () => tabClicks,
@@ -271,6 +282,9 @@ function installTabbedPage(
     },
     setCheckState: (state: string) => {
       checkState = state;
+    },
+    setCheckStdout: (lines: string[] | undefined) => {
+      checkStdout = lines;
     },
   };
 }
@@ -635,4 +649,34 @@ test("publishes every Test Result case from the Input section", async () => {
     "[3,3]\n6",
   ]);
   expect(page.selectedIndex()).toBe(0);
+});
+
+test("forwards Run stdout from the check response", async () => {
+  const page = installTabbedPage([["[1]"]], 0);
+  page.setCheckStdout(["#graphy current n0", "#graphy visit n0"]);
+  await import("./inject.js");
+  await finishRun(page);
+
+  expect(page.snapshots.at(-1)?.payload.stdout).toBe("#graphy current n0\n#graphy visit n0");
+  expect(page.snapshots.at(-1)?.payload.source).toBe("network");
+});
+
+test("appends a Python tracer on Run but snapshots the editor code", async () => {
+  const page = installTabbedPage([["[4,2,7]"]], 0, {
+    code: "class Solution:\n    def invertTree(self, root):\n        return root\n",
+  });
+  await import("./inject.js");
+  const typed = "class Solution:\n    def invertTree(self, root):\n        return root\n";
+  await window.fetch("https://leetcode.com/problems/example/interpret_solution/", {
+    method: "POST",
+    body: JSON.stringify({ data_input: "[4,2,7]", typed_code: typed, lang: "python3" }),
+  });
+  await page.flushCapture();
+  await finishCheck();
+  await page.flushCapture();
+
+  const sent = JSON.parse(page.sentBodies.at(-1) ?? "{}") as { typed_code?: string };
+  expect(sent.typed_code).toContain("GRAPHY_TRACE_V1");
+  expect(page.snapshots.at(-1)?.payload.code).toBe(typed);
+  expect(page.snapshots.at(-1)?.payload.code).not.toContain("GRAPHY_TRACE_V1");
 });

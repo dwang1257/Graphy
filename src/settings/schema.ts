@@ -2,7 +2,7 @@ export const NODE_SHAPES = ["circle", "ellipse", "box", "square", "diamond", "he
 export const EDGE_STYLES = ["solid", "dashed", "dotted", "bold"] as const;
 export const SPLINES = ["spline", "line", "polyline", "ortho", "curved"] as const;
 export const RANK_DIRS = ["TB", "LR", "BT", "RL"] as const;
-export const THEME_MODES = ["auto", "light", "dark"] as const;
+export const THEME_MODES = ["light", "dark"] as const;
 
 export type NodeShape = (typeof NODE_SHAPES)[number];
 export type EdgeStyle = (typeof EDGE_STYLES)[number];
@@ -109,7 +109,7 @@ export const DEFAULT_LAYOUT: Layout = {
   edgeStyle: "solid",
   splines: "spline",
   rankdir: "TB",
-  fontFamily: "Menlo, Consolas, monospace",
+  fontFamily: "Outfit",
   fontSize: 13,
   penWidth: 1.4,
   nodeSep: 0.35,
@@ -121,7 +121,7 @@ export const DEFAULT_LAYOUT: Layout = {
 };
 
 export const DEFAULT_SETTINGS: Settings = {
-  mode: "auto",
+  mode: "dark",
   light: LIGHT,
   dark: DARK,
   layout: DEFAULT_LAYOUT,
@@ -153,15 +153,18 @@ export function withDefaults(stored: unknown): Settings {
   layout.nodeSep = num(layout.nodeSep, DEFAULT_LAYOUT.nodeSep, 0.1, 1.5);
   layout.rankSep = num(layout.rankSep, DEFAULT_LAYOUT.rankSep, 0.1, 2);
   layout.nodeSize = num(layout.nodeSize, DEFAULT_LAYOUT.nodeSize, 0.6, 1.8);
+  layout.fontFamily = DEFAULT_LAYOUT.fontFamily;
   const light = { ...LIGHT, ...(s.light ?? {}) };
   const dark = { ...DARK, ...(s.dark ?? {}) };
   light.backgroundImage = imageUrl(light.backgroundImage, LIGHT.backgroundImage);
   dark.backgroundImage = imageUrl(dark.backgroundImage, DARK.backgroundImage);
   light.nodeBackgroundImage = imageUrl(light.nodeBackgroundImage, LIGHT.nodeBackgroundImage);
   dark.nodeBackgroundImage = imageUrl(dark.nodeBackgroundImage, DARK.nodeBackgroundImage);
+  const mode: ThemeMode = s.mode === "light" || s.mode === "dark" ? s.mode : "dark";
   return {
     ...DEFAULT_SETTINGS,
     ...s,
+    mode,
     light,
     dark,
     layout,

@@ -7,37 +7,53 @@ const MIN_WIDTH = 320;
 const MIN_HEIGHT = 220;
 
 const STYLE = `
-:host { all: initial; }
+:host {
+  all: initial;
+  --color-paper: oklch(99% 0.004 250);
+  --color-ink: oklch(22% 0.02 255);
+  --color-accent: oklch(62% 0.19 255);
+  --color-accent-ink: oklch(99% 0.01 255);
+  --color-rule: oklch(84% 0.012 250);
+  --color-focus: oklch(62% 0.19 255);
+  --font-body: "Outfit", ui-sans-serif, system-ui, sans-serif;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --dur-short: 160ms;
+}
 .shell {
   position: fixed;
   z-index: 2147483646;
-  border-radius: 10px;
+  border: 0;
+  border-radius: 0;
   overflow: hidden;
-  box-shadow: 0 0 0 1px oklch(0% 0 0 / 0.08), 0 12px 32px oklch(0% 0 0 / 0.18);
-  background: oklch(99% 0.004 250);
-  transition: height 160ms cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: none;
+  background: transparent;
+  transition: height var(--dur-short) var(--ease-out);
   display: none;
 }
 .shell[data-resizing="true"] { transition: none; }
 .shell[data-open="true"] { display: block; }
 .shell iframe { width: 100%; height: 100%; border: 0; display: block; }
 .launcher {
+  appearance: none;
+  -webkit-appearance: none;
   position: fixed;
   z-index: 2147483645;
   right: 20px;
   bottom: 20px;
   height: 36px;
   padding: 0 14px;
-  border: 0;
-  border-radius: 8px;
-  background: oklch(62% 0.19 255);
-  color: oklch(99% 0.01 255);
-  font: 600 12px/36px ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  border: 1px solid var(--color-accent);
+  border-radius: 0;
+  background: var(--color-accent);
+  color: var(--color-accent-ink);
+  font: 600 12px/36px var(--font-body);
   letter-spacing: -0.01em;
   cursor: pointer;
-  box-shadow: 0 4px 16px oklch(62% 0.19 255 / 0.35);
+  box-shadow: none;
 }
-.launcher:hover { background: oklch(56% 0.19 255); }
+.launcher:hover { background: var(--color-ink); border-color: var(--color-ink); color: var(--color-paper); }
+.launcher:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.launcher:active { transform: translateY(1px); }
 .launcher[hidden] { display: none; }
 `;
 
@@ -90,7 +106,11 @@ export class PanelHost {
     this.launcher.textContent = "Graphy";
     this.launcher.addEventListener("click", () => this.open());
 
-    this.root.append(style, this.shell, this.launcher);
+    const fonts = document.createElement("link");
+    fonts.rel = "stylesheet";
+    fonts.href = "https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600&display=swap";
+
+    this.root.append(fonts, style, this.shell, this.launcher);
     window.addEventListener("message", this.onMessage);
     window.addEventListener("resize", this.clamp);
 

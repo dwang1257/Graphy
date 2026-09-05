@@ -5,7 +5,8 @@ import { clampCaseIndex } from "../core/cases.js";
 import { buildPanes } from "../core/build.js";
 import { emitDot } from "../core/dot/emit.js";
 import { parseSignature } from "../core/signature.js";
-import { KIND_LABELS, visibleNodeCount, type GraphModel, type StructureKind } from "../core/types.js";
+import { framesFromStdout } from "../core/trace.js";
+import { KIND_LABELS, visibleNodeCount, type StructureKind } from "../core/types.js";
 import { DEFAULT_SETTINGS, type Settings } from "../settings/schema.js";
 import {
   loadOverrides,
@@ -20,6 +21,7 @@ import { PANEL_CHANNEL, isToPanel, type FromPanel, type Snapshot } from "../shar
 import { GraphView } from "./GraphView.js";
 import { SettingsDrawer } from "./SettingsDrawer.js";
 import { TitleBar } from "./TitleBar.js";
+import { TracePlayback } from "./TracePlayback.js";
 import { preload, renderDot } from "./graphviz.js";
 import { detectParentOrigin, isAllowedParentOrigin } from "./parentOrigin.js";
 
@@ -35,15 +37,13 @@ function asStructureKind(value: string | undefined): StructureKind | undefined {
   return undefined;
 }
 
-function resolvedPalette(mode: Settings["mode"], pageIsDark: boolean): "light" | "dark" {
-  if (mode === "light" || mode === "dark") return mode;
-  return pageIsDark ? "dark" : "light";
+function resolvedPalette(mode: Settings["mode"]): "light" | "dark" {
+  return mode === "light" ? "light" : "dark";
 }
 
 export function App(): JSX.Element {
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
-  const [pageIsDark, setPageIsDark] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [activeCase, setActiveCase] = useState(0);
   const [svg, setSvg] = useState("");
@@ -51,6 +51,8 @@ export function App(): JSX.Element {
   const [confirmedFor, setConfirmedFor] = useState<string | null>(null);
   const [fitCount, setFitCount] = useState(0);
   const [overrides, setOverrides] = useState<Record<string, Override>>({});
+  const [traceIndex, setTraceIndex] = useState(0);
+  const [tracePlaying, setTracePlaying] = useState(false);
 
   const liveUpdate = useRef(true);
   liveUpdate.current = settings.liveUpdate;
@@ -73,14 +75,17 @@ export function App(): JSX.Element {
       if (event.source !== parent || !isAllowedParentOrigin(event.origin)) return;
       const data: unknown = event.data;
       if (!isToPanel(data)) return;
-      if (data.type === "theme") {
-        setPageIsDark(data.pageIsDark);
-        return;
-      }
+      if (data.type === "theme") return;
       // With live updates off, only a Run refreshes the view.
       if (data.payload.source === "editor" && !liveUpdate.current && hasRendered.current) return;
-      setPageIsDark(data.pageIsDark);
-      setSnapshot(data.payload);
+      setSnapshot((prev) => {
+        const next = data.payload;
+        // Keep the last Run's stdout across editor keystrokes so the scrubber survives typing.
+        if (next.source === "editor" && next.stdout === undefined && prev?.stdout) {
+          return { ...next, stdout: prev.stdout };
+        }
+        return next;
+      });
     };
 
     window.addEventListener("message", onMessage);
@@ -134,8 +139,18 @@ export function App(): JSX.Element {
 
   // One graph per Case: first visualizable parameter of the selected case.
   const pane = result.panes[0];
-  const paletteName = resolvedPalette(settings.mode, pageIsDark);
+  const paletteName = resolvedPalette(settings.mode);
   const palette = settings[paletteName];
+
+  const traceFrames = useMemo(() => {
+    if (!pane || !snapshot?.stdout) return [];
+    return framesFromStdout(snapshot.stdout, pane.model);
+  }, [pane, snapshot?.stdout]);
+
+  useEffect(() => {
+    setTraceIndex(0);
+    setTracePlaying(false);
+  }, [snapshot?.stdout, pane?.id, caseIndex]);
 
   const paneSize = pane ? visibleNodeCount(pane.model) : 0;
   const confirmKey = `${slug}:${caseIndex}:${caseInput}:${selectedKind ?? ""}`;
@@ -203,7 +218,7 @@ export function App(): JSX.Element {
     const style: JSX.CSSProperties = { backgroundColor: palette.background };
     if (palette.backgroundImage) {
       style.backgroundImage = `url(${palette.backgroundImage})`;
-      style.backgroundSize = "contain";
+      style.backgroundSize = "cover";
       style.backgroundPosition = "center";
       style.backgroundRepeat = "no-repeat";
     }
@@ -238,6 +253,7 @@ export function App(): JSX.Element {
               svg={svg}
               fitKey={`${slug}:${caseIndex}:${pane?.id ?? ""}:${fitCount}`}
               nodeBackgroundImage={palette.nodeBackgroundImage}
+              traceFrame={traceFrames[traceIndex] ?? null}
             />
           ) : (
             <div class="stage" />
@@ -256,34 +272,36 @@ export function App(): JSX.Element {
         </div>
       </div>
 
-      <div class="statusbar">
-        {cases.length > 1 && (
-          <div class="case-switcher" role="tablist" aria-label="Test cases">
-            {cases.map((_, i) => (
-              <button
-                class="case-pill"
-                role="tab"
-                key={i}
-                type="button"
-                aria-selected={i === caseIndex}
-                aria-label={`Case ${i + 1}`}
-                onClick={() => setActiveCase(i)}
-              >
-                Case {i + 1}
-              </button>
-            ))}
-          </div>
-        )}
-        <span>{countLabel(pane?.model)}</span>
-      </div>
+      {(cases.length > 1 || traceFrames.length > 0) && (
+        <div class="statusbar">
+          {cases.length > 1 && (
+            <div class="case-switcher" role="tablist" aria-label="Test cases">
+              {cases.map((_, i) => (
+                <button
+                  class="case-pill"
+                  role="tab"
+                  key={i}
+                  type="button"
+                  aria-selected={i === caseIndex}
+                  aria-label={`Case ${i + 1}`}
+                  onClick={() => setActiveCase(i)}
+                >
+                  Case {i + 1}
+                </button>
+              ))}
+            </div>
+          )}
+          <TracePlayback
+            frames={traceFrames}
+            index={traceIndex}
+            playing={tracePlaying}
+            onIndexChange={setTraceIndex}
+            onPlayingChange={setTracePlaying}
+          />
+        </div>
+      )}
     </div>
   );
-}
-
-function countLabel(model: GraphModel | undefined): string {
-  if (!model) return "waiting for input";
-  const unit = model.kind === "matrix" ? "cells" : "nodes";
-  return `${visibleNodeCount(model)} ${unit}`;
 }
 
 interface PlaceholderProps {
@@ -300,57 +318,36 @@ function Placeholder(props: PlaceholderProps): JSX.Element {
   if (props.error) {
     return (
       <div class="placeholder error">
-        <div class="placeholder-card">
-          <div class="placeholder-icon">!</div>
-          <strong>Layout failed</strong>
-          <span>Graphviz could not lay this out.</span>
-          <code>{props.error}</code>
-        </div>
+        <p>Layout failed. Graphviz could not lay this out.</p>
+        <code>{props.error}</code>
       </div>
     );
   }
   if (props.snapshot?.captureError) {
     return (
       <div class="placeholder error">
-        <div class="placeholder-card">
-          <div class="placeholder-icon">!</div>
-          <strong>Case split failed</strong>
-          <span>{props.snapshot.captureError}</span>
-        </div>
+        <p>Case split failed. {props.snapshot.captureError}</p>
       </div>
     );
   }
   if (props.tooLarge) {
     return (
       <div class="placeholder">
-        <div class="placeholder-card">
-          <div class="placeholder-icon">{props.nodeCount}</div>
-          <strong>{props.nodeCount} nodes</strong>
-          <span>Large graphs can take a moment to lay out.</span>
-          <button type="button" class="btn btn-primary" onClick={props.onConfirmLarge}>Render anyway</button>
-        </div>
+        <p>{props.nodeCount} nodes. Large graphs can take a moment to lay out.</p>
+        <button type="button" class="btn btn-primary" onClick={props.onConfirmLarge}>Render anyway</button>
       </div>
     );
   }
   if (!props.snapshot || !props.caseInput.trim()) {
     return (
       <div class="placeholder">
-        <div class="placeholder-card">
-          <div class="placeholder-icon">∅</div>
-          <strong>No test case yet</strong>
-          <span>Type a custom test case or hit Run.</span>
-        </div>
+        <p>no test case, hit run</p>
       </div>
     );
   }
-  const needsStructure = props.failure?.includes("Choose a structure");
   return (
     <div class="placeholder">
-      <div class="placeholder-card">
-        <div class="placeholder-icon">?</div>
-        <strong>{needsStructure ? "Choose a structure" : "Nothing to draw"}</strong>
-        <span>{props.failure ?? "This input does not look like a graph structure."}</span>
-      </div>
+      <p>{props.failure ?? "This input does not look like a graph structure."}</p>
     </div>
   );
 }

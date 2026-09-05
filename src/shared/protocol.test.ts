@@ -29,6 +29,26 @@ describe("snapshot validation", () => {
     ).toBe(true);
   });
 
+  it("accepts optional Run stdout", () => {
+    expect(
+      isPageMessage({
+        channel: PAGE_CHANNEL,
+        type: "snapshot",
+        payload: { ...validSnapshot, source: "network", stdout: "#graphy current n0\n" },
+      }),
+    ).toBe(true);
+  });
+
+  it("rejects non-string stdout", () => {
+    expect(
+      isPageMessage({
+        channel: PAGE_CHANNEL,
+        type: "snapshot",
+        payload: { ...validSnapshot, stdout: ["#graphy current n0"] },
+      }),
+    ).toBe(false);
+  });
+
   it("rejects snapshots that still use a single input string", () => {
     expect(
       isPageMessage({

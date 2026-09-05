@@ -140,7 +140,7 @@ function matrixTable(matrix: MatrixData, { palette, layout }: EmitOptions): stri
       }
       const fill = cell.filled ? palette.cellFill : palette.cellEmptyFill;
       tds.push(
-        `<TD BGCOLOR="${esc(fill)}" WIDTH="${cellSize}" HEIGHT="${cellSize}" ALIGN="CENTER">` +
+        `<TD HREF="graphy://cell/${r}/${c}" BGCOLOR="${esc(fill)}" WIDTH="${cellSize}" HEIGHT="${cellSize}" ALIGN="CENTER">` +
         `<FONT COLOR="${esc(palette.cellText)}" POINT-SIZE="${cellFontSize}">${htmlText(cell.text)}</FONT></TD>`,
       );
     }

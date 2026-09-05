@@ -1,4 +1,6 @@
 import { PAGE_CHANNEL, type Snapshot } from "../shared/protocol.js";
+import { instrumentRunBody } from "./instrument.js";
+import { extractRunStdout } from "./runResult.js";
 import { captureCasesFromTabs } from "./testcaseCapture.js";
 import { createTestcaseDomAdapter, type TestcaseDomAdapter } from "./testcaseDom.js";
 
@@ -115,6 +117,7 @@ function publish(source: Snapshot["source"], override?: Partial<Snapshot>, walk 
       at: Date.now(),
     };
     if (captureError) snapshot.captureError = captureError;
+    if (override?.stdout !== undefined) snapshot.stdout = override.stdout;
 
     const key = `${snapshot.cases.join("\u001f")}\u001e${snapshot.code}\u001e${snapshot.lang}\u001e${snapshot.captureError ?? ""}`;
     if (source === "editor" && key === last) return;
@@ -198,22 +201,39 @@ function maybeWalkResults(url: string, body: Record<string, unknown> | null): vo
   const checkId = CHECK_URL.exec(url)?.[1];
   if (pendingRun.id && checkId !== pendingRun.id) return;
 
-  const override = pendingRun.override;
+  const override: Partial<Snapshot> = { ...pendingRun.override };
+  const stdout = extractRunStdout(body);
+  if (stdout !== undefined) override.stdout = stdout;
   pendingRun = null;
   void publish("network", override, true);
+}
+
+function outgoingRun(body: unknown): { remember: unknown; send: unknown } {
+  const rewritten = instrumentRunBody(body);
+  return {
+    remember: body,
+    send: rewritten ? rewritten.body : body,
+  };
 }
 
 function patchNetwork(): void {
   const nativeFetch = window.fetch;
   window.fetch = function patched(this: typeof globalThis, input: RequestInfo | URL, init?: RequestInit) {
     const url = requestUrl(input);
+    let nextInit = init;
     try {
-      if (RUN_URL.test(url)) rememberRun(init?.body);
+      if (RUN_URL.test(url)) {
+        const run = outgoingRun(init?.body);
+        rememberRun(run.remember);
+        if (run.send !== init?.body && init) {
+          nextInit = { ...init, body: run.send as BodyInit };
+        }
+      }
     } catch {
       /* Never let instrumentation break the page's own request. */
     }
 
-    const request = nativeFetch.call(this, input as RequestInfo, init);
+    const request = nativeFetch.call(this, input as RequestInfo, nextInit);
     void request
       .then(async (response) => {
         if (RUN_URL.test(url)) {
@@ -237,8 +257,13 @@ function patchNetwork(): void {
 
   XMLHttpRequest.prototype.send = function send(this: XMLHttpRequest, body?: Document | XMLHttpRequestBodyInit | null) {
     const url = urls.get(this) ?? "";
+    let nextBody = body;
     try {
-      if (RUN_URL.test(url)) rememberRun(body);
+      if (RUN_URL.test(url)) {
+        const run = outgoingRun(body);
+        rememberRun(run.remember);
+        nextBody = run.send as typeof body;
+      }
     } catch {
       /* Same - instrumentation must never be fatal. */
     }
@@ -252,7 +277,7 @@ function patchNetwork(): void {
         /* Same - instrumentation must never be fatal. */
       }
     });
-    return nativeSend.call(this, body ?? null);
+    return nativeSend.call(this, nextBody ?? null);
   };
 }
 

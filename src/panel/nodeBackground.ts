@@ -1,3 +1,5 @@
+import { NODE_OUTLINE } from "./imageInk.js";
+
 const SVG_NS = "http://www.w3.org/2000/svg";
 const PATTERN_ID = "graphy-node-bg";
 const SHAPE_SELECTOR = "ellipse, polygon, circle, rect";
@@ -9,8 +11,9 @@ const MIN_EXTENT = 8;
  * Injects an SVG pattern from `imageUrl` and paints visible node shapes with it.
  * Skips plaintext (no filled shapes), tiny point markers, and unfilled geometry.
  * Matrices (HTML-table plaintext nodes) are left alone.
+ * When `ink` is set, every label uses that fill and painted node outlines go black.
  */
-export function applyNodeBackgroundImage(svgRoot: Element, imageUrl: string): void {
+export function applyNodeBackgroundImage(svgRoot: Element, imageUrl: string, ink?: string): void {
   const doc = svgRoot.ownerDocument!;
   const defs = ensureDefs(svgRoot, doc);
   defs.querySelector(`#${PATTERN_ID}`)?.remove();
@@ -20,6 +23,13 @@ export function applyNodeBackgroundImage(svgRoot: Element, imageUrl: string): vo
     for (const shape of node.querySelectorAll(SHAPE_SELECTOR)) {
       if (!isPaintableNodeShape(shape)) continue;
       shape.setAttribute("fill", `url(#${PATTERN_ID})`);
+      shape.setAttribute("stroke", NODE_OUTLINE);
+    }
+  }
+
+  if (ink) {
+    for (const label of svgRoot.querySelectorAll("text")) {
+      label.setAttribute("fill", ink);
     }
   }
 }
@@ -36,11 +46,15 @@ function buildPattern(doc: Document, imageUrl: string): Element {
   const pattern = doc.createElementNS(SVG_NS, "pattern");
   pattern.setAttribute("id", PATTERN_ID);
   pattern.setAttribute("patternUnits", "objectBoundingBox");
+  // Default content units are userSpaceOnUse, so width/height of 1 would be a
+  // 1px tile and the node fill would look empty / transparent.
+  pattern.setAttribute("patternContentUnits", "objectBoundingBox");
   pattern.setAttribute("width", "1");
   pattern.setAttribute("height", "1");
 
   const image = doc.createElementNS(SVG_NS, "image");
   image.setAttribute("href", imageUrl);
+  image.setAttributeNS("http://www.w3.org/1999/xlink", "href", imageUrl);
   image.setAttribute("width", "1");
   image.setAttribute("height", "1");
   image.setAttribute("preserveAspectRatio", "xMidYMid slice");

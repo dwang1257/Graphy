@@ -22,7 +22,7 @@
   "content_scripts": [
     {
       "js": [
-        "assets/index.ts-loader-Bpk6P03U.js"
+        "assets/index.ts-loader-kyIk_3rn.js"
       ],
       "matches": [
         "https://leetcode.com/*",
@@ -41,13 +41,13 @@
         "injected.js",
         "src/panel/index.html",
         "assets/*",
-        "assets/protocol-CqMOXDgb.js",
-        "assets/index.ts-jI2_isXz.js"
+        "assets/protocol-DY557hx1.js",
+        "assets/index.ts-B2FD81yT.js"
       ],
       "use_dynamic_url": false
     }
   ],
   "content_security_policy": {
-    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com"
   }
 }

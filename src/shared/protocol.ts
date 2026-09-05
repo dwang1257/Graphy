@@ -17,6 +17,8 @@ export interface Snapshot {
   at: number;
   /** Set when the full buffer could not be split into Case tabs. */
   captureError?: string;
+  /** Run stdout from the LeetCode `/check` response, when present. */
+  stdout?: string;
 }
 
 export type PageMessage = { channel: typeof PAGE_CHANNEL; type: "snapshot"; payload: Snapshot };
@@ -56,6 +58,7 @@ function isSnapshot(payload: unknown): payload is Snapshot {
     return false;
   }
   if (p.captureError !== undefined && typeof p.captureError !== "string") return false;
+  if (p.stdout !== undefined && typeof p.stdout !== "string") return false;
   return true;
 }
 
