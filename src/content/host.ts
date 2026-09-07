@@ -2,9 +2,6 @@ import { isPanelMessage, type ToPanel } from "../shared/protocol.js";
 import { DEFAULT_PANEL, loadPanelState, savePanelState, type PanelState } from "../settings/storage.js";
 
 const HOST_ID = "graphy-root";
-const COLLAPSED_HEIGHT = 40;
-const MIN_WIDTH = 320;
-const MIN_HEIGHT = 220;
 
 const STYLE = `
 :host {
@@ -16,8 +13,6 @@ const STYLE = `
   --color-rule: oklch(84% 0.012 250);
   --color-focus: oklch(62% 0.19 255);
   --font-body: "Outfit", ui-sans-serif, system-ui, sans-serif;
-  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
-  --dur-short: 160ms;
 }
 .shell {
   position: fixed;
@@ -27,10 +22,8 @@ const STYLE = `
   overflow: hidden;
   box-shadow: none;
   background: transparent;
-  transition: height var(--dur-short) var(--ease-out);
   display: none;
 }
-.shell[data-resizing="true"] { transition: none; }
 .shell[data-open="true"] { display: block; }
 .shell iframe { width: 100%; height: 100%; border: 0; display: block; }
 .launcher {
@@ -65,11 +58,9 @@ export class PanelHost {
   private launcher!: HTMLButtonElement;
   private state: PanelState = { ...DEFAULT_PANEL };
   private ready = false;
-  /** One queued message per type, so a theme change cannot drop a snapshot. */
+  /** One queued message per type, so a later snapshot replaces an earlier one. */
   private pending = new Map<string, ToPanel>();
   private saveTimer: number | undefined;
-  private resizeFrame: number | undefined;
-  private pendingResize = { dx: 0, dy: 0 };
   /** Resolves once stored geometry has been applied. */
   readonly restored: Promise<void>;
 
@@ -126,12 +117,11 @@ export class PanelHost {
   }
 
   private apply(): void {
-    const height = this.state.collapsed ? COLLAPSED_HEIGHT : this.state.height;
     Object.assign(this.shell.style, {
       left: `${this.state.x}px`,
       top: `${this.state.y}px`,
       width: `${this.state.width}px`,
-      height: `${height}px`,
+      height: `${this.state.height}px`,
     });
     this.shell.dataset.open = String(this.state.open);
     this.launcher.hidden = this.state.open;
@@ -150,7 +140,6 @@ export class PanelHost {
 
   open(): void {
     this.state.open = true;
-    this.state.collapsed = false;
     this.apply();
     this.persist();
   }
@@ -202,33 +191,12 @@ export class PanelHost {
       case "close":
         this.close();
         break;
-      case "collapse":
-        this.state.collapsed = data.collapsed;
-        this.apply();
-        this.persist();
-        break;
       case "move":
         this.state.x += data.dx;
         this.state.y += data.dy;
         this.clamp();
         break;
-      case "resize":
-        this.pendingResize.dx += data.dx;
-        this.pendingResize.dy += data.dy;
-        if (this.resizeFrame !== undefined) break;
-        this.shell.dataset.resizing = "true";
-        this.resizeFrame = requestAnimationFrame(() => {
-          this.resizeFrame = undefined;
-          const { dx, dy } = this.pendingResize;
-          this.pendingResize = { dx: 0, dy: 0 };
-          if (dx === 0 && dy === 0) return;
-          this.state.width = Math.max(MIN_WIDTH, this.state.width + dx);
-          this.state.height = Math.max(MIN_HEIGHT, this.state.height + dy);
-          this.apply();
-        });
-        break;
       case "persist":
-        delete this.shell.dataset.resizing;
         this.persist();
         break;
     }

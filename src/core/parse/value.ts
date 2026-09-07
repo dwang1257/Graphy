@@ -99,13 +99,6 @@ function lenient(raw: string): LCValue {
   }
 }
 
-/** Normalizes newlines and drops trailing blank lines. */
-export function splitInputLines(input: string): string[] {
-  const lines = input.replace(/\r\n?/g, "\n").split("\n");
-  while (lines.length > 0 && lines[lines.length - 1]!.trim() === "") lines.pop();
-  return lines;
-}
-
 /**
  * Splits a testcase buffer into top-level parameter values while tracking
  * delimiter nesting and quoted regions.

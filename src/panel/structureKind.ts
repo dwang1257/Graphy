@@ -1,6 +1,6 @@
 import { KIND_LABELS, type StructureKind } from "../core/types.js";
 
-export const DEFAULT_STRUCTURE_KIND: StructureKind = "binary-tree";
+const DEFAULT_STRUCTURE_KIND: StructureKind = "binary-tree";
 
 export function resolveStructureKind(value: string | undefined): StructureKind {
   if (value && value in KIND_LABELS) return value as StructureKind;

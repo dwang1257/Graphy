@@ -132,7 +132,7 @@ Type errors are checked separately with `npm run typecheck`.
 1. Open a problem on [leetcode.com](https://leetcode.com) or [leetcode.cn](https://leetcode.cn).
 2. Graphy reads the custom test case and draws it in a floating panel.
 3. Edit the test case. The drawing updates while you type.
-4. Drag the title bar to move the panel, drag its corner to resize, and use **Fit to view** to recenter the graph.
+4. Drag the title bar to move the panel, and use **Fit to view** to recenter the graph.
 5. Click the extension icon in the toolbar to toggle the panel on any page.
 
 If the detected structure is wrong, override it with the dropdown in the title bar.

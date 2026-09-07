@@ -9,7 +9,6 @@ export interface PanelState {
   width: number;
   height: number;
   open: boolean;
-  collapsed: boolean;
 }
 
 export const DEFAULT_PANEL: PanelState = {
@@ -18,7 +17,6 @@ export const DEFAULT_PANEL: PanelState = {
   width: 460,
   height: 520,
   open: false,
-  collapsed: false,
 };
 
 export async function loadSettings(): Promise<Settings> {

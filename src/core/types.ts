@@ -58,7 +58,7 @@ export const KIND_LABELS: Record<StructureKind, string> = {
 };
 
 /** Rendered element count - the size guard must see matrix cells too. */
-export function modelSize(model: GraphModel): number {
+function modelSize(model: GraphModel): number {
   if (model.matrix) {
     let cells = 0;
     for (const row of model.matrix.rows) cells += row.length;

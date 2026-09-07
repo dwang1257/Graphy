@@ -72,7 +72,6 @@ export function App(): JSX.Element {
       if (event.source !== parent || !isAllowedParentOrigin(event.origin)) return;
       const data: unknown = event.data;
       if (!isToPanel(data)) return;
-      if (data.type === "theme") return;
       // With live updates off, only a Run refreshes the view.
       if (data.payload.source === "editor" && !liveUpdate.current && hasRendered.current) return;
       setSnapshot((prev) => {

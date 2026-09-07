@@ -24,15 +24,12 @@ export interface Snapshot {
 export type PageMessage = { channel: typeof PAGE_CHANNEL; type: "snapshot"; payload: Snapshot };
 
 export type ToPanel =
-  | { channel: typeof PANEL_CHANNEL; type: "snapshot"; payload: Snapshot; pageIsDark: boolean }
-  | { channel: typeof PANEL_CHANNEL; type: "theme"; pageIsDark: boolean };
+  | { channel: typeof PANEL_CHANNEL; type: "snapshot"; payload: Snapshot };
 
 export type FromPanel =
   | { channel: typeof PANEL_CHANNEL; type: "ready" }
   | { channel: typeof PANEL_CHANNEL; type: "close" }
-  | { channel: typeof PANEL_CHANNEL; type: "collapse"; collapsed: boolean }
   | { channel: typeof PANEL_CHANNEL; type: "move"; dx: number; dy: number }
-  | { channel: typeof PANEL_CHANNEL; type: "resize"; dx: number; dy: number }
   | { channel: typeof PANEL_CHANNEL; type: "persist" };
 
 function onChannel(data: unknown, channel: string): data is { channel: string; type: unknown } {
@@ -77,10 +74,7 @@ export function isPanelMessage(data: unknown): data is FromPanel {
     case "close":
     case "persist":
       return true;
-    case "collapse":
-      return typeof m.collapsed === "boolean";
     case "move":
-    case "resize":
       return (
         typeof m.dx === "number" &&
         Number.isFinite(m.dx) &&
@@ -94,11 +88,6 @@ export function isPanelMessage(data: unknown): data is FromPanel {
 
 export function isToPanel(data: unknown): data is ToPanel {
   if (!onChannel(data, PANEL_CHANNEL)) return false;
-  const m = data as { type?: unknown; payload?: unknown; pageIsDark?: unknown };
-  if (m.type === "theme") return typeof m.pageIsDark === "boolean";
-  return (
-    m.type === "snapshot" &&
-    typeof m.pageIsDark === "boolean" &&
-    isSnapshot(m.payload)
-  );
+  const m = data as { type?: unknown; payload?: unknown };
+  return m.type === "snapshot" && isSnapshot(m.payload);
 }

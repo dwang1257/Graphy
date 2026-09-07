@@ -23,7 +23,6 @@ describe("snapshot validation", () => {
       isToPanel({
         channel: PANEL_CHANNEL,
         type: "snapshot",
-        pageIsDark: false,
         payload: { ...validSnapshot, cases: [], captureError: "Could not separate test cases." },
       }),
     ).toBe(true);

@@ -12,8 +12,7 @@
     "verbatimModuleSyntax": true,
     "jsx": "react-jsx",
     "jsxImportSource": "preact",
-    "types": ["chrome", "node", "vite/client"],
-    "paths": { "~/*": ["./src/*"] }
+    "types": ["chrome", "node", "vite/client"]
   },
-  "include": ["src", "build.mjs", "vite.config.ts"]
+  "include": ["src", "vite.config.ts"]
 }

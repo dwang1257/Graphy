@@ -6,7 +6,6 @@ const PROBLEM_PATH = /^\/problems\/[^/]+/;
 
 let host: PanelHost | null = null;
 let lastSnapshot: Snapshot | null = null;
-let lastDark = false;
 
 /**
  * The capture script must run in the page world to reach CodeMirror's view
@@ -19,17 +18,6 @@ function injectPageScript(): void {
   script.async = false;
   script.addEventListener("load", () => script.remove());
   (document.head ?? document.documentElement).prepend(script);
-}
-
-function pageIsDark(): boolean {
-  const el = document.documentElement;
-  if (el.classList.contains("dark")) return true;
-  if (el.dataset.theme === "dark") return true;
-  // LeetCode swaps only the surface colour on some routes.
-  const bg = getComputedStyle(document.body ?? el).backgroundColor;
-  const rgb = bg.match(/\d+/g)?.slice(0, 3).map(Number);
-  if (!rgb || rgb.length < 3) return false;
-  return (rgb[0]! * 299 + rgb[1]! * 587 + rgb[2]! * 114) / 1000 < 128;
 }
 
 function onProblemPage(): boolean {
@@ -53,7 +41,7 @@ function unmount(): void {
 }
 
 function forward(snapshot: Snapshot): void {
-  host?.send({ channel: PANEL_CHANNEL, type: "snapshot", payload: snapshot, pageIsDark: lastDark });
+  host?.send({ channel: PANEL_CHANNEL, type: "snapshot", payload: snapshot });
 }
 
 window.addEventListener("message", (event) => {
@@ -94,30 +82,9 @@ function watchNavigation(): void {
   window.setInterval(check, 1000);
 }
 
-function watchTheme(): void {
-  let queued = false;
-  const observer = new MutationObserver(() => {
-    if (queued) return;
-    queued = true;
-    requestAnimationFrame(() => {
-      queued = false;
-      const dark = pageIsDark();
-      if (dark === lastDark) return;
-      lastDark = dark;
-      host?.send({ channel: PANEL_CHANNEL, type: "theme", pageIsDark: dark });
-    });
-  });
-  observer.observe(document.documentElement, {
-    attributes: true,
-    attributeFilter: ["class", "data-theme"],
-  });
-}
-
 function start(): void {
-  lastDark = pageIsDark();
   if (onProblemPage()) mount();
   watchNavigation();
-  watchTheme();
 }
 
 injectPageScript();
