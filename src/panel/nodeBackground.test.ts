@@ -1,6 +1,7 @@
 /** @vitest-environment happy-dom */
 
 import { describe, expect, it } from "vitest";
+import { IMAGE_TONE_ATTR } from "./imageInk.js";
 import { applyNodeBackgroundImage } from "./nodeBackground.js";
 
 const PHOTO = "data:image/png;base64,abc";
@@ -93,6 +94,13 @@ describe("node background image", () => {
       "#1e1b4b",
       "#1e1b4b",
     ]);
+    expect(svg.getAttribute(IMAGE_TONE_ATTR)).toBe("light");
+  });
+
+  it("marks a dark photo so visited nodes can lift instead of shade", () => {
+    const svg = parseSvg(GRAPHVIZ_SVG);
+    applyNodeBackgroundImage(svg, PHOTO, "#f8fafc");
+    expect(svg.getAttribute(IMAGE_TONE_ATTR)).toBe("dark");
   });
 
   it("keeps the image URL after the GraphView serialize round-trip", () => {

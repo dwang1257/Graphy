@@ -1,8 +1,11 @@
 import type { TraceFrame } from "../core/trace.js";
+import { IMAGE_TONE_ATTR, paintTone, type PaintTone } from "./imageInk.js";
 
 const STATE_ATTR = "data-graphy-state";
+const TONE_ATTR = "data-graphy-tone";
 const ID_ATTR = "data-graphy-id";
 const CELL_HREF = /^graphy:\/\/cell\/(\d+)\/(\d+)$/;
+const SHAPE_SELECTOR = "ellipse, polygon, circle, rect, path";
 
 /** Clears prior highlight attributes from the rendered SVG. */
 export function clearTraceOverlay(svgRoot: Element): void {
@@ -11,6 +14,9 @@ export function clearTraceOverlay(svgRoot: Element): void {
   }
   for (const el of svgRoot.querySelectorAll(`[${ID_ATTR}]`)) {
     el.removeAttribute(ID_ATTR);
+  }
+  for (const el of svgRoot.querySelectorAll(`[${TONE_ATTR}]`)) {
+    el.removeAttribute(TONE_ATTR);
   }
 }
 
@@ -47,6 +53,7 @@ function indexNodes(svgRoot: Element, targets: Map<string, Set<string>>): void {
     if (!states) continue;
     node.setAttribute(ID_ATTR, title);
     node.setAttribute(STATE_ATTR, [...states].join(" "));
+    markTone(node, imageToneOf(svgRoot));
   }
 }
 
@@ -65,5 +72,29 @@ function indexCells(svgRoot: Element, targets: Map<string, Set<string>>): void {
     if (!states) continue;
     anchor.setAttribute(ID_ATTR, id);
     anchor.setAttribute(STATE_ATTR, [...states].join(" "));
+    markTone(anchor, imageToneOf(svgRoot));
   }
+}
+
+function imageToneOf(svgRoot: Element): PaintTone | null {
+  const tone = svgRoot.getAttribute(IMAGE_TONE_ATTR);
+  return tone === "light" || tone === "dark" ? tone : null;
+}
+
+function markTone(target: Element, imageTone: PaintTone | null): void {
+  target.setAttribute(TONE_ATTR, paintTone(paintFill(target), imageTone));
+}
+
+function paintFill(target: Element): string | null {
+  if (target.matches(SHAPE_SELECTOR)) return readFill(target);
+  const shape = target.querySelector(SHAPE_SELECTOR);
+  return shape ? readFill(shape) : null;
+}
+
+function readFill(el: Element): string | null {
+  const attr = el.getAttribute("fill");
+  if (attr) return attr;
+  const style = el.getAttribute("style");
+  if (!style) return null;
+  return /(?:^|;)\s*fill\s*:\s*([^;]+)/i.exec(style)?.[1]?.trim() ?? null;
 }

@@ -1,4 +1,6 @@
 import type { JSX } from "preact";
+import { useEffect, useState } from "preact/hooks";
+import { CANVAS_PRESETS, normalizeCssHex } from "../settings/cssColor.js";
 import {
   DEFAULT_LAYOUT,
   DARK,
@@ -41,6 +43,25 @@ export function SettingsDrawer({ settings, activePalette, onChange, onClose }: P
 
   const setPalette = (patch: Partial<Palette>): void => {
     onChange({ ...settings, [activePalette]: { ...palette, ...patch } });
+  };
+
+  const hex =
+    normalizeCssHex(palette.background) ??
+    (activePalette === "light" ? LIGHT.background : DARK.background);
+  const [hexDraft, setHexDraft] = useState(hex);
+  const [hexInvalid, setHexInvalid] = useState(false);
+
+  useEffect(() => {
+    setHexDraft(hex);
+    setHexInvalid(false);
+  }, [hex]);
+
+  const setBackground = (value: string): void => {
+    const next = normalizeCssHex(value);
+    if (!next) return;
+    setHexDraft(next);
+    setHexInvalid(false);
+    if (next !== palette.background) setPalette({ background: next });
   };
 
   const onImageUpload = (
@@ -141,17 +162,69 @@ export function SettingsDrawer({ settings, activePalette, onChange, onClose }: P
         </section>
 
         <section class="style-section">
-          <h3 class="style-section-title">Stage background</h3>
-          <p class="style-section-hint">Canvas color and image behind the graph</p>
-          <div class="bg-row">
-            <label class="bg-color-label" for="bg-color">Color</label>
+          <h3 class="style-section-title">Background:</h3>
+          <label class="color-field-label" for="bg-hex">Color</label>
+          <div class="color-field">
+            <label
+              class="color-swatch"
+              style={{ "--swatch": hex } as JSX.CSSProperties}
+              title="Pick a custom color"
+            >
+              <span class="color-swatch-fill" />
+              <input
+                type="color"
+                class="color-swatch-native"
+                value={hex}
+                aria-label="Background color"
+                onInput={(e) => setBackground(e.currentTarget.value)}
+              />
+            </label>
             <input
-              id="bg-color"
-              type="color"
-              class="bg-color-input"
-              value={palette.background}
-              onInput={(e) => setPalette({ background: e.currentTarget.value })}
+              id="bg-hex"
+              type="text"
+              class="color-hex"
+              value={hexDraft}
+              spellcheck={false}
+              autocomplete="off"
+              autocapitalize="off"
+              maxlength={7}
+              aria-label="Background hex color"
+              aria-invalid={hexInvalid}
+              placeholder="#1a1a1a"
+              onInput={(e) => {
+                const raw = e.currentTarget.value;
+                setHexDraft(raw);
+                const next = normalizeCssHex(raw);
+                if (next) {
+                  setHexInvalid(false);
+                  if (next !== palette.background) setPalette({ background: next });
+                }
+              }}
+              onBlur={() => {
+                const next = normalizeCssHex(hexDraft);
+                if (next) {
+                  setHexDraft(next);
+                  setHexInvalid(false);
+                  if (next !== palette.background) setPalette({ background: next });
+                  return;
+                }
+                setHexInvalid(true);
+              }}
             />
+          </div>
+          <div class="color-presets" role="group" aria-label="Background presets">
+            {CANVAS_PRESETS.map(({ hex: preset, label }) => (
+              <button
+                key={preset}
+                type="button"
+                class="color-preset"
+                style={{ "--swatch": preset } as JSX.CSSProperties}
+                aria-label={label}
+                aria-pressed={hex === preset}
+                title={label}
+                onClick={() => setBackground(preset)}
+              />
+            ))}
           </div>
           <div class="bg-image-row">
             <label class="btn btn-primary bg-upload-btn">

@@ -19,36 +19,60 @@ export interface TraceFrame {
   label: string;
 }
 
-const LINE =
-  /^\s*#?graphy\s+(current|curr|visit|enqueue|dequeue|frontier|clear)(?:\s+(.+))?\s*$/i;
+const PREFIX = /^\s*#?graphy\s+(.+?)\s*$/i;
+const VERBS = new Set(["current", "curr", "visit", "enqueue", "dequeue", "frontier", "clear", "walk"]);
+
+function isVerb(token: string): boolean {
+  return VERBS.has(token.toLowerCase());
+}
+
+function pushRefEvents(events: TraceEvent[], verb: string, ref: string, line: number): void {
+  if (verb === "walk") {
+    events.push({ kind: "current", ref, line }, { kind: "visit", ref, line });
+    return;
+  }
+  if (verb === "current" || verb === "curr") events.push({ kind: "current", ref, line });
+  else if (verb === "visit") events.push({ kind: "visit", ref, line });
+  else if (verb === "enqueue") events.push({ kind: "enqueue", ref, line });
+  else if (verb === "dequeue") events.push({ kind: "dequeue", ref, line });
+}
 
 /** Extracts Graphy trace events from LeetCode Run stdout. */
 export function parseTrace(stdout: string): TraceEvent[] {
   const events: TraceEvent[] = [];
   const lines = stdout.split(/\r?\n/);
   for (let i = 0; i < lines.length; i += 1) {
-    const match = LINE.exec(lines[i] ?? "");
+    const match = PREFIX.exec(lines[i] ?? "");
     if (!match) continue;
     const line = i + 1;
-    const verb = (match[1] ?? "").toLowerCase();
-    const rest = (match[2] ?? "").trim();
-    const tokens = rest.length > 0 ? rest.split(/\s+/).filter(Boolean) : [];
-
-    if (verb === "clear") {
-      events.push({ kind: "clear", line });
-      continue;
+    const tokens = (match[1] ?? "").split(/\s+/).filter(Boolean);
+    let index = 0;
+    while (index < tokens.length) {
+      const raw = tokens[index] ?? "";
+      const verb = raw.toLowerCase();
+      if (!isVerb(verb)) {
+        index += 1;
+        continue;
+      }
+      index += 1;
+      if (verb === "clear") {
+        events.push({ kind: "clear", line });
+        continue;
+      }
+      if (verb === "frontier") {
+        const refs: string[] = [];
+        while (index < tokens.length && !isVerb(tokens[index] ?? "")) {
+          refs.push(tokens[index] ?? "");
+          index += 1;
+        }
+        if (refs.length > 0) events.push({ kind: "frontier", refs, line });
+        continue;
+      }
+      while (index < tokens.length && !isVerb(tokens[index] ?? "")) {
+        pushRefEvents(events, verb, tokens[index] ?? "", line);
+        index += 1;
+      }
     }
-    if (verb === "frontier") {
-      if (tokens.length === 0) continue;
-      events.push({ kind: "frontier", refs: tokens, line });
-      continue;
-    }
-    const ref = tokens[0];
-    if (!ref) continue;
-    if (verb === "current" || verb === "curr") events.push({ kind: "current", ref, line });
-    else if (verb === "visit") events.push({ kind: "visit", ref, line });
-    else if (verb === "enqueue") events.push({ kind: "enqueue", ref, line });
-    else if (verb === "dequeue") events.push({ kind: "dequeue", ref, line });
   }
   return events;
 }

@@ -35,6 +35,26 @@ describe("parseTrace", () => {
       { kind: "clear", line: 2 },
     ]);
   });
+
+  it("parses several commands packed onto one line", () => {
+    expect(parseTrace("#graphy current n0 visit n0 current n1 visit n1")).toEqual([
+      { kind: "current", ref: "n0", line: 1 },
+      { kind: "visit", ref: "n0", line: 1 },
+      { kind: "current", ref: "n1", line: 1 },
+      { kind: "visit", ref: "n1", line: 1 },
+    ]);
+  });
+
+  it("expands a walk list into current then visit per node", () => {
+    expect(parseTrace("#graphy walk n0 n2 n1")).toEqual([
+      { kind: "current", ref: "n0", line: 1 },
+      { kind: "visit", ref: "n0", line: 1 },
+      { kind: "current", ref: "n2", line: 1 },
+      { kind: "visit", ref: "n2", line: 1 },
+      { kind: "current", ref: "n1", line: 1 },
+      { kind: "visit", ref: "n1", line: 1 },
+    ]);
+  });
 });
 
 describe("resolveRef", () => {

@@ -59,6 +59,31 @@ describe("applyTraceOverlay", () => {
     );
   });
 
+  it("records whether each marked node is light or dark so CSS can dim or lift", () => {
+    const doc = svgDoc(`
+      <g class="node"><title>n0</title><ellipse fill="#eef2ff" /></g>
+      <g class="node"><title>n1</title><ellipse fill="#312e81" /></g>
+      <g class="node"><title>n2</title><ellipse fill="url(#graphy-node-bg)" /></g>
+    `);
+    doc.documentElement.setAttribute("data-graphy-image-tone", "light");
+    applyTraceOverlay(doc.documentElement, {
+      current: "n1",
+      visited: ["n0", "n2"],
+      frontier: [],
+      line: 1,
+      label: "current n1",
+    });
+    expect(doc.querySelector('g.node[data-graphy-id="n0"]')?.getAttribute("data-graphy-tone")).toBe(
+      "light",
+    );
+    expect(doc.querySelector('g.node[data-graphy-id="n1"]')?.getAttribute("data-graphy-tone")).toBe(
+      "dark",
+    );
+    expect(doc.querySelector('g.node[data-graphy-id="n2"]')?.getAttribute("data-graphy-tone")).toBe(
+      "light",
+    );
+  });
+
   it("clearTraceOverlay removes prior marks", () => {
     const doc = svgDoc(`<g class="node"><title>n0</title><ellipse /></g>`);
     applyTraceOverlay(doc.documentElement, {
@@ -70,5 +95,6 @@ describe("applyTraceOverlay", () => {
     });
     clearTraceOverlay(doc.documentElement);
     expect(doc.querySelector("[data-graphy-state]")).toBeNull();
+    expect(doc.querySelector("[data-graphy-tone]")).toBeNull();
   });
 });

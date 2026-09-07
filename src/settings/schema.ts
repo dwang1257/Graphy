@@ -1,3 +1,5 @@
+import { normalizeCssHex } from "./cssColor.js";
+
 export const NODE_SHAPES = ["circle", "ellipse", "box", "square", "diamond", "hexagon", "doublecircle", "plaintext"] as const;
 export const EDGE_STYLES = ["solid", "dashed", "dotted", "bold"] as const;
 export const SPLINES = ["spline", "line", "polyline", "ortho", "curved"] as const;
@@ -156,6 +158,8 @@ export function withDefaults(stored: unknown): Settings {
   layout.fontFamily = DEFAULT_LAYOUT.fontFamily;
   const light = { ...LIGHT, ...(s.light ?? {}) };
   const dark = { ...DARK, ...(s.dark ?? {}) };
+  light.background = normalizeCssHex(light.background) ?? LIGHT.background;
+  dark.background = normalizeCssHex(dark.background) ?? DARK.background;
   light.backgroundImage = imageUrl(light.backgroundImage, LIGHT.backgroundImage);
   dark.backgroundImage = imageUrl(dark.backgroundImage, DARK.backgroundImage);
   light.nodeBackgroundImage = imageUrl(light.nodeBackgroundImage, LIGHT.nodeBackgroundImage);

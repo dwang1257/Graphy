@@ -24,6 +24,10 @@
   --color-success: oklch(58% 0.16 155);
   --color-live: oklch(62% 0.17 155);
 
+  /* Visited wash: dim light paint, lift dark paint. Never replace fill. */
+  --visited-shade: 0.64;
+  --visited-lift: 1.48;
+
   --font-display: "Outfit", ui-sans-serif, system-ui, sans-serif;
   --font-body: "Outfit", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "Outfit", ui-sans-serif, system-ui, sans-serif;

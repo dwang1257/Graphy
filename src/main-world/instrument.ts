@@ -5,7 +5,7 @@ const PYTHON_LANGS = new Set(["python", "python3"]);
 
 /**
  * Appends a Python tracer that tags TreeNodes with Graphy's level-order ids
- * and prints `#graphy current|visit` as the solution walks them.
+ * and prints one `#graphy walk n0 n1 …` line as the solution walks them.
  * Runs only inside the judge — the editor buffer is not changed.
  */
 export const PYTHON_TRACER = `
@@ -15,6 +15,7 @@ def __graphy_install():
 
     ids = {}
     last = None
+    walk = []
     depth = 0
 
     def tag(root):
@@ -39,8 +40,14 @@ def __graphy_install():
         if nid == last:
             return
         last = nid
-        print("#graphy current " + nid)
-        print("#graphy visit " + nid)
+        walk.append(nid)
+
+    def flush():
+        nonlocal last
+        if walk:
+            print("#graphy walk " + " ".join(walk))
+            walk.clear()
+        last = None
 
     def is_tree(obj):
         return obj is not None and hasattr(obj, "left") and hasattr(obj, "right") and hasattr(obj, "val")
@@ -85,6 +92,7 @@ def __graphy_install():
                 depth -= 1
                 if depth == 0:
                     sys.settrace(None)
+                    flush()
         return __graphy_wrapped
 
     try:

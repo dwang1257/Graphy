@@ -1,4 +1,4 @@
-import{a as e,c as t,d as n,n as r,r as i,s as a,t as o}from"./protocol-DY557hx1.js";var s=`graphy-root`,c=40,l=320,u=220,d=`
+import{a as e,c as t,d as n,n as r,r as i,s as a,t as o}from"./protocol-a8foj48x.js";var s=`graphy-root`,c=40,l=320,u=220,d=`
 :host {
   all: initial;
   --color-paper: oklch(99% 0.004 250);

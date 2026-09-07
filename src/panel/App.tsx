@@ -6,7 +6,9 @@ import { buildPanes } from "../core/build.js";
 import { emitDot } from "../core/dot/emit.js";
 import { parseSignature } from "../core/signature.js";
 import { framesFromStdout } from "../core/trace.js";
-import { KIND_LABELS, visibleNodeCount, type StructureKind } from "../core/types.js";
+import { isEmptyStage } from "./emptyStage.js";
+import { visibleNodeCount, type StructureKind } from "../core/types.js";
+import { resolveStructureKind } from "./structureKind.js";
 import { DEFAULT_SETTINGS, type Settings } from "../settings/schema.js";
 import {
   loadOverrides,
@@ -30,11 +32,6 @@ const PARENT_ORIGIN = detectParentOrigin();
 function toHost(message: FromPanel): void {
   if (!PARENT_ORIGIN) return;
   parent.postMessage(message, PARENT_ORIGIN);
-}
-
-function asStructureKind(value: string | undefined): StructureKind | undefined {
-  if (value && value in KIND_LABELS) return value as StructureKind;
-  return undefined;
 }
 
 function resolvedPalette(mode: Settings["mode"]): "light" | "dark" {
@@ -108,7 +105,7 @@ export function App(): JSX.Element {
   }, [slug]);
 
   const override = overrides[slug] ?? {};
-  const selectedKind = asStructureKind(override.kind);
+  const selectedKind = resolveStructureKind(override.kind);
 
   const signature = useMemo(
     () => (snapshot ? parseSignature(snapshot.code, snapshot.lang) : null),
@@ -116,14 +113,6 @@ export function App(): JSX.Element {
   );
 
   const result = useMemo(() => {
-    if (!selectedKind) {
-      return {
-        panes: [],
-        failures: caseInput.trim()
-          ? [{ paramName: "input", reason: "Choose a structure in the title bar to draw this input." }]
-          : [],
-      };
-    }
     return buildPanes(caseInput, signature, {
       override: selectedKind,
       showTerminal: settings.layout.showListTerminal,
@@ -153,17 +142,23 @@ export function App(): JSX.Element {
   }, [snapshot?.stdout, pane?.id, caseIndex]);
 
   const paneSize = pane ? visibleNodeCount(pane.model) : 0;
-  const confirmKey = `${slug}:${caseIndex}:${caseInput}:${selectedKind ?? ""}`;
+  const confirmKey = `${slug}:${caseIndex}:${caseInput}:${selectedKind}`;
   const tooLarge = !!pane && paneSize > settings.nodeLimit && confirmedFor !== confirmKey;
 
+  const emptyStage = isEmptyStage({
+    caseInput,
+    nodeCount: paneSize,
+    hasFailure: result.failures.length > 0,
+  });
+
   const dot = useMemo(() => {
-    if (!pane || tooLarge) return "";
+    if (!pane || tooLarge || emptyStage) return "";
     try {
       return emitDot(pane.model, { palette, layout: settings.layout });
     } catch {
       return "";
     }
-  }, [pane, tooLarge, palette, settings.layout]);
+  }, [pane, tooLarge, emptyStage, palette, settings.layout]);
 
   useEffect(() => {
     if (!dot) {
@@ -265,6 +260,7 @@ export function App(): JSX.Element {
               error={error}
               tooLarge={tooLarge}
               nodeCount={paneSize}
+              emptyStage={emptyStage}
               failure={result.failures[0]?.reason}
               onConfirmLarge={() => setConfirmedFor(confirmKey)}
             />
@@ -310,6 +306,7 @@ interface PlaceholderProps {
   error: string | null;
   tooLarge: boolean;
   nodeCount: number;
+  emptyStage: boolean;
   failure: string | undefined;
   onConfirmLarge: () => void;
 }
@@ -338,10 +335,10 @@ function Placeholder(props: PlaceholderProps): JSX.Element {
       </div>
     );
   }
-  if (!props.snapshot || !props.caseInput.trim()) {
+  if (props.emptyStage || !props.snapshot || !props.caseInput.trim()) {
     return (
       <div class="placeholder">
-        <p>no test case, hit run</p>
+        <p>No Nodes</p>
       </div>
     );
   }

@@ -1,4 +1,4 @@
-import { NODE_OUTLINE } from "./imageInk.js";
+import { IMAGE_TONE_ATTR, NODE_OUTLINE, imageToneFromInk } from "./imageInk.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const PATTERN_ID = "graphy-node-bg";
@@ -28,6 +28,7 @@ export function applyNodeBackgroundImage(svgRoot: Element, imageUrl: string, ink
   }
 
   if (ink) {
+    svgRoot.setAttribute(IMAGE_TONE_ATTR, imageToneFromInk(ink));
     for (const label of svgRoot.querySelectorAll("text")) {
       label.setAttribute("fill", ink);
     }

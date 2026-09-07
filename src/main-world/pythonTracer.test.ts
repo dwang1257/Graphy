@@ -85,8 +85,17 @@ describe("python tracer (judge-side)", () => {
     const stdout = execFileSync("python3", ["-c", instrumentPython(methodSolution) + driver], {
       encoding: "utf8",
     });
-    expect(stdout).toContain("#graphy current n0");
-    expect(stdout).toContain("#graphy current n2");
-    expect(stdout).toContain("#graphy current n1");
+    expect(stdout).toMatch(/#graphy walk n0\b/);
+    expect(stdout).toContain("n2");
+    expect(stdout).toContain("n1");
+  });
+
+  it("prints the whole walk on a single stdout line", () => {
+    const stdout = execFileSync("python3", ["-c", instrumentPython(solution) + driver], {
+      encoding: "utf8",
+    });
+    const graphyLines = stdout.split(/\r?\n/).filter((line) => /#graphy\b/.test(line));
+    expect(graphyLines).toHaveLength(1);
+    expect(graphyLines[0]).toMatch(/^#graphy walk n0(?: n\d+)+$/);
   });
 });
