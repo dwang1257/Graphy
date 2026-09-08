@@ -9,7 +9,7 @@ import { parseSignature } from "../core/signature.js";
 import { framesFromStdout } from "../core/trace.js";
 import { canonicalizeLinks } from "../core/topology.js";
 import { applyTopology } from "../core/treeModel.js";
-import { EMPTY_STAGE_COPY, isEmptyStage } from "./emptyStage.js";
+import { EMPTY_STAGE_COPY, isEmptyStage, isTooLarge, tooLargeCopy } from "./emptyStage.js";
 import { visibleNodeCount, type StructureKind } from "../core/types.js";
 import { useStructureKind } from "./useStructureKind.js";
 import { DEFAULT_SETTINGS, type Settings } from "../settings/schema.js";
@@ -52,7 +52,6 @@ export function App(): JSX.Element {
   const [svg, setSvg] = useState("");
   const [topologySvgs, setTopologySvgs] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
-  const [confirmedFor, setConfirmedFor] = useState<string | null>(null);
   const [fitCount, setFitCount] = useState(0);
   const [overrides, setOverrides] = useState<Record<string, Override>>({});
   const [traceIndex, setTraceIndex] = useState(0);
@@ -191,8 +190,7 @@ export function App(): JSX.Element {
   }, [scopedStdout, pane?.id, caseIndex]);
 
   const paneSize = pane ? visibleNodeCount(pane.model) : 0;
-  const confirmKey = `${slug}:${caseIndex}:${caseInput}:${selectedKind}`;
-  const tooLarge = !!pane && paneSize > settings.nodeLimit && confirmedFor !== confirmKey;
+  const tooLarge = !!pane && isTooLarge(paneSize, settings.nodeLimit);
 
   const emptyStage = isEmptyStage({
     caseInput,
@@ -400,7 +398,6 @@ export function App(): JSX.Element {
               nodeCount={paneSize}
               emptyStage={emptyStage}
               failure={result.failures[0]?.reason}
-              onConfirmLarge={() => setConfirmedFor(confirmKey)}
             />
           )}
         </div>
@@ -446,7 +443,6 @@ interface PlaceholderProps {
   nodeCount: number;
   emptyStage: boolean;
   failure: string | undefined;
-  onConfirmLarge: () => void;
 }
 
 function Placeholder(props: PlaceholderProps): JSX.Element {
@@ -467,9 +463,8 @@ function Placeholder(props: PlaceholderProps): JSX.Element {
   }
   if (props.tooLarge) {
     return (
-      <div class="placeholder">
-        <p>{props.nodeCount} nodes. Large graphs can take a moment to lay out.</p>
-        <button type="button" class="btn btn-primary" onClick={props.onConfirmLarge}>Render anyway</button>
+      <div class="placeholder error">
+        <p>{tooLargeCopy(props.nodeCount)}</p>
       </div>
     );
   }

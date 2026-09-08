@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { DEFAULT_SETTINGS, withDefaults } from "./schema.js";
+import { DEFAULT_SETTINGS, NODE_LIMIT, withDefaults } from "./schema.js";
 
 describe("theme mode", () => {
   it("defaults to dark on first launch", () => {
@@ -15,6 +15,14 @@ describe("theme mode", () => {
 
   it("treats the old auto mode as dark", () => {
     expect(withDefaults({ mode: "auto" }).mode).toBe("dark");
+  });
+});
+
+describe("node limit", () => {
+  it("caps graphs at 100 nodes", () => {
+    expect(NODE_LIMIT).toBe(100);
+    expect(DEFAULT_SETTINGS.nodeLimit).toBe(100);
+    expect(withDefaults({ nodeLimit: 400 }).nodeLimit).toBe(100);
   });
 });
 
