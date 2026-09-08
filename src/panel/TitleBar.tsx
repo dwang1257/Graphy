@@ -2,7 +2,7 @@ import { useState } from "preact/hooks";
 import type { JSX } from "preact";
 import { CloseIcon, ExpandIcon, FitIcon, ShrinkIcon } from "./icons.js";
 import { KIND_LABELS, type StructureKind } from "../core/types.js";
-import { structureKindLabel, structureKindOptions } from "./structureKind.js";
+import { UNSELECTED_KIND_LABEL, structureKindLabel, structureKindOptions } from "./structureKind.js";
 import { pointerDragHandler } from "./usePointerDrag.js";
 
 interface Props {
@@ -48,6 +48,7 @@ export function TitleBar(props: Props): JSX.Element {
             e.currentTarget.blur();
           }}
         >
+          <option value="">{UNSELECTED_KIND_LABEL}</option>
           {structureKindOptions().map(([value, label]) => (
             <option value={value} key={value}>
               {label}

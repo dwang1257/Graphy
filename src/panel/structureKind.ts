@@ -7,6 +7,13 @@ export function resolveStructureKind(value: string | undefined): StructureKind |
   return undefined;
 }
 
+export function displayedStructureKind(
+  savedKind: string | undefined,
+  pendingKind: StructureKind | undefined,
+): StructureKind | undefined {
+  return pendingKind ?? resolveStructureKind(savedKind);
+}
+
 export function structureKindLabel(kind: StructureKind | undefined): string {
   if (kind && kind in KIND_LABELS) return KIND_LABELS[kind];
   return UNSELECTED_KIND_LABEL;

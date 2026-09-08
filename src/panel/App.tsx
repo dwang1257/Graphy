@@ -8,7 +8,7 @@ import { parseSignature } from "../core/signature.js";
 import { framesFromStdout } from "../core/trace.js";
 import { EMPTY_STAGE_COPY, isEmptyStage } from "./emptyStage.js";
 import { visibleNodeCount, type StructureKind } from "../core/types.js";
-import { resolveStructureKind } from "./structureKind.js";
+import { useStructureKind } from "./useStructureKind.js";
 import { DEFAULT_SETTINGS, type Settings } from "../settings/schema.js";
 import {
   loadOverrides,
@@ -120,7 +120,21 @@ export function App(): JSX.Element {
   }, [slug]);
 
   const override = overrides[slug] ?? {};
-  const selectedKind = resolveStructureKind(override.kind);
+
+  const applyOverride = useCallback((patch: Override) => {
+    if (!slug) return;
+    setOverrides((prev) => {
+      const all = { ...prev, [slug]: { ...prev[slug], ...patch } };
+      void saveOverrides(all);
+      return all;
+    });
+  }, [slug]);
+
+  const persistKind = useCallback(
+    (kind: StructureKind) => applyOverride({ kind }),
+    [applyOverride],
+  );
+  const { selectedKind, setKind } = useStructureKind(slug, override.kind, persistKind);
 
   const signature = useMemo(
     () => (snapshot ? parseSignature(snapshot.code, snapshot.lang) : null),
@@ -215,20 +229,6 @@ export function App(): JSX.Element {
       window.clearTimeout(timer);
     };
   }, [dot]);
-
-  const applyOverride = useCallback((patch: Override) => {
-    if (!slug) return;
-    setOverrides((prev) => {
-      const all = { ...prev, [slug]: { ...prev[slug], ...patch } };
-      void saveOverrides(all);
-      return all;
-    });
-  }, [slug]);
-
-  const setKind = useCallback(
-    (kind: StructureKind) => applyOverride({ kind }),
-    [applyOverride],
-  );
 
   const updateSettings = useCallback((next: Settings) => {
     setSettings(next);

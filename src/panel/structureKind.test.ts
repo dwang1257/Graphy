@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  displayedStructureKind,
   resolveStructureKind,
   structureKindLabel,
   structureKindOptions,
@@ -14,6 +15,20 @@ describe("resolveStructureKind", () => {
   it("keeps a saved structure override", () => {
     expect(resolveStructureKind("linked-list")).toBe("linked-list");
     expect(resolveStructureKind("matrix")).toBe("matrix");
+  });
+});
+
+describe("displayedStructureKind", () => {
+  it("keeps a pick when the problem has no saved override yet", () => {
+    expect(displayedStructureKind(undefined, "linked-list")).toBe("linked-list");
+  });
+
+  it("uses the saved override when nothing has been picked this session", () => {
+    expect(displayedStructureKind("binary-tree", undefined)).toBe("binary-tree");
+  });
+
+  it("prefers the in-session pick over a saved override", () => {
+    expect(displayedStructureKind("linked-list", "binary-tree")).toBe("binary-tree");
   });
 });
 

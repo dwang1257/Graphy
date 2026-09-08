@@ -6,7 +6,6 @@
 [![Stargazers][stars-shield]][stars-url]
 [![Forks][forks-shield]][forks-url]
 [![Issues][issues-shield]][issues-url]
-[![MIT License][license-shield]][license-url]
 [![LinkedIn][linkedin-shield]][linkedin-url]
 
 </div>
@@ -19,7 +18,7 @@
   <h3 align="center">Graphy</h3>
 
   <p align="center">
-    A customizable graph visualizer for LeetCode test cases.
+    A highly customizable graph visualizer for LeetCode problems.
     <br />
     <br />
     <a href="#getting-started">Install</a>
@@ -51,7 +50,6 @@
     <li><a href="#usage">Usage</a></li>
     <li><a href="#customization">Customization</a></li>
     <li><a href="#roadmap">Roadmap</a></li>
-    <li><a href="#license">License</a></li>
     <li><a href="#contact">Contact</a></li>
     <li><a href="#acknowledgments">Acknowledgments</a></li>
   </ol>
@@ -60,28 +58,25 @@
 <!-- ABOUT THE PROJECT -->
 ## About The Project
 
-Graphy is a Chrome extension that draws your LeetCode custom test cases as real pictures.
+Graphy is a highly customizable graph visualizer for LeetCode problems. You can change the background, nodes, and edges as you please.
 
-Reading `[3,9,20,null,null,15,7]` and rebuilding the tree in your head is wasted effort.
-Graphy reads the test case straight out of the editor, works out what kind of structure each argument is, and renders it in a floating panel next to the problem.
-Edit the input and the drawing follows along as you type.
+Graphy reads the test case straight out of the editor and renders it in a floating panel next to the problem. Currently it supports binary trees, linked lists, and graphs.
 
-Everything runs locally inside the extension.
-There is no account, no server, and no network request - the layout engine is a WebAssembly build of Graphviz bundled with the extension.
+It can also show how your code runs on that drawing. Hit **Run** and Graphy highlights the walk: the current node, the nodes you have already visited, and the frontier (queue or stack) as the algorithm moves. On Python tree problems this happens automatically — Graphy traces the solution without you changing the editor. In any language you can print `#graphy` lines (`current`, `visit`, `enqueue`, `dequeue`, `frontier`) and step through them with the play / pause / scrubber under the graph.
+
+Everything runs locally inside the extension. There is no account, no server, and no network request — the layout engine is a WebAssembly build of Graphviz bundled with the extension.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ### Supported Structures
 
-Graphy infers the structure from the function signature first, then the parameter name, then the shape of the literal itself.
+| Structure | Example input |
+| --- | --- |
+| Binary tree | `[3,9,20,null,null,15,7]` |
+| Linked list | `[1,2,3,4]`, `pos = 1` |
+| Graph | `["11110","10001"]`, `[[1,1,0],[1,1,0],[0,0,1]]` |
 
-| Structure | Recognized from | Example input |
-| --- | --- | --- |
-| Binary tree | `TreeNode`, `root`, `subRoot`, arrays containing `null` | `[3,9,20,null,null,15,7]` |
-| Linked list | `ListNode`, `head`, `headA`, `l1`, plus an optional `pos` for cycles | `[1,2,3,4]`, `pos = 1` |
-| Grid / matrix | `grid`, `board`, `matrix`, `maze`, `isConnected`, equal-length strings | `["11110","10001"]` |
-
-When the guess is wrong, pick the right structure from the dropdown in the panel's title bar.
+Pick the structure from the dropdown in the panel's title bar.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -97,32 +92,30 @@ When the guess is wrong, pick the right structure from the dropdown in the panel
 <!-- GETTING STARTED -->
 ## Getting Started
 
-Graphy is not on the Chrome Web Store yet, so it is installed as an unpacked extension.
+Graphy is a Chrome extension. Install it from the [Chrome Web Store](https://chromewebstore.google.com), then open any LeetCode problem.
 
 ### Prerequisites
 
-* Chrome 110 or newer, or any Chromium browser with Manifest V3 support
-* [Node.js](https://nodejs.org/) 20 or newer, only if you want to build from source
+* Chrome, or any Chromium browser with Manifest V3 support (Edge, Arc, Brave, and similar)
 
 ### Installation
 
-1. Clone the repo.
-   ```sh
-   git clone https://github.com/dwang1257/Graphy.git
-   cd Graphy
-   ```
-2. Install the dependencies and build the extension.
-   ```sh
-   npm install
-   npm run build
-   ```
-3. Open `chrome://extensions` and turn on **Developer mode** in the top right corner.
-4. Click **Load unpacked** and select the `dist` folder inside the repo.
-5. Open any LeetCode problem. The panel appears once a custom test case is on screen.
+1. Open the Chrome Web Store and search for **Graphy**.
+2. Click **Add to Chrome**.
+3. Open a problem on [leetcode.com](https://leetcode.com) or [leetcode.cn](https://leetcode.cn). The panel appears next to the editor.
 
-To work on Graphy itself, run `npm run dev` instead of `npm run build`.
-Vite rebuilds on save and Chrome reloads the extension for you.
-Type errors are checked separately with `npm run typecheck`.
+Click the Graphy icon in the toolbar to show or hide the panel.
+
+To work on Graphy itself, clone the repo and run it as an unpacked extension:
+
+```sh
+git clone https://github.com/dwang1257/Graphy.git
+cd Graphy
+npm install
+npm run dev
+```
+
+Then open `chrome://extensions`, turn on **Developer mode**, click **Load unpacked**, and select the `dist` folder. Vite rebuilds on save. Type errors are checked with `npm run typecheck`.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -130,49 +123,43 @@ Type errors are checked separately with `npm run typecheck`.
 ## Usage
 
 1. Open a problem on [leetcode.com](https://leetcode.com) or [leetcode.cn](https://leetcode.cn).
-2. Graphy reads the custom test case and draws it in a floating panel.
-3. Edit the test case. The drawing updates while you type.
-4. Drag the title bar to move the panel, and use **Fit to view** to recenter the graph.
-5. Click the extension icon in the toolbar to toggle the panel on any page.
+2. Choose **Binary tree**, **Linked list**, or **Graph** from the dropdown in the title bar.
+3. Click **Run**. Graphy draws the custom test case in the floating panel.
+4. Edit the test case. The drawing updates while you type.
+5. Drag the title bar to move the panel. Use **Fit to view** to recenter, or shrink the panel when you need the editor.
 
-If the detected structure is wrong, override it with the dropdown in the title bar.
-Notes such as a detected cycle position are shown underneath the graph.
-Graphs above the node limit are not laid out until you confirm, so a runaway test case cannot lock up the tab.
+After a Run, playback controls appear under the graph whenever Graphy has a trace. Play, step, or scrub to watch the algorithm walk the structure. Python tree solutions are traced automatically. In other languages, print lines such as `#graphy current n0` and `#graphy visit n0` from your solution — Graphy reads them from stdout and lights up the matching nodes.
+
+If there are several custom cases, switch between them with the **Case** pills under the graph.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ## Customization
 
-Open the settings drawer with the gear icon in the panel. Settings are stored per browser profile and applied immediately.
+Open the style panel with **Style** in the title bar. Changes apply immediately and are stored in your browser profile.
 
-* **Theme** - follow LeetCode's light or dark mode, or pin one of them
-* **Colors** - every fill, stroke, label, and accent color for both themes
-* **Nodes** - shape, font family, font size, line weight
-* **Edges** - solid, dashed, dotted, or bold, with spline, straight, polyline, orthogonal, or curved routing, and arrowheads on or off
-* **Layout** - direction (top-down, left-right, bottom-up, right-left), node spacing, level spacing
-* **Details** - null children, linked-list terminator, grid row and column indices
-* **Behavior** - open automatically on problem pages, update while typing, and the node count that triggers a warning
+* **Appearance** - light or dark
+* **Node shape** - circle, ellipse, square, diamond, hexagon, or double circle
+* **Edges** - solid, dashed, dotted, or bold, plus a custom color and arrowheads on or off
+* **Background** - a solid color, a preset swatch, or an uploaded image
+* **Node background** - an uploaded image used as the node fill
+* **Reset style** - restore the default look for the active theme
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 <!-- ROADMAP -->
 ## Roadmap
 
-- [x] Binary trees, linked lists, and grids
+- [x] Binary trees, linked lists, and graphs
 - [x] Live rendering while typing
-- [x] Full color, layout, and shape customization
-- [ ] Export the current graph as SVG or PNG
-- [ ] N-ary trees and tries
-- [ ] Chrome Web Store release
+- [x] Color, shape, and image customization
+- [x] Chrome Web Store release
+- [x] Execution traces after Run
+- [ ] Support for more structures
+- [ ] Better visualization for code running on the graph
+- [ ] More customization options
 
 See the [open issues][issues-url] for a full list of proposed features and known issues.
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-<!-- LICENSE -->
-## License
-
-Distributed under the MIT License. See [`LICENSE.txt`](LICENSE.txt) for more information.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -181,7 +168,7 @@ Distributed under the MIT License. See [`LICENSE.txt`](LICENSE.txt) for more inf
 
 Dylan Wang - dwang2022@gmail.com
 
-Project Link: [https://github.com/dwang1257/Graphy](https://github.com/dwang1257/Graphy)
+LinkedIn: [https://www.linkedin.com/in/dylanwang1/](https://www.linkedin.com/in/dylanwang1/)
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -203,10 +190,8 @@ Project Link: [https://github.com/dwang1257/Graphy](https://github.com/dwang1257
 [forks-url]: https://github.com/dwang1257/Graphy/network/members
 [issues-shield]: https://img.shields.io/github/issues/dwang1257/Graphy.svg?style=for-the-badge
 [issues-url]: https://github.com/dwang1257/Graphy/issues
-[license-shield]: https://img.shields.io/github/license/dwang1257/Graphy.svg?style=for-the-badge
-[license-url]: https://github.com/dwang1257/Graphy/blob/main/LICENSE.txt
 [linkedin-shield]: https://img.shields.io/badge/-LinkedIn-black.svg?style=for-the-badge&logo=linkedin&colorB=555
-[linkedin-url]: https://linkedin.com/in/dylanwang1
+[linkedin-url]: https://www.linkedin.com/in/dylanwang1/
 [typescript-shield]: https://img.shields.io/badge/TypeScript-3178C6?style=for-the-badge&logo=typescript&logoColor=white
 [typescript-url]: https://www.typescriptlang.org/
 [preact-shield]: https://img.shields.io/badge/Preact-673AB8?style=for-the-badge&logo=preact&logoColor=white
