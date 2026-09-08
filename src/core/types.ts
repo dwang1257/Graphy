@@ -1,3 +1,5 @@
+import type { TreeLinks } from "./topology.js";
+
 /** Structure kinds Graphy can visualize. */
 export type StructureKind =
   | "binary-tree"
@@ -47,6 +49,8 @@ export interface GraphModel {
   edges: GEdge[];
   ranks: RankGroup[];
   matrix?: MatrixData;
+  /** Binary-tree child pointers for topology morph playback. */
+  links?: TreeLinks;
   /** Non-fatal notes surfaced in the panel (e.g. "cycle at index 2"). */
   notes: string[];
 }
@@ -96,3 +100,5 @@ export interface ParseResult {
   panes: Pane[];
   failures: ParseFailure[];
 }
+
+export type { TreeLinks };

@@ -36,11 +36,14 @@ Any language. After Run, Graphy parses lines like:
 #graphy dequeue n1
 #graphy frontier n1 n2
 #graphy clear
+#graphy topology n0:n2,n1 n1:-,- n2:n6,n5
 ```
 
 Refs: `n0` (id), `@2` (index → `n2`), bare `4` (first node with that label), `1,0` (matrix cell).
 
-Playback is a scrubber under the graph. Highlights are CSS on the existing SVG — Graphviz is not re-run per step.
+Topology tokens are `parent:left,right` with `-` for `None`. Only nodes reachable from the root are listed. When topology changes, Graphy rebuilds the tree (stable ids), re-runs Graphviz, and FLIP-animates nodes to their new positions; deleted ids fade out.
+
+Playback is a scrubber under the graph. Highlights are CSS on the SVG. Walk-only frames keep the current layout; topology frames morph.
 
 Current = solid accent, visited = soft fill, frontier = dashed outline.
 
@@ -53,12 +56,13 @@ On **Run** (`interpret_solution`), not Submit:
 3. In the judge, the preamble wraps `Solution` methods.
 4. On entry it tags `TreeNode`s with the same **level-order ids** Graphy uses (`n0` is the root; null children still consume an index).
 5. `sys.settrace` watches locals (`node`, `curr`, `root`, …) and prints `#graphy current|visit` when they point at a tagged node.
-6. Repeat prints for the same node are dropped.
-7. The existing stdout → frame → overlay path lights the graph.
+6. After each line (and on unwind) it snapshots child pointers and prints `#graphy topology …` when the edge set changes.
+7. Repeat prints for the same current node are dropped.
+8. The stdout → frame → overlay / morph path lights and reshapes the graph.
 
-Invert Binary Tree then works with a clean editor: hit Run, scrub the walk.
+Invert Binary Tree then works with a clean editor: hit Run, scrub the walk — children slide when swaps happen. Unlinking a child fades that subtree.
 
-Lists and non-Python languages still need the manual protocol (or a later injector).
+Lists and non-Python languages still need the manual protocol (or a later injector). Other languages can print `#graphy topology` by hand.
 
 ## Node id contract
 
@@ -69,24 +73,27 @@ Binary-tree ids are **level-order array indices**, not “nth live node”:
 [3,9,20,null,null,15,7]  →  n0=3 n1=9 n2=20 n5=15 n6=7
 ```
 
-The tracer’s BFS must use the same cursor rules as `parseBinaryTree`.
+The tracer’s BFS must use the same cursor rules as `parseBinaryTree`. Object identity stays on the tagged `TreeNode` for the whole run; pointer swaps change topology, not ids.
 
 ## Files
 
-- `src/core/trace.ts` — parse stdout → frames; resolve refs
+- `src/core/trace.ts` — parse stdout → frames; resolve refs; carry `links` / `deleted`
+- `src/core/topology.ts` — topology token parse / reachability / canonicalize
+- `src/core/treeModel.ts` — `modelFromTree` / `applyTopology`
 - `src/main-world/instrument.ts` — Python snippet + Run-body rewrite
 - `src/main-world/inject.ts` — apply rewrite on fetch/XHR Run; remember original code
 - `src/main-world/runResult.ts` — pull stdout out of `/check`
 - `src/panel/traceOverlay.ts` — mark SVG nodes / matrix cells
+- `src/panel/graphMorph.ts` — FLIP slide between Graphviz layouts
 - `src/panel/TracePlayback.tsx` — play / step / scrub
-- `src/panel/GraphView.tsx` — apply overlay after layout
+- `src/panel/GraphView.tsx` — apply overlay / morph after layout
 - `src/core/dot/emit.ts` — `graphy://cell/r/c` hrefs on matrix cells
 
 ## What this does not do yet
 
-- Flip edges when invert swaps children (walk only, no morph)
 - Auto-trace C++ / Java / JS
 - Linked lists or grids without manual `#graphy` lines
+- Nodes allocated during the run (not in the entry BFS tag map)
 - Submit (payload is never rewritten)
 
 ## Later, if we outgrow inject-on-Run

@@ -71,7 +71,7 @@ export const LIGHT: Palette = {
   nodeBackgroundImage: null,
   nodeFill: "#eef2ff",
   nodeStroke: "#4f46e5",
-  nodeText: "#1e1b4b",
+  nodeText: "#111827",
   rootFill: "#4f46e5",
   rootStroke: "#3730a3",
   terminalText: "#94a3b8",
@@ -91,7 +91,7 @@ export const DARK: Palette = {
   nodeBackgroundImage: null,
   nodeFill: "#312e81",
   nodeStroke: "#818cf8",
-  nodeText: "#e0e7ff",
+  nodeText: "#ffffff",
   rootFill: "#6366f1",
   rootStroke: "#a5b4fc",
   terminalText: "#64748b",
@@ -112,7 +112,7 @@ export const DEFAULT_LAYOUT: Layout = {
   splines: "spline",
   rankdir: "TB",
   fontFamily: "Outfit",
-  fontSize: 13,
+  fontSize: 16,
   penWidth: 1.4,
   nodeSep: 0.35,
   rankSep: 0.45,
@@ -151,6 +151,8 @@ export function withDefaults(stored: unknown): Settings {
   const s = (stored ?? {}) as Partial<Settings>;
   const layout = { ...DEFAULT_LAYOUT, ...(s.layout ?? {}) };
   layout.fontSize = num(layout.fontSize, DEFAULT_LAYOUT.fontSize, 8, 24);
+  // Lift the previous 13pt default so stored settings pick up the larger labels.
+  if (layout.fontSize === 13) layout.fontSize = DEFAULT_LAYOUT.fontSize;
   layout.penWidth = num(layout.penWidth, DEFAULT_LAYOUT.penWidth, 0.5, 4);
   layout.nodeSep = num(layout.nodeSep, DEFAULT_LAYOUT.nodeSep, 0.1, 1.5);
   layout.rankSep = num(layout.rankSep, DEFAULT_LAYOUT.rankSep, 0.1, 2);
@@ -160,6 +162,8 @@ export function withDefaults(stored: unknown): Settings {
   const dark = { ...DARK, ...(s.dark ?? {}) };
   light.background = normalizeCssHex(light.background) ?? LIGHT.background;
   dark.background = normalizeCssHex(dark.background) ?? DARK.background;
+  if (light.nodeText === "#1e1b4b") light.nodeText = LIGHT.nodeText;
+  if (dark.nodeText === "#e0e7ff") dark.nodeText = DARK.nodeText;
   light.backgroundImage = imageUrl(light.backgroundImage, LIGHT.backgroundImage);
   dark.backgroundImage = imageUrl(dark.backgroundImage, DARK.backgroundImage);
   light.nodeBackgroundImage = imageUrl(light.nodeBackgroundImage, LIGHT.nodeBackgroundImage);

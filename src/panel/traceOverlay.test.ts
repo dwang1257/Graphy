@@ -25,6 +25,8 @@ describe("applyTraceOverlay", () => {
       frontier: ["n2"],
       line: 1,
       label: "current n1",
+      links: {},
+      deleted: [],
     };
     applyTraceOverlay(doc.documentElement, frame);
 
@@ -50,6 +52,8 @@ describe("applyTraceOverlay", () => {
       frontier: [],
       line: 1,
       label: "current 0,1",
+      links: {},
+      deleted: [],
     });
     expect(doc.querySelector('a[data-graphy-id="cell:0,1"]')?.getAttribute("data-graphy-state")).toContain(
       "current",
@@ -72,6 +76,8 @@ describe("applyTraceOverlay", () => {
       frontier: [],
       line: 1,
       label: "current n1",
+      links: {},
+      deleted: [],
     });
     expect(doc.querySelector('g.node[data-graphy-id="n0"]')?.getAttribute("data-graphy-tone")).toBe(
       "light",
@@ -92,6 +98,8 @@ describe("applyTraceOverlay", () => {
       frontier: [],
       line: 1,
       label: "current n0",
+      links: {},
+      deleted: [],
     });
     clearTraceOverlay(doc.documentElement);
     expect(doc.querySelector("[data-graphy-state]")).toBeNull();

@@ -6,6 +6,7 @@ import {
   MIN_PANEL_HEIGHT,
   MIN_PANEL_WIDTH,
   RESIZE_HIT_PX,
+  SHELL_RADIUS_PX,
   SHRINK_MS,
   TITLEBAR_PX,
   applyResizePreview,
@@ -13,14 +14,19 @@ import {
   clampPanelSize,
   clearResizePreview,
   clipAnimation,
+  liveResizeRect,
   resizeHitHidden,
   resizeHitPosition,
   resizeScale,
+  resizeTransformOrigin,
   shellClipPath,
   shellGeometry,
   shrinkHitOffset,
   shrinkHitPosition,
 } from "./shellLayout.js";
+
+const ROUND = `round ${SHELL_RADIUS_PX}px`;
+const EXPANDED_CLIP = `inset(0px 0px 0px 0px ${ROUND})`;
 
 describe("shellGeometry", () => {
   const expanded = { width: 460, height: 520, shrunk: false };
@@ -37,14 +43,14 @@ describe("shellGeometry", () => {
     const clipped = shellGeometry({ width: 460, height: 520, shrunk: true });
 
     expect(clipped.shell).toEqual({ width: 460, height: 520 });
-    expect(clipped.clipPath).toBe(`inset(0px 0px ${520 - TITLEBAR_PX}px 0px)`);
+    expect(clipped.clipPath).toBe(`inset(0px 0px ${520 - TITLEBAR_PX}px 0px ${ROUND})`);
   });
 
   it("settles the layout box to the title bar after the clip animation", () => {
     const settled = shellGeometry({ width: 460, height: 520, shrunk: true }, true);
 
     expect(settled.shell).toEqual({ width: 460, height: TITLEBAR_PX });
-    expect(settled.clipPath).toBe("inset(0px)");
+    expect(settled.clipPath).toBe(EXPANDED_CLIP);
     expect(settled.iframe).toEqual({ width: 460, height: 520 });
   });
 
@@ -52,7 +58,7 @@ describe("shellGeometry", () => {
     expect(shellGeometry(expanded)).toEqual({
       iframe: { width: 460, height: 520 },
       shell: { width: 460, height: 520 },
-      clipPath: "inset(0px)",
+      clipPath: EXPANDED_CLIP,
     });
   });
 });
@@ -86,7 +92,7 @@ describe("applyShellStyles", () => {
     expect(frame.style.width).toBe(width);
     expect(frame.style.height).toBe(height);
     expect(shell.style.height).toBe("520px");
-    expect(shell.style.clipPath).toBe(`inset(0px 0px ${520 - TITLEBAR_PX}px 0px)`);
+    expect(shell.style.clipPath).toBe(`inset(0px 0px ${520 - TITLEBAR_PX}px 0px ${ROUND})`);
     expect(shell.dataset.animate).toBe("true");
   });
 
@@ -101,7 +107,7 @@ describe("applyShellStyles", () => {
 
     expect(`${frame.style.width}|${frame.style.height}`).toBe(before);
     expect(shell.style.height).toBe(`${TITLEBAR_PX}px`);
-    expect(shell.style.clipPath).toBe("inset(0px)");
+    expect(shell.style.clipPath).toBe(EXPANDED_CLIP);
   });
 
   it("can leave clip-path untouched so WAAPI owns the interpolation", () => {
@@ -113,11 +119,28 @@ describe("applyShellStyles", () => {
     applyShellStyles(shell, frame, state, { animate: false, settle: false, clipPath: false });
     expect(shell.style.clipPath).toBe("inset(0px)");
   });
+
+  it("keeps the title bar visible after the shrink clip settles", () => {
+    const shell = document.createElement("div");
+    const frame = document.createElement("iframe");
+    const state = { x: 10, y: 20, width: 460, height: 520, open: true, shrunk: true };
+    const animatedTo = shellClipPath(state.height, true);
+
+    applyShellStyles(shell, frame, state, {
+      animate: false,
+      settle: true,
+      clipPath: animatedTo,
+    });
+
+    expect(shell.style.height).toBe(`${TITLEBAR_PX}px`);
+    expect(shell.style.clipPath).toBe(EXPANDED_CLIP);
+    expect(shell.style.clipPath).not.toBe(animatedTo);
+  });
 });
 
 describe("clipAnimation", () => {
   it("does not emit a negative inset when height is below the title bar", () => {
-    expect(shellClipPath(10, true)).toBe("inset(0px 0px 0px 0px)");
+    expect(shellClipPath(10, true)).toBe(`inset(0px 0px 0px 0px ${ROUND})`);
   });
 
   it("interpolates only clip-path, never iframe size", () => {
@@ -125,6 +148,13 @@ describe("clipAnimation", () => {
     const to = shellClipPath(520, true);
     expect(clipAnimation(from, to)).toEqual([{ clipPath: from }, { clipPath: to }]);
     expect(SHRINK_MS).toBe(160);
+  });
+
+  it("uses matching inset arity so the shrink clip can interpolate", () => {
+    const token = /[\d.]+px/g;
+    const from = shellClipPath(520, false);
+    const to = shellClipPath(520, true);
+    expect(from.replace(token, "Npx")).toBe(to.replace(token, "Npx"));
   });
 });
 
@@ -154,10 +184,79 @@ describe("live resize", () => {
     });
   });
 
-  it("places the resize handle on the bottom-right corner", () => {
-    expect(resizeHitPosition({ x: 100, y: 50, width: 460, height: 520 })).toEqual({
+  it("places a resize handle on each corner", () => {
+    const box = { x: 100, y: 50, width: 460, height: 520 };
+    expect(resizeHitPosition(box, "se")).toEqual({
       left: 100 + 460 - RESIZE_HIT_PX,
       top: 50 + 520 - RESIZE_HIT_PX,
+    });
+    expect(resizeHitPosition(box, "sw")).toEqual({
+      left: 100,
+      top: 50 + 520 - RESIZE_HIT_PX,
+    });
+    expect(resizeHitPosition(box, "ne")).toEqual({
+      left: 100 + 460 - RESIZE_HIT_PX,
+      top: 50,
+    });
+    expect(resizeHitPosition(box, "nw")).toEqual({
+      left: 100,
+      top: 50,
+    });
+  });
+
+  it("scales from the opposite corner of the dragged handle", () => {
+    expect(resizeTransformOrigin("se")).toBe("top left");
+    expect(resizeTransformOrigin("sw")).toBe("top right");
+    expect(resizeTransformOrigin("ne")).toBe("bottom left");
+    expect(resizeTransformOrigin("nw")).toBe("bottom right");
+    const shell = document.createElement("div");
+    applyResizePreview(shell, { width: 460, height: 520 }, { width: 230, height: 260 }, "nw");
+    expect(shell.style.transformOrigin).toBe("bottom right");
+  });
+
+  it("resizes from any corner and keeps the opposite edge fixed", () => {
+    const start = { x: 100, y: 50, width: 460, height: 520 };
+    const viewport = { width: 800, height: 600 };
+    expect(liveResizeRect(start, "se", { dx: 10, dy: 20 }, viewport)).toEqual({
+      x: 100,
+      y: 50,
+      width: 470,
+      height: 540,
+    });
+    expect(liveResizeRect(start, "sw", { dx: 10, dy: 20 }, viewport)).toEqual({
+      x: 110,
+      y: 50,
+      width: 450,
+      height: 540,
+    });
+    expect(liveResizeRect(start, "ne", { dx: 10, dy: 20 }, viewport)).toEqual({
+      x: 100,
+      y: 70,
+      width: 470,
+      height: 500,
+    });
+    expect(liveResizeRect(start, "nw", { dx: 10, dy: 20 }, viewport)).toEqual({
+      x: 110,
+      y: 70,
+      width: 450,
+      height: 500,
+    });
+  });
+
+  it("clamps a west or north drag to the viewport and minimum size", () => {
+    const start = { x: 100, y: 50, width: 460, height: 520 };
+    const viewport = { width: 800, height: 600 };
+    expect(liveResizeRect(start, "sw", { dx: -200, dy: 0 }, viewport)).toEqual({
+      x: 0,
+      y: 50,
+      width: 560,
+      height: 520,
+    });
+    expect(liveResizeRect(start, "nw", { dx: 400, dy: 400 }, viewport)).toEqual({
+      x: 100 + 460 - MIN_PANEL_WIDTH,
+      y: 50 + 520 - MIN_PANEL_HEIGHT,
+      width: MIN_PANEL_WIDTH,
+      height: MIN_PANEL_HEIGHT,
     });
   });
 

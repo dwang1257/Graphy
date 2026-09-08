@@ -22,6 +22,7 @@ body {
   font-family: var(--font-body);
   font-size: var(--text-md);
   line-height: 1.45;
+  text-transform: capitalize;
   -webkit-font-smoothing: antialiased;
   color-scheme: light;
 }
@@ -34,6 +35,8 @@ body {
   flex-direction: column;
   height: 100%;
   background: var(--color-paper);
+  border-radius: var(--radius-window);
+  overflow: hidden;
   --titlebar-height: 40px;
   --titlebar-control: 28px;
 }
@@ -342,6 +345,9 @@ body {
 
 .canvas svg text {
   font-family: var(--font-body);
+  font-weight: 700;
+  text-transform: none;
+  -webkit-font-smoothing: auto;
 }
 
 /* ── Placeholders ────────────────────────────────────────── */
@@ -381,6 +387,7 @@ body {
   margin: 0;
   font-family: var(--font-mono);
   font-size: var(--text-2xs);
+  text-transform: none;
   background: transparent;
   border: 0;
   border-radius: 0;
@@ -704,6 +711,16 @@ body {
   fill: var(--color-accent-ink) !important;
 }
 
+.viewport svg g.node[data-graphy-state="deleted"] {
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.viewport svg g.node {
+  transform-box: view-box;
+  transform-origin: 0 0;
+}
+
 /* ── Style rail ──────────────────────────────────────────── */
 
 .style-rail {
@@ -950,6 +967,7 @@ body {
   font-size: var(--text-sm);
   font-weight: 500;
   letter-spacing: 0.04em;
+  text-transform: none;
 }
 
 .color-swatch:hover,

@@ -14,6 +14,7 @@ interface PageHarness {
   unmountConsole(): void;
   setCheckState(state: string): void;
   setCheckStdout(lines: string[] | undefined): void;
+  setCheckStdOutputList(entries: string[] | undefined): void;
 }
 
 interface SnapshotPayload {
@@ -23,6 +24,7 @@ interface SnapshotPayload {
   slug?: string;
   code?: string;
   stdout?: string;
+  stdoutByCase?: string[];
 }
 
 interface TabbedPageOptions {
@@ -109,6 +111,7 @@ function installTabbedPage(
   const rafs: FrameRequestCallback[] = [];
   let checkState = "SUCCESS";
   let checkStdout: string[] | undefined;
+  let checkStdOutputList: string[] | undefined;
   const interpretId = "interp-1";
 
   let selectedIndex = selected;
@@ -202,6 +205,7 @@ function installTabbedPage(
       if (url.includes("/check")) {
         const body: Record<string, unknown> = { state: checkState };
         if (checkStdout) body.code_output = checkStdout;
+        if (checkStdOutputList) body.std_output_list = checkStdOutputList;
         return Promise.resolve(
           new Response(JSON.stringify(body), {
             status: 200,
@@ -316,6 +320,9 @@ function installTabbedPage(
     },
     setCheckStdout: (lines: string[] | undefined) => {
       checkStdout = lines;
+    },
+    setCheckStdOutputList: (entries: string[] | undefined) => {
+      checkStdOutputList = entries;
     },
   };
 }
@@ -701,6 +708,21 @@ test("forwards Run stdout from the check response", async () => {
 
   expect(page.snapshots.at(-1)?.payload.stdout).toBe("#graphy current n0\n#graphy visit n0");
   expect(page.snapshots.at(-1)?.payload.source).toBe("network");
+});
+
+test("forwards per-case stdout from std_output_list", async () => {
+  const page = installTabbedPage([["[1]"], ["[2]"]], 0);
+  page.setCheckStdOutputList(["#graphy current n0", "#graphy topology n0:n2,-"]);
+  await import("./inject.js");
+  await finishRun(page);
+
+  expect(page.snapshots.at(-1)?.payload.stdoutByCase).toEqual([
+    "#graphy current n0",
+    "#graphy topology n0:n2,-",
+  ]);
+  expect(page.snapshots.at(-1)?.payload.stdout).toBe(
+    "#graphy current n0\n#graphy topology n0:n2,-",
+  );
 });
 
 test("appends a Python tracer on Run but snapshots the editor code", async () => {

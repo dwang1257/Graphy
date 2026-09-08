@@ -73,7 +73,7 @@ function nodeLine(node: GNode, { palette, layout }: EmitOptions): string {
 
   switch (node.role) {
     case "root":
-      Object.assign(base, { fillcolor: palette.rootFill, color: palette.rootStroke, fontcolor: palette.background });
+      Object.assign(base, { fillcolor: palette.rootFill, color: palette.rootStroke, fontcolor: "#ffffff" });
       break;
     case "spine":
       Object.assign(base, { label: "", shape: "point", width: 0.001, height: 0.001, style: "invis" });

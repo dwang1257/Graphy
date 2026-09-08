@@ -1,6 +1,6 @@
 import { PAGE_CHANNEL, type Snapshot } from "../shared/protocol.js";
 import { instrumentRunBody } from "./instrument.js";
-import { extractRunStdout } from "./runResult.js";
+import { extractRunStdout, extractRunStdoutByCase } from "./runResult.js";
 import { captureCasesFromTabs } from "./testcaseCapture.js";
 import { createTestcaseDomAdapter, type TestcaseDomAdapter } from "./testcaseDom.js";
 
@@ -118,6 +118,7 @@ function publish(source: Snapshot["source"], override?: Partial<Snapshot>, walk 
     };
     if (captureError) snapshot.captureError = captureError;
     if (override?.stdout !== undefined) snapshot.stdout = override.stdout;
+    if (override?.stdoutByCase !== undefined) snapshot.stdoutByCase = override.stdoutByCase;
 
     const key = `${snapshot.cases.join("\u001f")}\u001e${snapshot.code}\u001e${snapshot.lang}\u001e${snapshot.captureError ?? ""}`;
     if (source === "editor" && key === last) return;
@@ -204,6 +205,8 @@ function maybeWalkResults(url: string, body: Record<string, unknown> | null): vo
   const override: Partial<Snapshot> = { ...pendingRun.override };
   const stdout = extractRunStdout(body);
   if (stdout !== undefined) override.stdout = stdout;
+  const stdoutByCase = extractRunStdoutByCase(body);
+  if (stdoutByCase !== undefined) override.stdoutByCase = stdoutByCase;
   pendingRun = null;
   void publish("network", override, true);
 }

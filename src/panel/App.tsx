@@ -2,10 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks"
 import type { JSX } from "preact";
 
 import { clampCaseIndex } from "../core/cases.js";
+import { stdoutForCase } from "../core/traceCases.js";
 import { buildPanes } from "../core/build.js";
 import { emitDot } from "../core/dot/emit.js";
 import { parseSignature } from "../core/signature.js";
 import { framesFromStdout } from "../core/trace.js";
+import { canonicalizeLinks } from "../core/topology.js";
+import { applyTopology } from "../core/treeModel.js";
 import { EMPTY_STAGE_COPY, isEmptyStage } from "./emptyStage.js";
 import { visibleNodeCount, type StructureKind } from "../core/types.js";
 import { useStructureKind } from "./useStructureKind.js";
@@ -30,6 +33,7 @@ import { preload, renderDot } from "./graphviz.js";
 import { detectParentOrigin, isAllowedParentOrigin } from "./parentOrigin.js";
 
 const PARENT_ORIGIN = detectParentOrigin();
+const MAX_TOPOLOGY_LAYOUTS = 40;
 
 function toHost(message: FromPanel): void {
   if (!PARENT_ORIGIN) return;
@@ -46,6 +50,7 @@ export function App(): JSX.Element {
   const [showSettings, setShowSettings] = useState(false);
   const [activeCase, setActiveCase] = useState(0);
   const [svg, setSvg] = useState("");
+  const [topologySvgs, setTopologySvgs] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [confirmedFor, setConfirmedFor] = useState<string | null>(null);
   const [fitCount, setFitCount] = useState(0);
@@ -53,6 +58,7 @@ export function App(): JSX.Element {
   const [traceIndex, setTraceIndex] = useState(0);
   const [tracePlaying, setTracePlaying] = useState(false);
   const [shrunk, setShrunk] = useState(false);
+  const prevTraceIndex = useRef(0);
 
   const liveUpdate = useRef(true);
   liveUpdate.current = settings.liveUpdate;
@@ -89,8 +95,16 @@ export function App(): JSX.Element {
       setSnapshot((prev) => {
         const next = data.payload;
         // Keep the last Run's stdout across editor keystrokes so the scrubber survives typing.
-        if (next.source === "editor" && next.stdout === undefined && prev?.stdout) {
-          return { ...next, stdout: prev.stdout };
+        if (next.source === "editor") {
+          const keepStdout = next.stdout === undefined && prev?.stdout !== undefined;
+          const keepByCase = next.stdoutByCase === undefined && prev?.stdoutByCase !== undefined;
+          if (keepStdout || keepByCase) {
+            return {
+              ...next,
+              ...(keepStdout ? { stdout: prev?.stdout } : {}),
+              ...(keepByCase ? { stdoutByCase: prev?.stdoutByCase } : {}),
+            };
+          }
         }
         return next;
       });
@@ -160,15 +174,21 @@ export function App(): JSX.Element {
   const paletteName = resolvedPalette(settings.mode);
   const palette = settings[paletteName];
 
+  const scopedStdout = useMemo(
+    () => stdoutForCase(snapshot, caseIndex),
+    [snapshot, caseIndex],
+  );
+
   const traceFrames = useMemo(() => {
-    if (!pane || !snapshot?.stdout) return [];
-    return framesFromStdout(snapshot.stdout, pane.model);
-  }, [pane, snapshot?.stdout]);
+    if (!pane || !scopedStdout) return [];
+    return framesFromStdout(scopedStdout, pane.model);
+  }, [pane, scopedStdout]);
 
   useEffect(() => {
     setTraceIndex(0);
     setTracePlaying(false);
-  }, [snapshot?.stdout, pane?.id, caseIndex]);
+    prevTraceIndex.current = 0;
+  }, [scopedStdout, pane?.id, caseIndex]);
 
   const paneSize = pane ? visibleNodeCount(pane.model) : 0;
   const confirmKey = `${slug}:${caseIndex}:${caseInput}:${selectedKind}`;
@@ -204,6 +224,17 @@ export function App(): JSX.Element {
     }
   }, [pane, tooLarge, emptyStage, debouncedStyleKey]);
 
+  const topologyKeys = useMemo(() => {
+    if (!pane?.model.links || pane.model.kind !== "binary-tree") return [] as string[];
+    const keys = new Set<string>();
+    for (const frame of traceFrames) {
+      if (Object.keys(frame.links).length === 0) continue;
+      keys.add(canonicalizeLinks(frame.links));
+      if (keys.size >= MAX_TOPOLOGY_LAYOUTS) break;
+    }
+    return [...keys];
+  }, [pane, traceFrames]);
+
   useEffect(() => {
     if (!dot) {
       setSvg("");
@@ -229,6 +260,67 @@ export function App(): JSX.Element {
       window.clearTimeout(timer);
     };
   }, [dot]);
+
+  useEffect(() => {
+    if (!pane || tooLarge || emptyStage || topologyKeys.length === 0) {
+      setTopologySvgs({});
+      return;
+    }
+    let cancelled = false;
+    const options = { palette, layout: settings.layout };
+    void (async () => {
+      const next: Record<string, string> = {};
+      for (const key of topologyKeys) {
+        if (cancelled) return;
+        try {
+          const frame = traceFrames.find((f) => canonicalizeLinks(f.links) === key);
+          if (!frame) continue;
+          const model = applyTopology(pane.model, frame.links);
+          const topoDot = emitDot(model, options);
+          next[key] = await renderDot(topoDot);
+        } catch {
+          // Skip failed topology layouts; playback falls back to the base SVG.
+        }
+      }
+      if (!cancelled) setTopologySvgs(next);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [pane, tooLarge, emptyStage, topologyKeys, debouncedStyleKey, traceFrames, palette, settings.layout]);
+
+  const activeFrame = traceFrames[traceIndex] ?? null;
+  const activeTopoKey =
+    activeFrame && Object.keys(activeFrame.links).length > 0
+      ? canonicalizeLinks(activeFrame.links)
+      : "";
+  const displaySvg =
+    (activeTopoKey && topologySvgs[activeTopoKey]) || svg;
+
+  const prevFrame = traceIndex > 0 ? traceFrames[traceIndex - 1] : null;
+  const prevTopoKey =
+    prevFrame && Object.keys(prevFrame.links).length > 0
+      ? canonicalizeLinks(prevFrame.links)
+      : "";
+  const morphFromSvg =
+    prevTopoKey && topologySvgs[prevTopoKey]
+      ? topologySvgs[prevTopoKey]
+      : prevFrame
+        ? svg
+        : null;
+
+  const steppedForward = traceIndex === prevTraceIndex.current + 1;
+  useEffect(() => {
+    prevTraceIndex.current = traceIndex;
+  }, [traceIndex]);
+
+  const shouldMorph =
+    steppedForward &&
+    !!morphFromSvg &&
+    !!displaySvg &&
+    morphFromSvg !== displaySvg &&
+    topologyKeys.length > 0 &&
+    topologyKeys.length <= MAX_TOPOLOGY_LAYOUTS;
 
   const updateSettings = useCallback((next: Settings) => {
     setSettings(next);
@@ -287,17 +379,19 @@ export function App(): JSX.Element {
           />
         )}
         <div class="stage-area stage-bg" style={stageStyle}>
-          {svg ? (
+          {displaySvg ? (
             <GraphView
-              svg={svg}
+              svg={displaySvg}
               fitKey={`${slug}:${caseIndex}:${pane?.id ?? ""}:${fitCount}`}
               nodeBackgroundImage={palette.nodeBackgroundImage}
-              traceFrame={traceFrames[traceIndex] ?? null}
+              traceFrame={activeFrame}
+              morphFromSvg={shouldMorph ? morphFromSvg : null}
+              morph={shouldMorph}
             />
           ) : (
             <div class="stage" />
           )}
-          {!svg && (
+          {!displaySvg && (
             <Placeholder
               snapshot={snapshot}
               caseInput={caseInput}

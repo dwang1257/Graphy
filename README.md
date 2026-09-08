@@ -62,7 +62,7 @@ Graphy is a highly customizable graph visualizer for LeetCode problems. You can 
 
 Graphy reads the test case straight out of the editor and renders it in a floating panel next to the problem. Currently it supports binary trees, linked lists, and graphs.
 
-It can also show how your code runs on that drawing. Hit **Run** and Graphy highlights the walk: the current node, the nodes you have already visited, and the frontier (queue or stack) as the algorithm moves. On Python tree problems this happens automatically — Graphy traces the solution without you changing the editor. In any language you can print `#graphy` lines (`current`, `visit`, `enqueue`, `dequeue`, `frontier`) and step through them with the play / pause / scrubber under the graph.
+It can also show how your code runs on that drawing. Hit **Run** and Graphy highlights the walk: the current node, the nodes you have already visited, and the frontier (queue or stack) as the algorithm moves. On Python tree problems this happens automatically — Graphy traces the solution without you changing the editor, and **pointer swaps and deletions reshape the tree** (nodes slide to their new positions). In any language you can print `#graphy` lines (`current`, `visit`, `enqueue`, `dequeue`, `frontier`, `topology`) and step through them with the play / pause / scrubber under the graph.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 

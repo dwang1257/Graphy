@@ -19,6 +19,8 @@ export interface Snapshot {
   captureError?: string;
   /** Run stdout from the LeetCode `/check` response, when present. */
   stdout?: string;
+  /** Per-case stdout from `std_output_list` (one string per custom test case). */
+  stdoutByCase?: string[];
 }
 
 export type PageMessage = { channel: typeof PAGE_CHANNEL; type: "snapshot"; payload: Snapshot };
@@ -58,6 +60,7 @@ function isSnapshot(payload: unknown): payload is Snapshot {
   }
   if (p.captureError !== undefined && typeof p.captureError !== "string") return false;
   if (p.stdout !== undefined && typeof p.stdout !== "string") return false;
+  if (p.stdoutByCase !== undefined && !isStringArray(p.stdoutByCase)) return false;
   return true;
 }
 

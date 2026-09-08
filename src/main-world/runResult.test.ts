@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { extractRunStdout } from "./runResult.js";
+import { extractRunStdout, extractRunStdoutByCase } from "./runResult.js";
 
 describe("extractRunStdout", () => {
   it("joins code_output string arrays", () => {
@@ -27,3 +27,35 @@ describe("extractRunStdout", () => {
     expect(extractRunStdout(null)).toBeUndefined();
   });
 });
+
+describe("extractRunStdoutByCase", () => {
+  it("keeps std_output_list as one string per test case", () => {
+    expect(
+      extractRunStdoutByCase({
+        std_output_list: ["#graphy current n0", "#graphy topology n0:n2,-"],
+      }),
+    ).toEqual(["#graphy current n0", "#graphy topology n0:n2,-"]);
+  });
+
+  it("does not treat code_output line arrays as per-case stdout", () => {
+    expect(
+      extractRunStdoutByCase({
+        code_output: ["#graphy current n0", "#graphy visit n0"],
+      }),
+    ).toBeUndefined();
+  });
+
+  it("preserves empty case slots so indices stay aligned", () => {
+    expect(extractRunStdoutByCase({ std_output_list: ["#graphy current n0", ""] })).toEqual([
+      "#graphy current n0",
+      "",
+    ]);
+  });
+
+  it("returns undefined when std_output_list is missing or empty", () => {
+    expect(extractRunStdoutByCase({ std_output: "solo" })).toBeUndefined();
+    expect(extractRunStdoutByCase({ std_output_list: [] })).toBeUndefined();
+    expect(extractRunStdoutByCase(null)).toBeUndefined();
+  });
+});
+

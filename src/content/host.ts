@@ -1,7 +1,9 @@
 import { PANEL_CHANNEL, isPanelMessage, type ToPanel } from "../shared/protocol.js";
 import { DEFAULT_PANEL, loadPanelState, savePanelState, type PanelState } from "../settings/storage.js";
 import {
+  RESIZE_CORNERS,
   RESIZE_HIT_PX,
+  SHELL_RADIUS_PX,
   SHRINK_EASE,
   SHRINK_MS,
   applyResizePreview,
@@ -9,6 +11,8 @@ import {
   clampPanelSize,
   clearResizePreview,
   clipAnimation,
+  liveResizeRect,
+  type ResizeCorner,
   resizeHitHidden,
   resizeHitPosition,
   shellClipPath,
@@ -25,19 +29,19 @@ const STYLE = `
   all: initial;
   --color-paper: oklch(99% 0.004 250);
   --color-ink: oklch(22% 0.02 255);
-  --color-accent: oklch(62% 0.19 255);
-  --color-accent-ink: oklch(99% 0.01 255);
+  --color-accent: oklch(46% 0.18 305);
+  --color-accent-ink: oklch(98% 0.012 305);
   --color-rule: oklch(84% 0.012 250);
-  --color-focus: oklch(62% 0.19 255);
+  --color-focus: oklch(48% 0.2 305);
   --font-body: "Outfit", ui-sans-serif, system-ui, sans-serif;
 }
 .shell {
   position: fixed;
   z-index: 2147483646;
   border: 0;
-  border-radius: 0;
+  border-radius: ${SHELL_RADIUS_PX}px;
   overflow: hidden;
-  clip-path: inset(0);
+  clip-path: inset(0 round ${SHELL_RADIUS_PX}px);
   box-shadow: none;
   background: transparent;
   display: none;
@@ -76,17 +80,8 @@ const STYLE = `
   cursor: nwse-resize;
   touch-action: none;
 }
-.resize-hit::after {
-  content: "";
-  position: absolute;
-  right: 3px;
-  bottom: 3px;
-  width: 7px;
-  height: 7px;
-  border-right: 1px solid var(--color-ink);
-  border-bottom: 1px solid var(--color-ink);
-  opacity: 0.45;
-}
+.resize-hit[data-corner="ne"],
+.resize-hit[data-corner="sw"] { cursor: nesw-resize; }
 .resize-hit[hidden] { display: none; }
 .launcher {
   appearance: none;
@@ -103,6 +98,7 @@ const STYLE = `
   color: var(--color-accent-ink);
   font: 600 12px/36px var(--font-body);
   letter-spacing: -0.01em;
+  text-transform: capitalize;
   cursor: pointer;
   box-shadow: none;
 }
@@ -112,15 +108,31 @@ const STYLE = `
 .launcher[hidden] { display: none; }
 `;
 
+const RESIZE_LABELS: Record<ResizeCorner, string> = {
+  nw: "Resize panel from top left",
+  ne: "Resize panel from top right",
+  sw: "Resize panel from bottom left",
+  se: "Resize panel from bottom right",
+};
+
 export class PanelHost {
   private root: ShadowRoot;
   private readonly frameOrigin: string;
   private shell!: HTMLDivElement;
   private frame!: HTMLIFrameElement;
   private shrinkHit!: HTMLButtonElement;
-  private resizeHit!: HTMLButtonElement;
+  private resizeHits!: Record<ResizeCorner, HTMLButtonElement>;
   private launcher!: HTMLButtonElement;
-  private resizing: { startX: number; startY: number; width: number; height: number } | null = null;
+  private resizing: {
+    startX: number;
+    startY: number;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    corner: ResizeCorner;
+    hit: HTMLButtonElement;
+  } | null = null;
   private state: PanelState = { ...DEFAULT_PANEL };
   private ready = false;
   /** One queued message per type, so a later snapshot replaces an earlier one. */
@@ -158,7 +170,7 @@ export class PanelHost {
 
     this.frame = document.createElement("iframe");
     this.frame.src = this.frameUrl;
-    this.frame.setAttribute("title", "Graphy visualizer");
+    this.frame.setAttribute("title", "Graphy Visualizer");
     this.shell.appendChild(this.frame);
 
     this.shrinkHit = document.createElement("button");
@@ -167,11 +179,16 @@ export class PanelHost {
     this.shrinkHit.setAttribute("aria-label", "Shrink panel");
     this.shrinkHit.addEventListener("click", this.onShrinkClick);
 
-    this.resizeHit = document.createElement("button");
-    this.resizeHit.className = "resize-hit";
-    this.resizeHit.type = "button";
-    this.resizeHit.setAttribute("aria-label", "Resize panel");
-    this.resizeHit.addEventListener("pointerdown", this.onResizePointerDown);
+    this.resizeHits = {} as Record<ResizeCorner, HTMLButtonElement>;
+    for (const corner of RESIZE_CORNERS) {
+      const hit = document.createElement("button");
+      hit.className = "resize-hit";
+      hit.type = "button";
+      hit.dataset.corner = corner;
+      hit.setAttribute("aria-label", RESIZE_LABELS[corner]);
+      hit.addEventListener("pointerdown", this.onResizePointerDown);
+      this.resizeHits[corner] = hit;
+    }
 
     this.launcher = document.createElement("button");
     this.launcher.className = "launcher";
@@ -182,7 +199,7 @@ export class PanelHost {
     fonts.rel = "stylesheet";
     fonts.href = "https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600&display=swap";
 
-    this.root.append(fonts, style, this.shell, this.shrinkHit, this.resizeHit, this.launcher);
+    this.root.append(fonts, style, this.shell, this.shrinkHit, ...RESIZE_CORNERS.map((c) => this.resizeHits[c]), this.launcher);
     window.addEventListener("message", this.onMessage);
     window.addEventListener("resize", this.clamp);
 
@@ -248,7 +265,6 @@ export class PanelHost {
       applyShellStyles(this.shell, this.frame, this.state, {
         animate: false,
         settle: this.state.shrunk,
-        clipPath: to,
       });
       this.syncHits();
     };
@@ -270,8 +286,10 @@ export class PanelHost {
     this.apply();
   };
 
-  private syncHits(): void {
-    const shrink = shrinkHitPosition(this.state);
+  private syncHits(
+    box: { x: number; y: number; width: number; height: number } = this.state,
+  ): void {
+    const shrink = shrinkHitPosition(box);
     Object.assign(this.shrinkHit.style, {
       left: `${shrink.left}px`,
       top: `${shrink.top}px`,
@@ -282,12 +300,15 @@ export class PanelHost {
     this.shrinkHit.setAttribute("aria-label", this.state.shrunk ? "Expand panel" : "Shrink panel");
     this.shrinkHit.setAttribute("aria-pressed", String(this.state.shrunk));
 
-    const corner = resizeHitPosition(this.state);
-    Object.assign(this.resizeHit.style, {
-      left: `${corner.left}px`,
-      top: `${corner.top}px`,
-    });
-    this.resizeHit.hidden = resizeHitHidden(this.state, this.clipSettled);
+    const hidden = resizeHitHidden(this.state, this.clipSettled);
+    for (const corner of RESIZE_CORNERS) {
+      const pos = resizeHitPosition(box, corner);
+      Object.assign(this.resizeHits[corner].style, {
+        left: `${pos.left}px`,
+        top: `${pos.top}px`,
+      });
+      this.resizeHits[corner].hidden = hidden;
+    }
   }
 
   private commitResizeLayout(): void {
@@ -304,15 +325,16 @@ export class PanelHost {
   }
 
   private abortResize(): void {
+    const hit = this.resizing?.hit;
     if (this.resizing) {
       this.resizing = null;
-      this.resizeHit.removeEventListener("pointermove", this.onResizePointerMove);
-      this.resizeHit.removeEventListener("pointerup", this.onResizePointerUp);
-      this.resizeHit.removeEventListener("pointercancel", this.onResizePointerUp);
+      hit?.removeEventListener("pointermove", this.onResizePointerMove);
+      hit?.removeEventListener("pointerup", this.onResizePointerUp);
+      hit?.removeEventListener("pointercancel", this.onResizePointerUp);
     }
     if (this.resizePointerId !== undefined) {
       try {
-        this.resizeHit.releasePointerCapture(this.resizePointerId);
+        hit?.releasePointerCapture(this.resizePointerId);
       } catch {
         /* Already released or never captured. */
       }
@@ -327,62 +349,72 @@ export class PanelHost {
 
   private onResizePointerDown = (event: PointerEvent): void => {
     if (event.button !== 0 || this.state.shrunk || !this.clipSettled) return;
+    const hit = event.currentTarget;
+    if (!(hit instanceof HTMLButtonElement)) return;
+    const corner = hit.dataset.corner;
+    if (!RESIZE_CORNERS.includes(corner as ResizeCorner)) return;
     event.preventDefault();
     this.commitResizeLayout();
     this.shell.style.willChange = "transform";
     this.resizePointerId = event.pointerId;
     try {
-      this.resizeHit.setPointerCapture(event.pointerId);
+      hit.setPointerCapture(event.pointerId);
     } catch {
       /* Move/up still fire on the handle if capture is unavailable. */
     }
     this.resizing = {
       startX: event.clientX,
       startY: event.clientY,
+      x: this.state.x,
+      y: this.state.y,
       width: this.state.width,
       height: this.state.height,
+      corner: corner as ResizeCorner,
+      hit,
     };
-    this.resizeHit.addEventListener("pointermove", this.onResizePointerMove);
-    this.resizeHit.addEventListener("pointerup", this.onResizePointerUp);
-    this.resizeHit.addEventListener("pointercancel", this.onResizePointerUp);
+    hit.addEventListener("pointermove", this.onResizePointerMove);
+    hit.addEventListener("pointerup", this.onResizePointerUp);
+    hit.addEventListener("pointercancel", this.onResizePointerUp);
   };
 
-  private liveSize(event: PointerEvent): { width: number; height: number } {
+  private liveRect(event: PointerEvent): {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  } {
     const start = this.resizing;
-    if (!start) return { width: this.state.width, height: this.state.height };
-    return clampPanelSize(
-      {
-        width: start.width + (event.clientX - start.startX),
-        height: start.height + (event.clientY - start.startY),
-      },
+    if (!start) {
+      return { x: this.state.x, y: this.state.y, width: this.state.width, height: this.state.height };
+    }
+    return liveResizeRect(
+      { x: start.x, y: start.y, width: start.width, height: start.height },
+      start.corner,
+      { dx: event.clientX - start.startX, dy: event.clientY - start.startY },
       { width: window.innerWidth, height: window.innerHeight },
-      { x: this.state.x, y: this.state.y },
     );
   }
 
   private onResizePointerMove = (event: PointerEvent): void => {
-    if (!this.resizing) return;
-    const next = this.liveSize(event);
-    applyResizePreview(this.shell, this.resizing, next);
-    const shrink = shrinkHitPosition({ ...this.state, width: next.width });
-    Object.assign(this.shrinkHit.style, {
-      left: `${shrink.left}px`,
-      top: `${shrink.top}px`,
-    });
-    Object.assign(this.resizeHit.style, {
-      left: `${this.state.x + next.width - RESIZE_HIT_PX}px`,
-      top: `${this.state.y + next.height - RESIZE_HIT_PX}px`,
-    });
+    const start = this.resizing;
+    if (!start) return;
+    const next = this.liveRect(event);
+    applyResizePreview(this.shell, start, next, start.corner);
+    this.syncHits(next);
   };
 
   private onResizePointerUp = (event: PointerEvent): void => {
-    if (!this.resizing) return;
-    const next = this.liveSize(event);
+    const start = this.resizing;
+    if (!start) return;
+    const next = this.liveRect(event);
+    const hit = start.hit;
     this.resizing = null;
-    this.resizeHit.removeEventListener("pointermove", this.onResizePointerMove);
-    this.resizeHit.removeEventListener("pointerup", this.onResizePointerUp);
-    this.resizeHit.removeEventListener("pointercancel", this.onResizePointerUp);
+    hit.removeEventListener("pointermove", this.onResizePointerMove);
+    hit.removeEventListener("pointerup", this.onResizePointerUp);
+    hit.removeEventListener("pointercancel", this.onResizePointerUp);
     this.resizePointerId = undefined;
+    this.state.x = next.x;
+    this.state.y = next.y;
     this.state.width = next.width;
     this.state.height = next.height;
     this.syncHits();
@@ -437,7 +469,9 @@ export class PanelHost {
     this.clipAnim?.cancel();
     this.abortResize();
     this.shrinkHit.removeEventListener("click", this.onShrinkClick);
-    this.resizeHit.removeEventListener("pointerdown", this.onResizePointerDown);
+    for (const hit of Object.values(this.resizeHits)) {
+      hit.removeEventListener("pointerdown", this.onResizePointerDown);
+    }
     window.removeEventListener("message", this.onMessage);
     window.removeEventListener("resize", this.clamp);
     document.getElementById(HOST_ID)?.remove();

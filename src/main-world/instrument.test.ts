@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { GRAPHY_TRACE_MARK, instrumentPython, instrumentRunBody } from "./instrument.js";
+import { GRAPHY_TRACE_MARK, PYTHON_TRACER, instrumentPython, instrumentRunBody } from "./instrument.js";
 
 const invert = `class Solution:
     def invertTree(self, root):
@@ -21,6 +21,13 @@ describe("instrumentPython", () => {
     expect(once).toContain(GRAPHY_TRACE_MARK);
     expect(once.indexOf("class Solution")).toBeLessThan(once.indexOf(GRAPHY_TRACE_MARK));
     expect(instrumentPython(once)).toBe(once);
+  });
+
+  it("emits compact #g tokens instead of verbose #graphy lines", () => {
+    expect(PYTHON_TRACER).toMatch(/print\("#graphy\/\[/);
+    expect(PYTHON_TRACER).not.toContain("#graphy current");
+    expect(PYTHON_TRACER).not.toContain("#graphy visit");
+    expect(PYTHON_TRACER).not.toContain("#graphy topology");
   });
 });
 

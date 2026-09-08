@@ -54,6 +54,26 @@ describe("snapshot validation", () => {
     ).toBe(false);
   });
 
+  it("accepts optional per-case stdout", () => {
+    expect(
+      isPageMessage({
+        channel: PAGE_CHANNEL,
+        type: "snapshot",
+        payload: { ...validSnapshot, source: "network", stdoutByCase: ["#g c n0", "#g c n1"] },
+      }),
+    ).toBe(true);
+  });
+
+  it("rejects non-string-array stdoutByCase", () => {
+    expect(
+      isPageMessage({
+        channel: PAGE_CHANNEL,
+        type: "snapshot",
+        payload: { ...validSnapshot, stdoutByCase: [1, 2] },
+      }),
+    ).toBe(false);
+  });
+
   it("rejects snapshots that still use a single input string", () => {
     expect(
       isPageMessage({

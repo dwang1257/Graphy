@@ -55,7 +55,74 @@ describe("parseTrace", () => {
       { kind: "visit", ref: "n1", line: 1 },
     ]);
   });
+
+  it("parses topology snapshots", () => {
+    expect(parseTrace("#graphy topology n0:n2,n1 n1:-,- n2:n6,n5")).toEqual([
+      {
+        kind: "topology",
+        links: {
+          n0: { left: "n2", right: "n1" },
+          n1: {},
+          n2: { left: "n6", right: "n5" },
+        },
+        line: 1,
+      },
+    ]);
+  });
+
+  it("parses compact #g / c / v / t aliases on one packed line", () => {
+    expect(parseTrace("#g / c n0 v n0 t n0:n2,n1 n2:n5,n6")).toEqual([
+      { kind: "clear", line: 1 },
+      { kind: "current", ref: "n0", line: 1 },
+      { kind: "visit", ref: "n0", line: 1 },
+      {
+        kind: "topology",
+        links: {
+          n0: { left: "n2", right: "n1" },
+          n2: { left: "n5", right: "n6" },
+        },
+        line: 1,
+      },
+    ]);
+  });
+
+  it("accepts #g and g prefixes with single-letter verbs", () => {
+    expect(parseTrace("#g c n0\ng v n1\n#G t n0:n1,-\n")).toEqual([
+      { kind: "current", ref: "n0", line: 1 },
+      { kind: "visit", ref: "n1", line: 2 },
+      { kind: "topology", links: { n0: { left: "n1" } }, line: 3 },
+    ]);
+  });
+
+  it("treats #g / as a case-break clear and does not treat c as walk", () => {
+    expect(parseTrace("#g /\n#g c n0")).toEqual([
+      { kind: "clear", line: 1 },
+      { kind: "current", ref: "n0", line: 2 },
+    ]);
+  });
+
+  it("parses a compact #graphy/ array of visits and topology tuples", () => {
+    expect(parseTrace("#graphy/[0,(0,2,1),2,(2,None,5)]")).toEqual([
+      { kind: "current", ref: "n0", line: 1 },
+      { kind: "visit", ref: "n0", line: 1 },
+      {
+        kind: "topology",
+        links: { n0: { left: "n2", right: "n1" } },
+        line: 1,
+        patch: true,
+      },
+      { kind: "current", ref: "n2", line: 1 },
+      { kind: "visit", ref: "n2", line: 1 },
+      {
+        kind: "topology",
+        links: { n2: { right: "n5" } },
+        line: 1,
+        patch: true,
+      },
+    ]);
+  });
 });
+
 
 describe("resolveRef", () => {
   const tree: GraphModel = {
@@ -143,3 +210,65 @@ describe("framesFromStdout", () => {
     expect(framesFromStdout("Accepted\n", list)).toEqual([]);
   });
 });
+
+describe("framesFromStdout topology", () => {
+  const tree: GraphModel = {
+    ...emptyModel("binary-tree", "root"),
+    nodes: [
+      { id: "n0", label: "4", role: "root" },
+      { id: "n1", label: "2", role: "normal" },
+      { id: "n2", label: "7", role: "normal" },
+      { id: "n3", label: "1", role: "normal" },
+    ],
+    links: {
+      n0: { left: "n1", right: "n2" },
+      n1: { left: "n3" },
+      n2: {},
+      n3: {},
+    },
+  };
+
+  it("seeds links from the model and updates them on topology", () => {
+    const frames = framesFromStdout(
+      ["#graphy current n0", "#graphy topology n0:n2,n1 n1:n3,- n2:-,- n3:-,-"].join("\n"),
+      tree,
+    );
+    expect(frames[0]).toMatchObject({
+      current: "n0",
+      links: tree.links,
+      deleted: [],
+    });
+    expect(frames[1]?.links).toEqual({
+      n0: { left: "n2", right: "n1" },
+      n1: { left: "n3" },
+      n2: {},
+      n3: {},
+    });
+    expect(frames[1]?.deleted).toEqual([]);
+  });
+
+  it("marks unlinked children as deleted until they reappear", () => {
+    const frames = framesFromStdout(
+      [
+        "#graphy topology n0:n1,n2 n1:-,- n2:-,-",
+        "#graphy topology n0:n2,n1 n1:-,- n2:-,-",
+      ].join("\n"),
+      tree,
+    );
+    expect(frames[0]?.deleted.sort()).toEqual(["n3"]);
+    expect(frames[1]?.deleted.sort()).toEqual(["n3"]);
+  });
+
+  it("merges array topology tuples onto the seeded tree", () => {
+    const frames = framesFromStdout("#graphy/[0,(0,2,1)]", tree);
+    expect(frames.at(-1)?.links).toEqual({
+      n0: { left: "n2", right: "n1" },
+      n1: { left: "n3" },
+      n2: {},
+      n3: {},
+    });
+    expect(frames.at(-1)?.current).toBe("n0");
+    expect(frames.at(-1)?.visited).toEqual(["n0"]);
+  });
+});
+
