@@ -1,7 +1,10 @@
-import { DEFAULT_SETTINGS, withDefaults, type Settings } from "./schema.js";
+import { DEFAULT_SETTINGS, type Settings } from "./schema.js";
+import { extractImages, settingsFromStores, stripImages } from "./split.js";
 
 const SYNC_KEY = "graphy.settings";
 const LOCAL_KEY = "graphy.panel";
+/** Data URLs blow the sync quota, so photos stay on-device. */
+const IMAGES_KEY = "graphy.images";
 
 export interface PanelState {
   x: number;
@@ -40,16 +43,30 @@ export function sanitizePanelState(stored: unknown): PanelState {
 
 export async function loadSettings(): Promise<Settings> {
   try {
-    const bag = await chrome.storage.sync.get(SYNC_KEY);
-    return withDefaults(bag[SYNC_KEY]);
+    const [syncBag, localBag] = await Promise.all([
+      chrome.storage.sync.get(SYNC_KEY),
+      chrome.storage.local.get(IMAGES_KEY),
+    ]);
+    return settingsFromStores(
+      syncBag[SYNC_KEY],
+      localBag[IMAGES_KEY],
+      Object.prototype.hasOwnProperty.call(localBag, IMAGES_KEY),
+    );
   } catch {
     return DEFAULT_SETTINGS;
   }
 }
 
 export async function saveSettings(settings: Settings): Promise<void> {
+  const compact = stripImages(settings);
+  const images = extractImages(settings);
   try {
-    await chrome.storage.sync.set({ [SYNC_KEY]: settings });
+    await chrome.storage.local.set({ [IMAGES_KEY]: images });
+  } catch {
+    /* Image quota must not block colors. */
+  }
+  try {
+    await chrome.storage.sync.set({ [SYNC_KEY]: compact });
   } catch {
     /* Quota or context teardown - the live UI already has the value. */
   }
@@ -60,8 +77,26 @@ export function onSettingsChanged(handler: (settings: Settings) => void): () => 
     changes: Record<string, chrome.storage.StorageChange>,
     area: string,
   ): void => {
-    if (area !== "sync" || !changes[SYNC_KEY]) return;
-    handler(withDefaults(changes[SYNC_KEY].newValue));
+    // Compact sync writes null images; overlay local so photos are not wiped.
+    // Ignore local image events — a same-tab save writes local first, and
+    // applying that against still-old sync would flash previous colors.
+    const syncChange = changes[SYNC_KEY];
+    if (area !== "sync" || !syncChange) return;
+    const syncValue = syncChange.newValue;
+    void chrome.storage.local.get(IMAGES_KEY).then(
+      (localBag) => {
+        handler(
+          settingsFromStores(
+            syncValue,
+            localBag[IMAGES_KEY],
+            Object.prototype.hasOwnProperty.call(localBag, IMAGES_KEY),
+          ),
+        );
+      },
+      () => {
+        handler(settingsFromStores(syncValue, undefined, false));
+      },
+    );
   };
   chrome.storage.onChanged.addListener(listener);
   return () => chrome.storage.onChanged.removeListener(listener);

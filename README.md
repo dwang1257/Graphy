@@ -136,7 +136,7 @@ If there are several custom cases, switch between them with the **Case** pills u
 
 ## Customization
 
-Open the style panel with **Style** in the title bar. Changes apply immediately and are stored in your browser profile.
+Open the style panel with **Style** in the title bar. Changes apply immediately. Style settings persist in your Chrome profile and can sync with the signed-in profile; uploaded background and node images stay on this device.
 
 * **Appearance** - light or dark
 * **Node shape** - circle, ellipse, square, diamond, hexagon, or double circle
