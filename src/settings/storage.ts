@@ -9,6 +9,7 @@ export interface PanelState {
   width: number;
   height: number;
   open: boolean;
+  shrunk: boolean;
 }
 
 export const DEFAULT_PANEL: PanelState = {
@@ -17,7 +18,25 @@ export const DEFAULT_PANEL: PanelState = {
   width: 460,
   height: 520,
   open: false,
+  shrunk: false,
 };
+
+function finiteNumber(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+/** Coerce chrome.storage payloads so a stale or partial bag cannot poison layout. */
+export function sanitizePanelState(stored: unknown): PanelState {
+  const raw = stored && typeof stored === "object" ? (stored as Record<string, unknown>) : {};
+  return {
+    x: finiteNumber(raw.x, DEFAULT_PANEL.x),
+    y: finiteNumber(raw.y, DEFAULT_PANEL.y),
+    width: finiteNumber(raw.width, DEFAULT_PANEL.width),
+    height: finiteNumber(raw.height, DEFAULT_PANEL.height),
+    open: raw.open === true,
+    shrunk: raw.shrunk === true,
+  };
+}
 
 export async function loadSettings(): Promise<Settings> {
   try {
@@ -52,7 +71,7 @@ export function onSettingsChanged(handler: (settings: Settings) => void): () => 
 export async function loadPanelState(): Promise<PanelState> {
   try {
     const bag = await chrome.storage.local.get(LOCAL_KEY);
-    return { ...DEFAULT_PANEL, ...((bag[LOCAL_KEY] as Partial<PanelState>) ?? {}) };
+    return sanitizePanelState(bag[LOCAL_KEY]);
   } catch {
     return DEFAULT_PANEL;
   }

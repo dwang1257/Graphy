@@ -117,3 +117,22 @@ it("restores selection and returns no partial cases after cancellation", async (
   expect(result.captureError).toBeDefined();
   expect(adapter.currentIndex()).toBe(2);
 });
+
+it("passes isCurrent into restore settle so a superseded walk cannot block", async () => {
+  let current = true;
+  const currents: boolean[] = [];
+  const adapter = fakeAdapter({
+    selected: 0,
+    cases: [["[1]"], ["[2]"]],
+  });
+  const originalWait = adapter.waitUntilSettled.bind(adapter);
+  adapter.waitUntilSettled = async (tab, isCurrent) => {
+    currents.push(isCurrent());
+    if (tab.index === 1) current = false;
+    return originalWait(tab, isCurrent);
+  };
+
+  await captureCasesFromTabs(adapter, () => current);
+
+  expect(currents.at(-1)).toBe(false);
+});

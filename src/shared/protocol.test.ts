@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { PAGE_CHANNEL, PANEL_CHANNEL, isPageMessage, isToPanel } from "./protocol.js";
+import {
+  PAGE_CHANNEL,
+  PANEL_CHANNEL,
+  isPageMessage,
+  isPanelMessage,
+  isToPanel,
+} from "./protocol.js";
 
 const validSnapshot = {
   cases: ["[1,2,3]\n2", "[9,8,7]\n8"],
@@ -73,5 +79,26 @@ describe("snapshot validation", () => {
         payload: { ...validSnapshot, cases: [["1", "2"]] },
       }),
     ).toBe(false);
+  });
+});
+
+describe("host chrome messages", () => {
+  it("accepts a shrunk state echo from the host", () => {
+    expect(isToPanel({ channel: PANEL_CHANNEL, type: "shrunk", shrunk: true })).toBe(true);
+    expect(isToPanel({ channel: PANEL_CHANNEL, type: "shrunk", shrunk: false })).toBe(true);
+    expect(isToPanel({ channel: PANEL_CHANNEL, type: "shrunk", shrunk: 1 })).toBe(false);
+  });
+
+});
+
+describe("setShrunk messages", () => {
+  it("accepts an explicit shrink or expand from the panel", () => {
+    expect(isPanelMessage({ channel: PANEL_CHANNEL, type: "setShrunk", shrunk: true })).toBe(true);
+    expect(isPanelMessage({ channel: PANEL_CHANNEL, type: "setShrunk", shrunk: false })).toBe(true);
+  });
+
+  it("rejects a setShrunk payload that is not a boolean", () => {
+    expect(isPanelMessage({ channel: PANEL_CHANNEL, type: "setShrunk", shrunk: 1 })).toBe(false);
+    expect(isPanelMessage({ channel: PANEL_CHANNEL, type: "setShrunk" })).toBe(false);
   });
 });

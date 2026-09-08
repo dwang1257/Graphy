@@ -80,7 +80,7 @@ function publish(source: Snapshot["source"], override?: Partial<Snapshot>, walk 
       const fromDom = await captureCasesFromTabs(adapter, isCurrent);
       if (!isCurrent()) return;
       const liveSlug = slugOf();
-      if (!liveSlug) return;
+      if (!liveSlug || liveSlug !== slug) return;
       if (cache && cache.slug !== liveSlug) cache = null;
       cases = fromDom.cases;
       captureError = fromDom.captureError;
@@ -268,15 +268,17 @@ function patchNetwork(): void {
       /* Same - instrumentation must never be fatal. */
     }
 
-    this.addEventListener("load", () => {
-      try {
-        const parsed = parseObject(String(this.responseText ?? ""));
-        if (RUN_URL.test(url)) rememberInterpretId(parsed);
-        else if (CHECK_URL.test(url)) maybeWalkResults(url, parsed);
-      } catch {
-        /* Same - instrumentation must never be fatal. */
-      }
-    });
+    if (RUN_URL.test(url) || CHECK_URL.test(url)) {
+      this.addEventListener("load", () => {
+        try {
+          const parsed = parseObject(String(this.responseText ?? ""));
+          if (RUN_URL.test(url)) rememberInterpretId(parsed);
+          else maybeWalkResults(url, parsed);
+        } catch {
+          /* Same - instrumentation must never be fatal. */
+        }
+      }, { once: true });
+    }
     return nativeSend.call(this, nextBody ?? null);
   };
 }

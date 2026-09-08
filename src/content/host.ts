@@ -1,5 +1,22 @@
-import { isPanelMessage, type ToPanel } from "../shared/protocol.js";
+import { PANEL_CHANNEL, isPanelMessage, type ToPanel } from "../shared/protocol.js";
 import { DEFAULT_PANEL, loadPanelState, savePanelState, type PanelState } from "../settings/storage.js";
+import {
+  RESIZE_HIT_PX,
+  SHRINK_EASE,
+  SHRINK_MS,
+  applyResizePreview,
+  applyShellStyles,
+  clampPanelSize,
+  clearResizePreview,
+  clipAnimation,
+  resizeHitHidden,
+  resizeHitPosition,
+  shellClipPath,
+  shrinkHitOffset,
+  shrinkHitPosition,
+} from "./shellLayout.js";
+
+const HIT = shrinkHitOffset();
 
 const HOST_ID = "graphy-root";
 
@@ -20,12 +37,57 @@ const STYLE = `
   border: 0;
   border-radius: 0;
   overflow: hidden;
+  clip-path: inset(0);
   box-shadow: none;
   background: transparent;
   display: none;
 }
 .shell[data-open="true"] { display: block; }
-.shell iframe { width: 100%; height: 100%; border: 0; display: block; }
+.shell iframe {
+  position: absolute;
+  top: 0;
+  left: 0;
+  border: 0;
+  display: block;
+  transform: translateZ(0);
+}
+.shrink-hit {
+  appearance: none;
+  -webkit-appearance: none;
+  position: fixed;
+  z-index: 2147483647;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  touch-action: none;
+}
+.shrink-hit[hidden] { display: none; }
+.resize-hit {
+  appearance: none;
+  -webkit-appearance: none;
+  position: fixed;
+  z-index: 2147483647;
+  width: ${RESIZE_HIT_PX}px;
+  height: ${RESIZE_HIT_PX}px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: nwse-resize;
+  touch-action: none;
+}
+.resize-hit::after {
+  content: "";
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 7px;
+  height: 7px;
+  border-right: 1px solid var(--color-ink);
+  border-bottom: 1px solid var(--color-ink);
+  opacity: 0.45;
+}
+.resize-hit[hidden] { display: none; }
 .launcher {
   appearance: none;
   -webkit-appearance: none;
@@ -55,12 +117,19 @@ export class PanelHost {
   private readonly frameOrigin: string;
   private shell!: HTMLDivElement;
   private frame!: HTMLIFrameElement;
+  private shrinkHit!: HTMLButtonElement;
+  private resizeHit!: HTMLButtonElement;
   private launcher!: HTMLButtonElement;
+  private resizing: { startX: number; startY: number; width: number; height: number } | null = null;
   private state: PanelState = { ...DEFAULT_PANEL };
   private ready = false;
   /** One queued message per type, so a later snapshot replaces an earlier one. */
   private pending = new Map<string, ToPanel>();
   private saveTimer: number | undefined;
+  private clipAnim: Animation | undefined;
+  private clipSettled = true;
+  private resizeCommit: number | undefined;
+  private resizePointerId: number | undefined;
   /** Resolves once stored geometry has been applied. */
   readonly restored: Promise<void>;
 
@@ -92,6 +161,18 @@ export class PanelHost {
     this.frame.setAttribute("title", "Graphy visualizer");
     this.shell.appendChild(this.frame);
 
+    this.shrinkHit = document.createElement("button");
+    this.shrinkHit.className = "shrink-hit";
+    this.shrinkHit.type = "button";
+    this.shrinkHit.setAttribute("aria-label", "Shrink panel");
+    this.shrinkHit.addEventListener("click", this.onShrinkClick);
+
+    this.resizeHit = document.createElement("button");
+    this.resizeHit.className = "resize-hit";
+    this.resizeHit.type = "button";
+    this.resizeHit.setAttribute("aria-label", "Resize panel");
+    this.resizeHit.addEventListener("pointerdown", this.onResizePointerDown);
+
     this.launcher = document.createElement("button");
     this.launcher.className = "launcher";
     this.launcher.textContent = "Graphy";
@@ -101,14 +182,14 @@ export class PanelHost {
     fonts.rel = "stylesheet";
     fonts.href = "https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600&display=swap";
 
-    this.root.append(fonts, style, this.shell, this.launcher);
+    this.root.append(fonts, style, this.shell, this.shrinkHit, this.resizeHit, this.launcher);
     window.addEventListener("message", this.onMessage);
     window.addEventListener("resize", this.clamp);
 
     const state = await loadPanelState();
     this.state = state;
     if (state.x < 0 || state.y < 0) this.placeDefault();
-    this.apply();
+    this.clamp();
   }
 
   private placeDefault(): void {
@@ -117,20 +198,204 @@ export class PanelHost {
   }
 
   private apply(): void {
-    Object.assign(this.shell.style, {
-      left: `${this.state.x}px`,
-      top: `${this.state.y}px`,
-      width: `${this.state.width}px`,
-      height: `${this.state.height}px`,
+    this.clipAnim?.cancel();
+    this.clipAnim = undefined;
+    this.clipSettled = true;
+    clearResizePreview(this.shell);
+    applyShellStyles(this.shell, this.frame, this.state, {
+      animate: false,
+      settle: this.state.shrunk,
     });
-    this.shell.dataset.open = String(this.state.open);
     this.launcher.hidden = this.state.open;
+    this.syncHits();
+  }
+
+  private onShrinkClick = (): void => {
+    this.setShrunk(!this.state.shrunk);
+  };
+
+  private setShrunk(shrunk: boolean): void {
+    if (this.state.shrunk === shrunk) {
+      this.send({ channel: PANEL_CHANNEL, type: "shrunk", shrunk });
+      return;
+    }
+    this.abortResize();
+    const height = this.state.height;
+    const from = shellClipPath(height, this.state.shrunk);
+    this.state.shrunk = shrunk;
+    const to = shellClipPath(height, shrunk);
+    this.clipAnim?.cancel();
+    this.clipSettled = false;
+
+    applyShellStyles(this.shell, this.frame, this.state, {
+      animate: false,
+      settle: false,
+      clipPath: from,
+    });
+    this.launcher.hidden = this.state.open;
+    this.syncHits();
+
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    this.clipAnim = this.shell.animate(clipAnimation(from, to), {
+      duration: reduce ? 0 : SHRINK_MS,
+      easing: SHRINK_EASE,
+      fill: "forwards",
+    });
+    this.clipAnim.onfinish = () => {
+      this.clipAnim?.cancel();
+      if (this.state.shrunk !== shrunk) return;
+      this.clipSettled = true;
+      applyShellStyles(this.shell, this.frame, this.state, {
+        animate: false,
+        settle: this.state.shrunk,
+        clipPath: to,
+      });
+      this.syncHits();
+    };
+    this.send({ channel: PANEL_CHANNEL, type: "shrunk", shrunk });
+    this.persist();
   }
 
   private clamp = (): void => {
+    if (this.resizing) return;
+    const size = clampPanelSize(
+      { width: this.state.width, height: this.state.height },
+      { width: window.innerWidth, height: window.innerHeight },
+      { x: this.state.x, y: this.state.y },
+    );
+    this.state.width = size.width;
+    this.state.height = size.height;
     this.state.x = Math.min(Math.max(0, this.state.x), Math.max(0, window.innerWidth - 80));
     this.state.y = Math.min(Math.max(0, this.state.y), Math.max(0, window.innerHeight - 40));
     this.apply();
+  };
+
+  private syncHits(): void {
+    const shrink = shrinkHitPosition(this.state);
+    Object.assign(this.shrinkHit.style, {
+      left: `${shrink.left}px`,
+      top: `${shrink.top}px`,
+      width: `${HIT.width}px`,
+      height: `${HIT.height}px`,
+    });
+    this.shrinkHit.hidden = !this.state.open;
+    this.shrinkHit.setAttribute("aria-label", this.state.shrunk ? "Expand panel" : "Shrink panel");
+    this.shrinkHit.setAttribute("aria-pressed", String(this.state.shrunk));
+
+    const corner = resizeHitPosition(this.state);
+    Object.assign(this.resizeHit.style, {
+      left: `${corner.left}px`,
+      top: `${corner.top}px`,
+    });
+    this.resizeHit.hidden = resizeHitHidden(this.state, this.clipSettled);
+  }
+
+  private commitResizeLayout(): void {
+    if (this.resizeCommit !== undefined) {
+      window.cancelAnimationFrame(this.resizeCommit);
+      this.resizeCommit = undefined;
+    }
+    clearResizePreview(this.shell);
+    applyShellStyles(this.shell, this.frame, this.state, {
+      animate: false,
+      settle: this.state.shrunk,
+    });
+    this.syncHits();
+  }
+
+  private abortResize(): void {
+    if (this.resizing) {
+      this.resizing = null;
+      this.resizeHit.removeEventListener("pointermove", this.onResizePointerMove);
+      this.resizeHit.removeEventListener("pointerup", this.onResizePointerUp);
+      this.resizeHit.removeEventListener("pointercancel", this.onResizePointerUp);
+    }
+    if (this.resizePointerId !== undefined) {
+      try {
+        this.resizeHit.releasePointerCapture(this.resizePointerId);
+      } catch {
+        /* Already released or never captured. */
+      }
+      this.resizePointerId = undefined;
+    }
+    if (this.resizeCommit !== undefined) {
+      window.cancelAnimationFrame(this.resizeCommit);
+      this.resizeCommit = undefined;
+    }
+    clearResizePreview(this.shell);
+  }
+
+  private onResizePointerDown = (event: PointerEvent): void => {
+    if (event.button !== 0 || this.state.shrunk || !this.clipSettled) return;
+    event.preventDefault();
+    this.commitResizeLayout();
+    this.shell.style.willChange = "transform";
+    this.resizePointerId = event.pointerId;
+    try {
+      this.resizeHit.setPointerCapture(event.pointerId);
+    } catch {
+      /* Move/up still fire on the handle if capture is unavailable. */
+    }
+    this.resizing = {
+      startX: event.clientX,
+      startY: event.clientY,
+      width: this.state.width,
+      height: this.state.height,
+    };
+    this.resizeHit.addEventListener("pointermove", this.onResizePointerMove);
+    this.resizeHit.addEventListener("pointerup", this.onResizePointerUp);
+    this.resizeHit.addEventListener("pointercancel", this.onResizePointerUp);
+  };
+
+  private liveSize(event: PointerEvent): { width: number; height: number } {
+    const start = this.resizing;
+    if (!start) return { width: this.state.width, height: this.state.height };
+    return clampPanelSize(
+      {
+        width: start.width + (event.clientX - start.startX),
+        height: start.height + (event.clientY - start.startY),
+      },
+      { width: window.innerWidth, height: window.innerHeight },
+      { x: this.state.x, y: this.state.y },
+    );
+  }
+
+  private onResizePointerMove = (event: PointerEvent): void => {
+    if (!this.resizing) return;
+    const next = this.liveSize(event);
+    applyResizePreview(this.shell, this.resizing, next);
+    const shrink = shrinkHitPosition({ ...this.state, width: next.width });
+    Object.assign(this.shrinkHit.style, {
+      left: `${shrink.left}px`,
+      top: `${shrink.top}px`,
+    });
+    Object.assign(this.resizeHit.style, {
+      left: `${this.state.x + next.width - RESIZE_HIT_PX}px`,
+      top: `${this.state.y + next.height - RESIZE_HIT_PX}px`,
+    });
+  };
+
+  private onResizePointerUp = (event: PointerEvent): void => {
+    if (!this.resizing) return;
+    const next = this.liveSize(event);
+    this.resizing = null;
+    this.resizeHit.removeEventListener("pointermove", this.onResizePointerMove);
+    this.resizeHit.removeEventListener("pointerup", this.onResizePointerUp);
+    this.resizeHit.removeEventListener("pointercancel", this.onResizePointerUp);
+    this.resizePointerId = undefined;
+    this.state.width = next.width;
+    this.state.height = next.height;
+    this.syncHits();
+    this.persist();
+    // Keep the scale preview up until the iframe can resize off the pointer path.
+    this.resizeCommit = window.requestAnimationFrame(() => {
+      this.resizeCommit = window.requestAnimationFrame(() => {
+        this.resizeCommit = undefined;
+        if (this.resizing) return;
+        clearResizePreview(this.shell);
+        this.apply();
+      });
+    });
   };
 
   private persist(): void {
@@ -169,6 +434,10 @@ export class PanelHost {
   }
 
   destroy(): void {
+    this.clipAnim?.cancel();
+    this.abortResize();
+    this.shrinkHit.removeEventListener("click", this.onShrinkClick);
+    this.resizeHit.removeEventListener("pointerdown", this.onResizePointerDown);
     window.removeEventListener("message", this.onMessage);
     window.removeEventListener("resize", this.clamp);
     document.getElementById(HOST_ID)?.remove();
@@ -186,6 +455,7 @@ export class PanelHost {
         const queued = [...this.pending.values()];
         this.pending.clear();
         for (const message of queued) this.send(message);
+        this.send({ channel: PANEL_CHANNEL, type: "shrunk", shrunk: this.state.shrunk });
         break;
       }
       case "close":
@@ -198,6 +468,9 @@ export class PanelHost {
         break;
       case "persist":
         this.persist();
+        break;
+      case "setShrunk":
+        this.setShrunk(data.shrunk);
         break;
     }
   };

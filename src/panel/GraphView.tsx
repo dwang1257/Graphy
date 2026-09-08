@@ -117,7 +117,7 @@ export function GraphView({
   const fit = (): void => {
     const box = stage.current?.getBoundingClientRect();
     const graph = viewport.current?.firstElementChild as SVGSVGElement | null;
-    if (!box || !graph) return;
+    if (!box || !graph || box.width <= 24 || box.height <= 24) return;
     const width = graph.width.baseVal.value || graph.getBBox().width;
     const height = graph.height.baseVal.value || graph.getBBox().height;
     if (!width || !height) return;
@@ -130,6 +130,14 @@ export function GraphView({
   };
 
   useLayoutEffect(fit, [fitKey, svg]);
+
+  useEffect(() => {
+    const el = stage.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => fit());
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [svg]);
 
   useLayoutEffect(() => {
     const root = viewport.current?.querySelector("svg");

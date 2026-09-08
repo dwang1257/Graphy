@@ -1,10 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import { resolveStructureKind, structureKindOptions } from "./structureKind.js";
+import {
+  resolveStructureKind,
+  structureKindLabel,
+  structureKindOptions,
+} from "./structureKind.js";
 
 describe("resolveStructureKind", () => {
-  it("defaults a missing override to binary tree", () => {
-    expect(resolveStructureKind(undefined)).toBe("binary-tree");
+  it("leaves a missing override unselected", () => {
+    expect(resolveStructureKind(undefined)).toBeUndefined();
   });
 
   it("keeps a saved structure override", () => {
@@ -13,12 +17,22 @@ describe("resolveStructureKind", () => {
   });
 });
 
+describe("structureKindLabel", () => {
+  it("asks the user to choose before anything is picked", () => {
+    expect(structureKindLabel(undefined)).toBe("Choose an Option:");
+  });
+
+  it("shows the chosen structure after a pick", () => {
+    expect(structureKindLabel("binary-tree")).toBe("Binary tree");
+  });
+});
+
 describe("structureKindOptions", () => {
   it("lists only concrete structures, starting with binary tree", () => {
     expect(structureKindOptions()).toEqual([
       ["binary-tree", "Binary tree"],
       ["linked-list", "Linked list"],
-      ["matrix", "Grid"],
+      ["matrix", "Graph"],
     ]);
   });
 });

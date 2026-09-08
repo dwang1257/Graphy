@@ -5,12 +5,26 @@ import {
   DEFAULT_LAYOUT,
   DARK,
   LIGHT,
+  type EdgeStyle,
   type NodeShape,
   type Palette,
   type Settings,
   type ThemeMode,
 } from "../settings/schema.js";
-import { CloseIcon } from "./icons.js";
+import {
+  CircleIcon,
+  CloseIcon,
+  DiamondIcon,
+  DoubleCircleIcon,
+  EdgeBoldIcon,
+  EdgeDashedIcon,
+  EdgeDottedIcon,
+  EdgeSolidIcon,
+  EllipseIcon,
+  HexagonIcon,
+  SquareIcon,
+} from "./icons.js";
+import { styleEdgeStyles, styleNodeShapes } from "./styleOptions.js";
 
 interface Props {
   settings: Settings;
@@ -19,23 +33,31 @@ interface Props {
   onClose: () => void;
 }
 
-const SHAPES: Array<{ value: NodeShape; label: string; icon: string }> = [
-  { value: "circle", label: "Circle", icon: "○" },
-  { value: "box", label: "Box", icon: "□" },
-  { value: "diamond", label: "Diamond", icon: "◇" },
-];
+const SHAPE_ICONS: Record<Exclude<NodeShape, "plaintext" | "box">, () => JSX.Element> = {
+  circle: CircleIcon,
+  ellipse: EllipseIcon,
+  square: SquareIcon,
+  diamond: DiamondIcon,
+  hexagon: HexagonIcon,
+  doublecircle: DoubleCircleIcon,
+};
+
+const EDGE_ICONS: Record<EdgeStyle, () => JSX.Element> = {
+  solid: EdgeSolidIcon,
+  dashed: EdgeDashedIcon,
+  dotted: EdgeDottedIcon,
+  bold: EdgeBoldIcon,
+};
 
 const MODES: Array<{ value: ThemeMode; label: string }> = [
   { value: "light", label: "Light" },
   { value: "dark", label: "Dark" },
 ];
 
-const NODE_SIZE_MIN = 0.85;
-const NODE_SIZE_MAX = 1.2;
-
 export function SettingsDrawer({ settings, activePalette, onChange, onClose }: Props): JSX.Element {
   const layout = settings.layout;
   const palette = settings[activePalette];
+  const defaults = activePalette === "light" ? LIGHT : DARK;
 
   const setLayout = <K extends keyof typeof layout>(key: K, value: (typeof layout)[K]): void => {
     onChange({ ...settings, layout: { ...layout, [key]: value } });
@@ -43,25 +65,6 @@ export function SettingsDrawer({ settings, activePalette, onChange, onClose }: P
 
   const setPalette = (patch: Partial<Palette>): void => {
     onChange({ ...settings, [activePalette]: { ...palette, ...patch } });
-  };
-
-  const hex =
-    normalizeCssHex(palette.background) ??
-    (activePalette === "light" ? LIGHT.background : DARK.background);
-  const [hexDraft, setHexDraft] = useState(hex);
-  const [hexInvalid, setHexInvalid] = useState(false);
-
-  useEffect(() => {
-    setHexDraft(hex);
-    setHexInvalid(false);
-  }, [hex]);
-
-  const setBackground = (value: string): void => {
-    const next = normalizeCssHex(value);
-    if (!next) return;
-    setHexDraft(next);
-    setHexInvalid(false);
-    if (next !== palette.background) setPalette({ background: next });
   };
 
   const onImageUpload = (
@@ -77,19 +80,20 @@ export function SettingsDrawer({ settings, activePalette, onChange, onClose }: P
   };
 
   const resetStyle = (): void => {
-    const defaults = activePalette === "light" ? LIGHT : DARK;
     onChange({
       ...settings,
       layout: {
         ...layout,
         nodeShape: DEFAULT_LAYOUT.nodeShape,
-        nodeSize: DEFAULT_LAYOUT.nodeSize,
+        edgeStyle: DEFAULT_LAYOUT.edgeStyle,
+        showArrowheads: DEFAULT_LAYOUT.showArrowheads,
       },
       [activePalette]: {
         ...palette,
         background: defaults.background,
         backgroundImage: defaults.backgroundImage,
         nodeBackgroundImage: defaults.nodeBackgroundImage,
+        edgeColor: defaults.edgeColor,
       },
     });
   };
@@ -97,7 +101,6 @@ export function SettingsDrawer({ settings, activePalette, onChange, onClose }: P
   return (
     <aside class="style-rail" role="dialog" aria-label="Style your graph">
       <header class="style-rail-header">
-        <h2 class="style-rail-title">Style your graph</h2>
         <button class="icon-btn" type="button" aria-label="Close style panel" onClick={onClose}>
           <CloseIcon />
         </button>
@@ -105,8 +108,8 @@ export function SettingsDrawer({ settings, activePalette, onChange, onClose }: P
 
       <div class="style-rail-body">
         <section class="style-section">
-          <h3 class="style-section-title">Appearance</h3>
-          <div class="shape-group" role="group" aria-label="Color mode">
+          <h3 class="style-section-title">APPEARANCE</h3>
+          <div class="shape-group cols-2" role="group" aria-label="Color mode">
             {MODES.map(({ value, label }) => (
               <button
                 key={value}
@@ -122,18 +125,74 @@ export function SettingsDrawer({ settings, activePalette, onChange, onClose }: P
         </section>
 
         <section class="style-section">
-          <h3 class="style-section-title">Node shape</h3>
+          <h3 class="style-section-title">NODE SHAPE</h3>
           <div class="shape-group" role="group" aria-label="Node shape">
-            {SHAPES.map(({ value, label, icon }) => (
+            {styleNodeShapes().map(([value, label]) => {
+              const Icon = SHAPE_ICONS[value];
+              return (
+                <button
+                  key={value}
+                  type="button"
+                  class="shape-btn"
+                  aria-label={label}
+                  aria-pressed={layout.nodeShape === value}
+                  onClick={() => setLayout("nodeShape", value)}
+                >
+                  <span class="shape-icon">
+                    <Icon />
+                  </span>
+                  <span class="shape-label">{label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+
+        <section class="style-section">
+          <h3 class="style-section-title">EDGES</h3>
+          <div class="shape-group cols-4" role="group" aria-label="Edge style">
+            {styleEdgeStyles().map(([value, label]) => {
+              const Icon = EDGE_ICONS[value];
+              return (
+                <button
+                  key={value}
+                  type="button"
+                  class="shape-btn"
+                  aria-label={label}
+                  aria-pressed={layout.edgeStyle === value}
+                  onClick={() => setLayout("edgeStyle", value)}
+                >
+                  <span class="shape-icon">
+                    <Icon />
+                  </span>
+                  <span class="shape-label">{label}</span>
+                </button>
+              );
+            })}
+          </div>
+          <HexColorField
+            id="edge-hex"
+            label="Color"
+            ariaLabel="Edge color"
+            value={palette.edgeColor}
+            fallback={defaults.edgeColor}
+            onChange={(edgeColor) => setPalette({ edgeColor })}
+          />
+          <label class="color-field-label">Arrows</label>
+          <div class="shape-group cols-2" role="group" aria-label="Arrowheads">
+            {(
+              [
+                [true, "On"],
+                [false, "Off"],
+              ] as const
+            ).map(([value, label]) => (
               <button
-                key={value}
+                key={label}
                 type="button"
                 class="shape-btn"
-                aria-label={label}
-                aria-pressed={layout.nodeShape === value}
-                onClick={() => setLayout("nodeShape", value)}
+                aria-pressed={layout.showArrowheads === value}
+                onClick={() => setLayout("showArrowheads", value)}
               >
-                <span class="shape-icon" aria-hidden="true">{icon}</span>
                 <span class="shape-label">{label}</span>
               </button>
             ))}
@@ -141,77 +200,15 @@ export function SettingsDrawer({ settings, activePalette, onChange, onClose }: P
         </section>
 
         <section class="style-section">
-          <h3 class="style-section-title">Node size</h3>
-          <input
-            type="range"
-            class="size-slider"
-            min={NODE_SIZE_MIN}
-            max={NODE_SIZE_MAX}
-            step="0.05"
-            value={layout.nodeSize}
-            aria-valuemin={NODE_SIZE_MIN}
-            aria-valuemax={NODE_SIZE_MAX}
-            aria-valuenow={layout.nodeSize}
-            onInput={(e) => setLayout("nodeSize", Number(e.currentTarget.value))}
+          <h3 class="style-section-title">BACKGROUND</h3>
+          <HexColorField
+            id="bg-hex"
+            label="Color"
+            ariaLabel="Background color"
+            value={palette.background}
+            fallback={defaults.background}
+            onChange={(background) => setPalette({ background })}
           />
-          <div class="size-labels">
-            <span>Small</span>
-            <span>Medium</span>
-            <span>Large</span>
-          </div>
-        </section>
-
-        <section class="style-section">
-          <h3 class="style-section-title">Background:</h3>
-          <label class="color-field-label" for="bg-hex">Color</label>
-          <div class="color-field">
-            <label
-              class="color-swatch"
-              style={{ "--swatch": hex } as JSX.CSSProperties}
-              title="Pick a custom color"
-            >
-              <span class="color-swatch-fill" />
-              <input
-                type="color"
-                class="color-swatch-native"
-                value={hex}
-                aria-label="Background color"
-                onInput={(e) => setBackground(e.currentTarget.value)}
-              />
-            </label>
-            <input
-              id="bg-hex"
-              type="text"
-              class="color-hex"
-              value={hexDraft}
-              spellcheck={false}
-              autocomplete="off"
-              autocapitalize="off"
-              maxlength={7}
-              aria-label="Background hex color"
-              aria-invalid={hexInvalid}
-              placeholder="#1a1a1a"
-              onInput={(e) => {
-                const raw = e.currentTarget.value;
-                setHexDraft(raw);
-                const next = normalizeCssHex(raw);
-                if (next) {
-                  setHexInvalid(false);
-                  if (next !== palette.background) setPalette({ background: next });
-                }
-              }}
-              onBlur={() => {
-                const next = normalizeCssHex(hexDraft);
-                if (next) {
-                  setHexDraft(next);
-                  setHexInvalid(false);
-                  if (next !== palette.background) setPalette({ background: next });
-                  return;
-                }
-                setHexInvalid(true);
-              }}
-            />
-          </div>
           <div class="color-presets" role="group" aria-label="Background presets">
             {CANVAS_PRESETS.map(({ hex: preset, label }) => (
               <button
@@ -220,9 +217,9 @@ export function SettingsDrawer({ settings, activePalette, onChange, onClose }: P
                 class="color-preset"
                 style={{ "--swatch": preset } as JSX.CSSProperties}
                 aria-label={label}
-                aria-pressed={hex === preset}
+                aria-pressed={(normalizeCssHex(palette.background) ?? defaults.background) === preset}
                 title={label}
-                onClick={() => setBackground(preset)}
+                onClick={() => setPalette({ background: preset })}
               />
             ))}
           </div>
@@ -245,7 +242,7 @@ export function SettingsDrawer({ settings, activePalette, onChange, onClose }: P
         </section>
 
         <section class="style-section">
-          <h3 class="style-section-title">Node background</h3>
+          <h3 class="style-section-title">NODE BACKGROUND</h3>
           <div class="node-bg-image-row">
             <label class="btn btn-primary node-bg-upload-btn">
               Upload image
@@ -275,5 +272,79 @@ export function SettingsDrawer({ settings, activePalette, onChange, onClose }: P
         </button>
       </footer>
     </aside>
+  );
+}
+
+function HexColorField(props: {
+  id: string;
+  label: string;
+  ariaLabel: string;
+  value: string;
+  fallback: string;
+  onChange: (hex: string) => void;
+}): JSX.Element {
+  const hex = normalizeCssHex(props.value) ?? props.fallback;
+  const [hexDraft, setHexDraft] = useState(hex);
+  const [hexInvalid, setHexInvalid] = useState(false);
+
+  useEffect(() => {
+    setHexDraft(hex);
+    setHexInvalid(false);
+  }, [hex]);
+
+  const commit = (raw: string, persistInvalid: boolean): void => {
+    const next = normalizeCssHex(raw);
+    if (next) {
+      setHexDraft(next);
+      setHexInvalid(false);
+      if (next !== props.value) props.onChange(next);
+      return;
+    }
+    if (persistInvalid) setHexInvalid(true);
+  };
+
+  return (
+    <>
+      <label class="color-field-label" for={props.id}>{props.label}</label>
+      <div class="color-field">
+        <label
+          class="color-swatch"
+          style={{ "--swatch": hex } as JSX.CSSProperties}
+          title="Pick a custom color"
+        >
+          <span class="color-swatch-fill" />
+          <input
+            type="color"
+            class="color-swatch-native"
+            value={hex}
+            aria-label={props.ariaLabel}
+            onInput={(e) => commit(e.currentTarget.value, false)}
+          />
+        </label>
+        <input
+          id={props.id}
+          type="text"
+          class="color-hex"
+          value={hexDraft}
+          spellcheck={false}
+          autocomplete="off"
+          autocapitalize="off"
+          maxlength={7}
+          aria-label={`${props.ariaLabel} hex`}
+          aria-invalid={hexInvalid}
+          placeholder="#1a1a1a"
+          onInput={(e) => {
+            const raw = e.currentTarget.value;
+            setHexDraft(raw);
+            const next = normalizeCssHex(raw);
+            if (next) {
+              setHexInvalid(false);
+              if (next !== props.value) props.onChange(next);
+            }
+          }}
+          onBlur={() => commit(hexDraft, true)}
+        />
+      </div>
+    </>
   );
 }

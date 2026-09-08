@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 
 import { createTestcaseDomAdapter } from "./testcaseDom.js";
 
@@ -349,6 +349,50 @@ it("rejects settling when the capture is no longer current", async () => {
   await expect(adapter.waitUntilSettled(adapter.tabs()[0]!, () => false)).rejects.toThrow(
     "superseded",
   );
+});
+
+it("settles stable parameters without JSON.stringify fingerprints", async () => {
+  const stringify = vi.spyOn(JSON, "stringify");
+  const tab = fakeElement({ attributes: { "aria-selected": "true" } });
+  const adapter = createTestcaseDomAdapter(
+    fakeDocument({ tabs: [tab], wrappers: [fakeElement({ editorText: "[1]" })] }),
+    fakeWindow(),
+  );
+
+  try {
+    await expect(adapter.waitUntilSettled(adapter.tabs()[0]!, () => true)).resolves.toEqual([
+      "[1]",
+    ]);
+    expect(stringify).not.toHaveBeenCalled();
+  } finally {
+    stringify.mockRestore();
+  }
+});
+
+it("does not re-query the official tab list while waiting for settle", async () => {
+  const tab = fakeElement({ attributes: { "aria-selected": "true" } });
+  const wrapper = fakeElement({ editorText: "[1]" });
+  let tabQueries = 0;
+  const doc = {
+    querySelectorAll: (selector: string) => {
+      if (selector === '[data-e2e-locator="console-testcase-tag"]') {
+        tabQueries += 1;
+        return [tab];
+      }
+      if (selector === '[data-e2e-locator="console-testcase-input"]') {
+        return [wrapper];
+      }
+      return [];
+    },
+  } as unknown as Document;
+
+  const adapter = createTestcaseDomAdapter(doc, fakeWindow());
+  const target = adapter.tabs()[0]!;
+  adapter.select(target);
+  const queriesBeforeSettle = tabQueries;
+
+  await expect(adapter.waitUntilSettled(target, () => true)).resolves.toEqual(["[1]"]);
+  expect(tabQueries).toBe(queriesBeforeSettle);
 });
 
 it("reads contenteditable testcase input wrappers", () => {

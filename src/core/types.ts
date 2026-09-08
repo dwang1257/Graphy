@@ -54,7 +54,7 @@ export interface GraphModel {
 export const KIND_LABELS: Record<StructureKind, string> = {
   "binary-tree": "Binary tree",
   "linked-list": "Linked list",
-  matrix: "Grid",
+  matrix: "Graph",
 };
 
 /** Rendered element count - the size guard must see matrix cells too. */

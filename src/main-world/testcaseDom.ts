@@ -133,6 +133,24 @@ function readOfficialParameters(doc: Document): string[] | null {
   return values.every((value): value is string => value !== null) ? values : null;
 }
 
+function sameParameters(left: string[], right: string[]): boolean {
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) return false;
+  }
+  return true;
+}
+
+function isTabSelected(tab: CaseTab, lastClicked: HTMLElement | null): boolean {
+  if (lastClicked) {
+    if (lastClicked === tab.element) return true;
+    if (typeof lastClicked.isConnected !== "boolean" || lastClicked.isConnected) {
+      return false;
+    }
+  }
+  return isOfficiallySelected(tab.element) || isVisuallySelected(tab.element);
+}
+
 export function createTestcaseDomAdapter(
   doc: Document,
   win: Window,
@@ -170,8 +188,9 @@ export function createTestcaseDomAdapter(
     isCurrent: () => boolean,
   ): Promise<string[]> =>
     new Promise((resolve, reject) => {
-      let previousFingerprint: string | null = null;
+      let previous: string[] | null = null;
       let finished = false;
+      let framePending = false;
 
       const finish = (action: () => void): void => {
         if (finished) return;
@@ -191,23 +210,30 @@ export function createTestcaseDomAdapter(
           return;
         }
 
-        const parameters =
-          selectedIndex(tabs()) === tab.index ? readMountedParameters() : null;
+        const parameters = isTabSelected(tab, lastClicked) ? readMountedParameters() : null;
         if (parameters !== null) {
-          const fingerprint = JSON.stringify(parameters);
-          if (fingerprint === previousFingerprint) {
+          if (previous !== null && sameParameters(previous, parameters)) {
             finish(() => resolve(parameters));
             return;
           }
-          previousFingerprint = fingerprint;
+          previous = parameters;
         } else {
-          previousFingerprint = null;
+          previous = null;
         }
 
-        win.requestAnimationFrame(check);
+        scheduleCheck();
       };
 
-      win.requestAnimationFrame(check);
+      const scheduleCheck = (): void => {
+        if (finished || framePending) return;
+        framePending = true;
+        win.requestAnimationFrame(() => {
+          framePending = false;
+          check();
+        });
+      };
+
+      scheduleCheck();
     });
 
   return {

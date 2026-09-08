@@ -24,13 +24,15 @@ export interface Snapshot {
 export type PageMessage = { channel: typeof PAGE_CHANNEL; type: "snapshot"; payload: Snapshot };
 
 export type ToPanel =
-  | { channel: typeof PANEL_CHANNEL; type: "snapshot"; payload: Snapshot };
+  | { channel: typeof PANEL_CHANNEL; type: "snapshot"; payload: Snapshot }
+  | { channel: typeof PANEL_CHANNEL; type: "shrunk"; shrunk: boolean };
 
 export type FromPanel =
   | { channel: typeof PANEL_CHANNEL; type: "ready" }
   | { channel: typeof PANEL_CHANNEL; type: "close" }
   | { channel: typeof PANEL_CHANNEL; type: "move"; dx: number; dy: number }
-  | { channel: typeof PANEL_CHANNEL; type: "persist" };
+  | { channel: typeof PANEL_CHANNEL; type: "persist" }
+  | { channel: typeof PANEL_CHANNEL; type: "setShrunk"; shrunk: boolean };
 
 function onChannel(data: unknown, channel: string): data is { channel: string; type: unknown } {
   return typeof data === "object" && data !== null && (data as { channel?: unknown }).channel === channel;
@@ -74,6 +76,8 @@ export function isPanelMessage(data: unknown): data is FromPanel {
     case "close":
     case "persist":
       return true;
+    case "setShrunk":
+      return typeof m.shrunk === "boolean";
     case "move":
       return (
         typeof m.dx === "number" &&
@@ -88,6 +92,8 @@ export function isPanelMessage(data: unknown): data is FromPanel {
 
 export function isToPanel(data: unknown): data is ToPanel {
   if (!onChannel(data, PANEL_CHANNEL)) return false;
-  const m = data as { type?: unknown; payload?: unknown };
-  return m.type === "snapshot" && isSnapshot(m.payload);
+  const m = data as Record<string, unknown>;
+  if (m.type === "snapshot") return isSnapshot(m.payload);
+  if (m.type === "shrunk") return typeof m.shrunk === "boolean";
+  return false;
 }

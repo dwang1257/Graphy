@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "preact/hooks";
 import type { JSX } from "preact";
 import type { TraceFrame } from "../core/trace.js";
+import { PauseIcon, PlayIcon, StepBackIcon, StepForwardIcon } from "./icons.js";
 
 interface Props {
   frames: TraceFrame[];
@@ -38,7 +39,6 @@ export function TracePlayback({
 
   if (frames.length === 0) return null;
 
-  const frame = frames[index] ?? frames[0];
   const at = Math.min(index, frames.length - 1);
 
   return (
@@ -52,7 +52,7 @@ export function TracePlayback({
           onPlayingChange(!playing);
         }}
       >
-        {playing ? "❚❚" : "▶"}
+        {playing ? <PauseIcon /> : <PlayIcon />}
       </button>
       <button
         type="button"
@@ -64,7 +64,7 @@ export function TracePlayback({
           onIndexChange(Math.max(0, at - 1));
         }}
       >
-        ‹
+        <StepBackIcon />
       </button>
       <button
         type="button"
@@ -76,7 +76,7 @@ export function TracePlayback({
           onIndexChange(Math.min(frames.length - 1, at + 1));
         }}
       >
-        ›
+        <StepForwardIcon />
       </button>
       <input
         class="trace-scrub"
@@ -90,9 +90,8 @@ export function TracePlayback({
           onIndexChange(Number((event.target as HTMLInputElement).value));
         }}
       />
-      <span class="trace-meta" title={frame?.label}>
+      <span class="trace-meta">
         {at + 1}/{frames.length}
-        {frame ? ` · ${frame.label}` : ""}
       </span>
     </div>
   );

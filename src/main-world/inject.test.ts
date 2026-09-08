@@ -61,6 +61,42 @@ function inputWrapper(text: string): HTMLElement {
   } as unknown as HTMLElement;
 }
 
+class FakeXhr {
+  responseText = "";
+
+  private readonly listeners: Array<{
+    type: string;
+    fn: EventListener;
+    once: boolean;
+  }> = [];
+
+  open(_method?: string, _url?: string | URL): void {}
+
+  send(_body?: Document | XMLHttpRequestBodyInit | null): void {
+    this.dispatchLoad();
+  }
+
+  addEventListener(
+    type: string,
+    listener: EventListenerOrEventListenerObject,
+    options?: boolean | AddEventListenerOptions,
+  ): void {
+    if (typeof listener !== "function") return;
+    const once = options === true || (typeof options === "object" && options.once === true);
+    this.listeners.push({ type, fn: listener, once });
+  }
+
+  dispatchLoad(): void {
+    for (const listener of this.listeners.filter((entry) => entry.type === "load")) {
+      listener.fn.call(this, new Event("load"));
+      if (listener.once) {
+        const index = this.listeners.indexOf(listener);
+        if (index >= 0) this.listeners.splice(index, 1);
+      }
+    }
+  }
+}
+
 function installTabbedPage(
   cases: string[][],
   selected: number,
@@ -188,11 +224,6 @@ function installTabbedPage(
       return nextRafId++;
     },
   };
-
-  class FakeXhr {
-    open(): void {}
-    send(): void {}
-  }
 
   vi.stubGlobal("document", fakeDocument);
   vi.stubGlobal("window", fakeWindow);
@@ -583,6 +614,17 @@ test("clears the last complete cache when the problem slug changes", async () =>
   expect(page.snapshots.at(-1)?.payload.cases).toEqual(["[9]"]);
 });
 
+test("does not publish when the problem slug changes during an async walk", async () => {
+  const page = installTabbedPage([["[1]"], ["[2]"]], 0);
+  await import("./inject.js");
+  page.whenSelected(1, () => {
+    page.setPathname("/problems/other/");
+  });
+  await finishRun(page);
+
+  expect(page.snapshots).toEqual([]);
+});
+
 test("publishes empty cases and captureError when the first traversal fails", async () => {
   const page = installTabbedPage([["[1]"], ["[2]"]], 0);
   page.pauseSelectionOf(0);
@@ -679,4 +721,30 @@ test("appends a Python tracer on Run but snapshots the editor code", async () =>
   expect(sent.typed_code).toContain("GRAPHY_TRACE_V1");
   expect(page.snapshots.at(-1)?.payload.code).toBe(typed);
   expect(page.snapshots.at(-1)?.payload.code).not.toContain("GRAPHY_TRACE_V1");
+});
+
+test("XHR load skips parsing unrelated URLs but still walks check results", async () => {
+  const page = installTabbedPage([["[1]"], ["[2]"]], 0);
+  await import("./inject.js");
+
+  const parseSpy = vi.spyOn(JSON, "parse");
+  const unrelated = new FakeXhr();
+  unrelated.open("GET", "https://leetcode.com/graphql");
+  unrelated.responseText = "not-json{{{";
+  expect(() => unrelated.send()).not.toThrow();
+  expect(parseSpy).not.toHaveBeenCalledWith("not-json{{{");
+  parseSpy.mockRestore();
+
+  const run = new FakeXhr();
+  run.open("POST", "https://leetcode.com/problems/example/interpret_solution/");
+  run.responseText = JSON.stringify({ interpret_id: INTERPRET_ID });
+  run.send(JSON.stringify({ data_input: "[1]", typed_code: "class Solution {};", lang: "cpp" }));
+
+  const check = new FakeXhr();
+  check.open("GET", `https://leetcode.com/submissions/detail/${INTERPRET_ID}/check/`);
+  check.responseText = JSON.stringify({ state: "SUCCESS" });
+  check.send();
+  await page.flushCapture();
+
+  expect(page.snapshots.at(-1)?.payload.cases).toEqual(["[1]", "[2]"]);
 });

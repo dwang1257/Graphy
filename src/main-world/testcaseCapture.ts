@@ -43,7 +43,7 @@ export async function captureCasesFromTabs(
 
     return { cases };
   } finally {
-    await restoreSelection(adapter, tabs, originalIndex);
+    await restoreSelection(adapter, tabs, originalIndex, stillCurrent);
   }
 }
 
@@ -51,6 +51,7 @@ async function restoreSelection(
   adapter: TestcaseDomAdapter,
   tabs: CaseTab[],
   originalIndex: number,
+  isCurrent: () => boolean,
 ): Promise<void> {
   if (originalIndex < 0) return;
 
@@ -60,7 +61,7 @@ async function restoreSelection(
 
   try {
     adapter.select(originalTab);
-    await adapter.waitUntilSettled(originalTab, () => true);
+    await adapter.waitUntilSettled(originalTab, isCurrent);
   } catch {
     /* Restoration must not replace the capture result. */
   }

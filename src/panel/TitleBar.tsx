@@ -1,17 +1,19 @@
 import { useState } from "preact/hooks";
 import type { JSX } from "preact";
-import { CloseIcon, FitIcon } from "./icons.js";
+import { CloseIcon, ExpandIcon, FitIcon, ShrinkIcon } from "./icons.js";
 import { KIND_LABELS, type StructureKind } from "../core/types.js";
-import { structureKindOptions } from "./structureKind.js";
+import { structureKindLabel, structureKindOptions } from "./structureKind.js";
 import { pointerDragHandler } from "./usePointerDrag.js";
 
 interface Props {
   showSettings: boolean;
-  selectedKind: StructureKind;
+  selectedKind: StructureKind | undefined;
   onKindChange: (kind: StructureKind) => void;
   onFit: () => void;
   onToggleSettings: () => void;
   onClose: () => void;
+  shrunk: boolean;
+  onToggleShrunk: () => void;
   onDrag: (dx: number, dy: number) => void;
   onDragEnd: () => void;
 }
@@ -33,13 +35,13 @@ export function TitleBar(props: Props): JSX.Element {
     <div class={`titlebar${dragging ? " dragging" : ""}`} onPointerDown={onPointerDown}>
       <label class="kind-field">
         <span class="kind-value" aria-hidden="true">
-          {KIND_LABELS[props.selectedKind]}
+          {structureKindLabel(props.selectedKind)}
         </span>
         <select
           class="kind-select"
-          value={props.selectedKind}
+          value={props.selectedKind ?? ""}
           title="Structure to draw"
-          aria-label="Structure"
+          aria-label={structureKindLabel(props.selectedKind)}
           onChange={(e) => {
             const value = e.currentTarget.value;
             if (value in KIND_LABELS) props.onKindChange(value as StructureKind);
@@ -67,6 +69,15 @@ export function TitleBar(props: Props): JSX.Element {
         onClick={props.onToggleSettings}
       >
         Style
+      </button>
+      <button
+        class="icon-btn"
+        title={props.shrunk ? "Expand" : "Shrink"}
+        aria-label={props.shrunk ? "Expand panel" : "Shrink panel"}
+        aria-pressed={props.shrunk}
+        onClick={props.onToggleShrunk}
+      >
+        {props.shrunk ? <ExpandIcon /> : <ShrinkIcon />}
       </button>
       <button class="icon-btn" title="Close" aria-label="Close panel" onClick={props.onClose}>
         <CloseIcon />

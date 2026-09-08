@@ -6,12 +6,13 @@ import { buildPanes } from "../core/build.js";
 import { emitDot } from "../core/dot/emit.js";
 import { parseSignature } from "../core/signature.js";
 import { framesFromStdout } from "../core/trace.js";
-import { isEmptyStage } from "./emptyStage.js";
+import { EMPTY_STAGE_COPY, isEmptyStage } from "./emptyStage.js";
 import { visibleNodeCount, type StructureKind } from "../core/types.js";
 import { resolveStructureKind } from "./structureKind.js";
 import { DEFAULT_SETTINGS, type Settings } from "../settings/schema.js";
 import {
   loadOverrides,
+  loadPanelState,
   loadSettings,
   onSettingsChanged,
   saveOverrides,
@@ -20,6 +21,7 @@ import {
 } from "../settings/storage.js";
 import { PANEL_CHANNEL, isToPanel, type FromPanel, type Snapshot } from "../shared/protocol.js";
 
+import { SETTINGS_DOT_DEBOUNCE_MS, dotStyleKey } from "./dotStyle.js";
 import { GraphView } from "./GraphView.js";
 import { SettingsDrawer } from "./SettingsDrawer.js";
 import { TitleBar } from "./TitleBar.js";
@@ -50,6 +52,7 @@ export function App(): JSX.Element {
   const [overrides, setOverrides] = useState<Record<string, Override>>({});
   const [traceIndex, setTraceIndex] = useState(0);
   const [tracePlaying, setTracePlaying] = useState(false);
+  const [shrunk, setShrunk] = useState(false);
 
   const liveUpdate = useRef(true);
   liveUpdate.current = settings.liveUpdate;
@@ -57,11 +60,15 @@ export function App(): JSX.Element {
   const lastSaved = useRef("");
   const saveTimer = useRef<number | undefined>(undefined);
   const lastSlug = useRef("");
+  const sawHostShrunk = useRef(false);
 
   useEffect(() => {
     preload();
     void loadSettings().then(setSettings);
     void loadOverrides().then(setOverrides);
+    void loadPanelState().then((state) => {
+      if (!sawHostShrunk.current) setShrunk(state.shrunk);
+    });
     const stop = onSettingsChanged((incoming) => {
       // Skip the echo of this panel's own debounced write.
       if (JSON.stringify(incoming) === lastSaved.current) return;
@@ -72,6 +79,11 @@ export function App(): JSX.Element {
       if (event.source !== parent || !isAllowedParentOrigin(event.origin)) return;
       const data: unknown = event.data;
       if (!isToPanel(data)) return;
+      if (data.type === "shrunk") {
+        sawHostShrunk.current = true;
+        setShrunk(data.shrunk);
+        return;
+      }
       // With live updates off, only a Run refreshes the view.
       if (data.payload.source === "editor" && !liveUpdate.current && hasRendered.current) return;
       setSnapshot((prev) => {
@@ -91,6 +103,10 @@ export function App(): JSX.Element {
       stop();
     };
   }, []);
+
+  useEffect(() => {
+    if (shrunk) setShowSettings(false);
+  }, [shrunk]);
 
   const slug = snapshot?.slug ?? "";
   const cases = snapshot?.cases ?? [];
@@ -150,6 +166,21 @@ export function App(): JSX.Element {
     hasFailure: result.failures.length > 0,
   });
 
+  // CSS-only palette fields (stage bg / node photo) stay out of this key so
+  // they update via stage CSS and GraphView without emitDot / renderDot.
+  const styleKey = useMemo(
+    () => dotStyleKey(palette, settings.layout),
+    [palette, settings.layout],
+  );
+  const [debouncedStyleKey, setDebouncedStyleKey] = useState(styleKey);
+
+  useEffect(() => {
+    if (styleKey === debouncedStyleKey) return;
+    const timer = window.setTimeout(() => setDebouncedStyleKey(styleKey), SETTINGS_DOT_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [styleKey, debouncedStyleKey]);
+
+  // Structure/case/snapshot rebuild immediately; settings wait for the style key.
   const dot = useMemo(() => {
     if (!pane || tooLarge || emptyStage) return "";
     try {
@@ -157,7 +188,7 @@ export function App(): JSX.Element {
     } catch {
       return "";
     }
-  }, [pane, tooLarge, emptyStage, palette, settings.layout]);
+  }, [pane, tooLarge, emptyStage, debouncedStyleKey]);
 
   useEffect(() => {
     if (!dot) {
@@ -220,14 +251,28 @@ export function App(): JSX.Element {
   }, [palette.background, palette.backgroundImage]);
 
   return (
-    <div class={`panel${paletteName === "dark" ? " dark" : ""}`}>
+    <div
+      class={`panel${paletteName === "dark" ? " dark" : ""}${shrunk ? " is-shrunk" : ""}`}
+      style={{ "--stage-bg": palette.background } as JSX.CSSProperties}
+    >
       <TitleBar
         showSettings={showSettings}
         selectedKind={selectedKind}
         onKindChange={setKind}
         onFit={() => setFitCount((n) => n + 1)}
-        onToggleSettings={() => setShowSettings((v) => !v)}
+        onToggleSettings={() => {
+          if (shrunk) {
+            toHost({ channel: PANEL_CHANNEL, type: "setShrunk", shrunk: false });
+            setShowSettings(true);
+            return;
+          }
+          setShowSettings((v) => !v);
+        }}
         onClose={() => toHost({ channel: PANEL_CHANNEL, type: "close" })}
+        shrunk={shrunk}
+        onToggleShrunk={() => {
+          toHost({ channel: PANEL_CHANNEL, type: "setShrunk", shrunk: !shrunk });
+        }}
         onDrag={(dx, dy) => toHost({ channel: PANEL_CHANNEL, type: "move", dx, dy })}
         onDragEnd={() => toHost({ channel: PANEL_CHANNEL, type: "persist" })}
       />
@@ -337,7 +382,7 @@ function Placeholder(props: PlaceholderProps): JSX.Element {
   if (props.emptyStage || !props.snapshot || !props.caseInput.trim()) {
     return (
       <div class="placeholder">
-        <p>No Nodes</p>
+        <p>{EMPTY_STAGE_COPY}</p>
       </div>
     );
   }
