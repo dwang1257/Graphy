@@ -19,7 +19,6 @@ export function modelFromTree(
 ): GraphModel {
   const model = emptyModel("binary-tree", title);
   if (nodes.length === 0) {
-    model.notes.push("Empty tree.");
     return model;
   }
 

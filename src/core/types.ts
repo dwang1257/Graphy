@@ -51,8 +51,6 @@ export interface GraphModel {
   matrix?: MatrixData;
   /** Binary-tree child pointers for topology morph playback. */
   links?: TreeLinks;
-  /** Non-fatal notes surfaced in the panel (e.g. "cycle at index 2"). */
-  notes: string[];
 }
 
 export const KIND_LABELS: Record<StructureKind, string> = {
@@ -61,18 +59,12 @@ export const KIND_LABELS: Record<StructureKind, string> = {
   matrix: "Graph",
 };
 
-/** Rendered element count - the size guard must see matrix cells too. */
-function modelSize(model: GraphModel): number {
+export function visibleNodeCount(model: GraphModel): number {
   if (model.matrix) {
     let cells = 0;
     for (const row of model.matrix.rows) cells += row.length;
     return cells;
   }
-  return model.nodes.length;
-}
-
-export function visibleNodeCount(model: GraphModel): number {
-  if (model.matrix) return modelSize(model);
   let count = 0;
   for (const node of model.nodes) {
     if (node.role !== "spine" && node.role !== "null") count += 1;
@@ -81,7 +73,7 @@ export function visibleNodeCount(model: GraphModel): number {
 }
 
 export function emptyModel(kind: StructureKind, title?: string): GraphModel {
-  return { kind, directed: true, title, nodes: [], edges: [], ranks: [], notes: [] };
+  return { kind, directed: true, title, nodes: [], edges: [], ranks: [] };
 }
 
 /** One visualizable input parameter, after recipe mapping. */

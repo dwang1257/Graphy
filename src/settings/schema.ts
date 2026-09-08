@@ -61,8 +61,6 @@ export interface Settings {
   autoOpen: boolean;
   /** Re-render while typing rather than only on Run. */
   liveUpdate: boolean;
-  /** Hard cap on visible nodes. Graphs larger than this show an error. */
-  nodeLimit: number;
 }
 
 export const LIGHT: Palette = {
@@ -122,7 +120,6 @@ export const DEFAULT_LAYOUT: Layout = {
   showArrowheads: true,
 };
 
-/** Graphs with more visible nodes than this are refused. */
 export const NODE_LIMIT = 100;
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -132,7 +129,6 @@ export const DEFAULT_SETTINGS: Settings = {
   layout: DEFAULT_LAYOUT,
   autoOpen: true,
   liveUpdate: true,
-  nodeLimit: NODE_LIMIT,
 };
 
 function num(v: unknown, fallback: number, min: number, max: number): number {
@@ -179,6 +175,5 @@ export function withDefaults(stored: unknown): Settings {
     light,
     dark,
     layout,
-    nodeLimit: NODE_LIMIT,
   };
 }

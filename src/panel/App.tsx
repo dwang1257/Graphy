@@ -40,10 +40,6 @@ function toHost(message: FromPanel): void {
   parent.postMessage(message, PARENT_ORIGIN);
 }
 
-function resolvedPalette(mode: Settings["mode"]): "light" | "dark" {
-  return mode === "light" ? "light" : "dark";
-}
-
 export function App(): JSX.Element {
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
@@ -170,8 +166,7 @@ export function App(): JSX.Element {
 
   // One graph per Case: first visualizable parameter of the selected case.
   const pane = result.panes[0];
-  const paletteName = resolvedPalette(settings.mode);
-  const palette = settings[paletteName];
+  const palette = settings[settings.mode];
 
   const scopedStdout = useMemo(
     () => stdoutForCase(snapshot, caseIndex),
@@ -190,7 +185,7 @@ export function App(): JSX.Element {
   }, [scopedStdout, pane?.id, caseIndex]);
 
   const paneSize = pane ? visibleNodeCount(pane.model) : 0;
-  const tooLarge = !!pane && isTooLarge(paneSize, settings.nodeLimit);
+  const tooLarge = !!pane && isTooLarge(paneSize);
 
   const emptyStage = isEmptyStage({
     caseInput,
@@ -342,7 +337,7 @@ export function App(): JSX.Element {
 
   return (
     <div
-      class={`panel${paletteName === "dark" ? " dark" : ""}${shrunk ? " is-shrunk" : ""}`}
+      class={`panel${settings.mode === "dark" ? " dark" : ""}${shrunk ? " is-shrunk" : ""}`}
       style={{ "--stage-bg": palette.background } as JSX.CSSProperties}
     >
       <TitleBar
@@ -371,7 +366,7 @@ export function App(): JSX.Element {
         {showSettings && (
           <SettingsDrawer
             settings={settings}
-            activePalette={paletteName}
+            activePalette={settings.mode}
             onChange={updateSettings}
             onClose={() => setShowSettings(false)}
           />
@@ -392,7 +387,6 @@ export function App(): JSX.Element {
           {!displaySvg && (
             <Placeholder
               snapshot={snapshot}
-              caseInput={caseInput}
               error={error}
               tooLarge={tooLarge}
               nodeCount={paneSize}
@@ -437,7 +431,6 @@ export function App(): JSX.Element {
 
 interface PlaceholderProps {
   snapshot: Snapshot | null;
-  caseInput: string;
   error: string | null;
   tooLarge: boolean;
   nodeCount: number;
@@ -468,7 +461,7 @@ function Placeholder(props: PlaceholderProps): JSX.Element {
       </div>
     );
   }
-  if (props.emptyStage || !props.snapshot || !props.caseInput.trim()) {
+  if (props.emptyStage) {
     return (
       <div class="placeholder">
         <p>{EMPTY_STAGE_COPY}</p>

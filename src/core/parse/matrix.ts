@@ -12,17 +12,9 @@ export function parseMatrix(value: LCValue, title?: string, showIndices = true):
   model.directed = false;
 
   const grid = normalize(value);
-  if (!grid) {
-    model.notes.push("Expected a 2D array.");
+  if (!grid || grid.length === 0) {
     return model;
   }
-  if (grid.length === 0) {
-    model.notes.push("Empty grid.");
-    return model;
-  }
-
-  const widths = new Set(grid.map((row) => row.length));
-  if (widths.size > 1) model.notes.push("Ragged rows - each row is drawn at its own width.");
 
   model.matrix = {
     showIndices,

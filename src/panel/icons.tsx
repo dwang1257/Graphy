@@ -92,14 +92,6 @@ export function EllipseIcon(): JSX.Element {
   );
 }
 
-export function BoxIcon(): JSX.Element {
-  return (
-    <svg {...base}>
-      <rect x="2.5" y="4.5" width="11" height="7" rx="0.5" />
-    </svg>
-  );
-}
-
 export function SquareIcon(): JSX.Element {
   return (
     <svg {...base}>

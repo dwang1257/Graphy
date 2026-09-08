@@ -3,7 +3,6 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  BoxIcon,
   CircleIcon,
   CloseIcon,
   DiamondIcon,
@@ -37,7 +36,6 @@ describe("icons", () => {
       StepForwardIcon(),
       CircleIcon(),
       EllipseIcon(),
-      BoxIcon(),
       SquareIcon(),
       DiamondIcon(),
       HexagonIcon(),

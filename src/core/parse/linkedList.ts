@@ -13,12 +13,7 @@ export function parseLinkedList(
   options: LinkedListOptions = {},
 ): GraphModel {
   const model = emptyModel("linked-list", title);
-  if (!isArray(value)) {
-    model.notes.push("Expected an array of node values.");
-    return model;
-  }
-  if (value.length === 0) {
-    model.notes.push("Empty list.");
+  if (!isArray(value) || value.length === 0) {
     return model;
   }
 
@@ -32,7 +27,6 @@ export function parseLinkedList(
 
   if (pos >= 0 && pos < value.length) {
     model.edges.push({ from: `n${last}`, to: `n${pos}`, role: "cycle" });
-    model.notes.push(`Cycle: tail links back to index ${pos}.`);
   } else if (options.showTerminal !== false) {
     model.nodes.push({ id: "tail", label: "∅", role: "terminal" });
     model.edges.push({ from: `n${last}`, to: "tail", role: "normal" });

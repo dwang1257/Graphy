@@ -14,14 +14,10 @@ import { isArray, scalarText, type LCValue } from "./value.js";
  */
 export function parseBinaryTree(value: LCValue, title?: string): GraphModel {
   if (!isArray(value)) {
-    const model = emptyModel("binary-tree", title);
-    model.notes.push("Expected a level-order array.");
-    return model;
+    return emptyModel("binary-tree", title);
   }
   if (value.length === 0 || value[0] === null) {
-    const model = emptyModel("binary-tree", title);
-    model.notes.push("Empty tree.");
-    return model;
+    return emptyModel("binary-tree", title);
   }
 
   const nodes: GNode[] = [];
