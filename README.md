@@ -64,8 +64,6 @@ Graphy reads the test case straight out of the editor and renders it in a floati
 
 It can also show how your code runs on that drawing. Hit **Run** and Graphy highlights the walk: the current node, the nodes you have already visited, and the frontier (queue or stack) as the algorithm moves. On Python tree problems this happens automatically — Graphy traces the solution without you changing the editor. In any language you can print `#graphy` lines (`current`, `visit`, `enqueue`, `dequeue`, `frontier`) and step through them with the play / pause / scrubber under the graph.
 
-Everything runs locally inside the extension. There is no account, no server, and no network request — the layout engine is a WebAssembly build of Graphviz bundled with the extension.
-
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ### Supported Structures
@@ -106,55 +104,9 @@ Graphy is a Chrome extension. Install it from the [Chrome Web Store](https://chr
 
 Click the Graphy icon in the toolbar to show or hide the panel.
 
-To work on Graphy itself, clone the repo and run it as an unpacked extension:
-
-```sh
-git clone https://github.com/dwang1257/Graphy.git
-cd Graphy
-npm install
-npm run dev
-```
-
-Then open `chrome://extensions`, turn on **Developer mode**, click **Load unpacked**, and select the `dist` folder. Vite rebuilds on save. Type errors are checked with `npm run typecheck`.
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-<!-- USAGE EXAMPLES -->
-## Usage
-
-1. Open a problem on [leetcode.com](https://leetcode.com) or [leetcode.cn](https://leetcode.cn).
-2. Choose **Binary tree**, **Linked list**, or **Graph** from the dropdown in the title bar.
-3. Click **Run**. Graphy draws the custom test case in the floating panel.
-4. Edit the test case. The drawing updates while you type.
-5. Drag the title bar to move the panel. Use **Fit to view** to recenter, or shrink the panel when you need the editor.
-
-After a Run, playback controls appear under the graph whenever Graphy has a trace. Play, step, or scrub to watch the algorithm walk the structure. Python tree solutions are traced automatically. In other languages, print lines such as `#graphy current n0` and `#graphy visit n0` from your solution — Graphy reads them from stdout and lights up the matching nodes.
-
-If there are several custom cases, switch between them with the **Case** pills under the graph.
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-## Customization
-
-Open the style panel with **Style** in the title bar. Changes apply immediately. Style settings persist in your Chrome profile and can sync with the signed-in profile; uploaded background and node images stay on this device.
-
-* **Appearance** - light or dark
-* **Node shape** - circle, ellipse, square, diamond, hexagon, or double circle
-* **Edges** - solid, dashed, dotted, or bold, plus a custom color and arrowheads on or off
-* **Background** - a solid color, a preset swatch, or an uploaded image
-* **Node background** - an uploaded image used as the node fill
-* **Reset style** - restore the default look for the active theme
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
 <!-- ROADMAP -->
 ## Roadmap
 
-- [x] Binary trees, linked lists, and graphs
-- [x] Live rendering while typing
-- [x] Color, shape, and image customization
-- [x] Chrome Web Store release
-- [x] Execution traces after Run
 - [ ] Support for more structures
 - [ ] Better visualization for code running on the graph
 - [ ] More customization options
