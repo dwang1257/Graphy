@@ -27,6 +27,7 @@ import { PANEL_CHANNEL, isToPanel, type FromPanel, type Snapshot } from "../shar
 import { SETTINGS_DOT_DEBOUNCE_MS, dotStyleKey } from "./dotStyle.js";
 import { GraphView } from "./GraphView.js";
 import { SettingsDrawer } from "./SettingsDrawer.js";
+import { stageBackgroundStyle } from "./stageBackground.js";
 import { TitleBar } from "./TitleBar.js";
 import { TracePlayback } from "./TracePlayback.js";
 import { preload, renderDot } from "./graphviz.js";
@@ -324,16 +325,10 @@ export function App(): JSX.Element {
     }, 300);
   }, []);
 
-  const stageStyle = useMemo((): JSX.CSSProperties => {
-    const style: JSX.CSSProperties = { backgroundColor: palette.background };
-    if (palette.backgroundImage) {
-      style.backgroundImage = `url(${palette.backgroundImage})`;
-      style.backgroundSize = "cover";
-      style.backgroundPosition = "center";
-      style.backgroundRepeat = "no-repeat";
-    }
-    return style;
-  }, [palette.background, palette.backgroundImage]);
+  const stageStyle = useMemo(
+    () => stageBackgroundStyle(palette.background, palette.backgroundImage),
+    [palette.background, palette.backgroundImage],
+  );
 
   return (
     <div
