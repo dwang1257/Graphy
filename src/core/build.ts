@@ -1,27 +1,30 @@
 import { detectRole, type Role } from "./detect.js";
 import { parseBinaryTree } from "./parse/binaryTree.js";
-import { parseLinkedList } from "./parse/linkedList.js";
+import { MAX_LINKED_LISTS, parseLinkedLists } from "./parse/linkedList.js";
 import { parseMatrix } from "./parse/matrix.js";
-import { isNestedArray, parseInput, type LCValue } from "./parse/value.js";
+import { isArray, isNestedArray, parseInput, type LCValue } from "./parse/value.js";
 import type { Signature } from "./signature.js";
 import type { Pane, ParseResult, StructureKind } from "./types.js";
 
 export interface BuildOptions {
-  /** User's manual structure override; wins over every detected signal. */
   override?: StructureKind;
   showTerminal?: boolean;
   showIndices?: boolean;
 }
 
-/**
- * Maps `data_input` values onto signature parameters, then renders visualizable
- * parameters into panes. Scalars like `n` and `pos` are not panes of their own
- * - they feed the linked-list builder.
- *
- * When the user picks a structure, LeetCode tree / list / matrix cases are
- * always: one array (the structure), then however many trailing args the
- * problem has. Only that first array is drawn.
- */
+interface Entry {
+  index: number;
+  value: LCValue;
+  param?: { name: string };
+  role: Role;
+}
+
+interface BuildContext {
+  cyclePos?: number;
+  showTerminal?: boolean;
+  showIndices?: boolean;
+}
+
 export function buildPanes(
   input: string,
   signature: Signature | null,
@@ -31,52 +34,88 @@ export function buildPanes(
   const result: ParseResult = { panes: [], failures: [] };
   if (values.length === 0) return result;
 
-  const entries = values.map((value, i) => {
+  const entries: Entry[] = values.map((value, i) => {
     const param = signature?.params[i];
     return { index: i, value, param, role: detectRole(param, value) };
   });
 
-  const cyclePos = numberFor(entries, "cycle-pos");
+  const pos = entries.find((e) => e.role.kind === "cycle-pos");
+  const ctx: BuildContext = {
+    cyclePos: typeof pos?.value === "number" ? pos.value : undefined,
+    showTerminal: options.showTerminal,
+    showIndices: options.showIndices,
+  };
 
-  const targets = options.override
-    ? firstArrayEntry(entries)
-    : entries.filter((e) => isStructure(e.role.kind));
+  const structures = entries.filter((e) => isStructure(e.role.kind));
+  const mergeLists =
+    options.override === "linked-list"
+    || (!options.override && structures.length > 0 && structures.every((e) => e.role.kind === "linked-list"));
+
+  if (mergeLists) {
+    const source = options.override === "linked-list" ? entries : structures;
+    return withFallback(buildLinkedListPanes(collectListInputs(source), ctx));
+  }
+
+  const first = entries.find((e) => isArray(e.value));
+  const targets = options.override ? (first ? [first] : []) : structures;
 
   for (const entry of targets) {
     const kind = options.override ?? (entry.role.kind as StructureKind);
-    const title = entry.param?.name ?? `arg ${entry.index + 1}`;
-
+    const title = paramTitle(entry);
     try {
-      result.panes.push(
-        ...buildFor(kind, entry.value, title, `p${entry.index}`, {
-          cyclePos,
-          showTerminal: options.showTerminal,
-          showIndices: options.showIndices,
-        }),
-      );
+      result.panes.push(...buildFor(kind, entry.value, title, `p${entry.index}`, ctx));
     } catch (error) {
       result.failures.push({ paramName: title, reason: String(error) });
     }
   }
 
-  if (result.panes.length === 0 && result.failures.length === 0) {
-    result.failures.push({
-      paramName: "input",
-      reason: "No visualizable parameter found for this structure.",
+  return withFallback(result);
+}
+
+function paramTitle(entry: { index: number; param?: { name: string } }): string {
+  return entry.param?.name ?? `arg ${entry.index + 1}`;
+}
+
+function collectListInputs(entries: Entry[]): Array<{ value: LCValue; title: string }> {
+  const out: Array<{ value: LCValue; title: string }> = [];
+
+  function push(value: LCValue, title: string): void {
+    if (out.length < MAX_LINKED_LISTS && isArray(value) && value.length > 0) {
+      out.push({ value, title });
+    }
+  }
+
+  for (const entry of entries) {
+    if (out.length >= MAX_LINKED_LISTS) break;
+    const title = paramTitle(entry);
+    if (isNestedArray(entry.value)) {
+      for (let j = 0; j < entry.value.length; j += 1) push(entry.value[j]!, `${title}[${j}]`);
+    } else {
+      push(entry.value, title);
+    }
+  }
+  return out;
+}
+
+function buildLinkedListPanes(
+  lists: Array<{ value: LCValue; title: string }>,
+  ctx: BuildContext,
+): ParseResult {
+  const result: ParseResult = { panes: [], failures: [] };
+  if (lists.length === 0) return result;
+  try {
+    result.panes.push({
+      id: "p0",
+      title: lists.map((list) => list.title).join(" · "),
+      model: parseLinkedLists(lists, {
+        cyclePos: ctx.cyclePos,
+        showTerminal: ctx.showTerminal,
+      }),
     });
+  } catch (error) {
+    result.failures.push({ paramName: lists[0]?.title ?? "list", reason: String(error) });
   }
   return result;
-}
-
-function firstArrayEntry<T extends { value: LCValue }>(entries: T[]): T[] {
-  const hit = entries.find((e) => Array.isArray(e.value));
-  return hit ? [hit] : [];
-}
-
-interface BuildContext {
-  cyclePos?: number;
-  showTerminal?: boolean;
-  showIndices?: boolean;
 }
 
 function buildFor(
@@ -91,21 +130,18 @@ function buildFor(
       return [{ id, title, model: parseBinaryTree(value, title) }];
 
     case "linked-list":
-      // `vector<ListNode*> lists` arrives as an array of arrays - one pane each.
-      if (isNestedArray(value)) {
-        return value.map((sub, j) => ({
-          id: `${id}_${j}`,
-          title: `${title}[${j}]`,
-          model: parseLinkedList(sub, `${title}[${j}]`, { showTerminal: ctx.showTerminal }),
-        }));
-      }
       return [{
         id,
         title,
-        model: parseLinkedList(value, title, {
-          cyclePos: ctx.cyclePos,
-          showTerminal: ctx.showTerminal,
-        }),
+        model: parseLinkedLists(
+          isNestedArray(value)
+            ? value.map((sub, j) => ({ value: sub, title: `${title}[${j}]` }))
+            : [{ value, title }],
+          {
+            cyclePos: isNestedArray(value) ? undefined : ctx.cyclePos,
+            showTerminal: ctx.showTerminal,
+          },
+        ),
       }];
 
     case "matrix":
@@ -114,13 +150,15 @@ function buildFor(
 }
 
 function isStructure(kind: Role["kind"]): kind is StructureKind {
-  return kind !== "ignore" && kind !== "node-count" && kind !== "cycle-pos";
+  return kind === "binary-tree" || kind === "linked-list" || kind === "matrix";
 }
 
-function numberFor(
-  entries: Array<{ value: LCValue; role: Role }>,
-  kind: "cycle-pos",
-): number | undefined {
-  const hit = entries.find((e) => e.role.kind === kind && typeof e.value === "number");
-  return hit ? (hit.value as number) : undefined;
+function withFallback(result: ParseResult): ParseResult {
+  if (result.panes.length === 0 && result.failures.length === 0) {
+    result.failures.push({
+      paramName: "input",
+      reason: "No visualizable parameter found for this structure.",
+    });
+  }
+  return result;
 }

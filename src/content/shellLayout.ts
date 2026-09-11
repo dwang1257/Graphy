@@ -1,17 +1,10 @@
-/** Matches `--titlebar-height` in the panel. The host clips to this when shrunk. */
 export const TITLEBAR_PX = 40;
-/** Outer window corner radius. Keep in sync with `--radius-window` and host `.shell`. */
 export const SHELL_RADIUS_PX = 12;
-/** Title bar control size — keep in sync with `--titlebar-control` in `styles.css`. */
 export const TITLEBAR_ICON_PX = 28;
-/** Title bar `padding-right` — keep in sync with `.titlebar` in `styles.css`. */
 export const TITLEBAR_PAD_PX = 12;
-/** Title bar flex `gap` — keep in sync with `.titlebar` in `styles.css`. */
 export const TITLEBAR_GAP_PX = 12;
-/** Matches `.icon-btn::before { inset: -6px }`. */
 export const ICON_SLOP_PX = 6;
 
-/** Host overlay over the shrink chevron, including the icon's expanded hit area. */
 export function shrinkHitOffset(): { top: number; right: number; width: number; height: number } {
   const padY = (TITLEBAR_PX - TITLEBAR_ICON_PX) / 2;
   const right = TITLEBAR_PAD_PX + TITLEBAR_ICON_PX + TITLEBAR_GAP_PX - ICON_SLOP_PX;
@@ -19,7 +12,6 @@ export function shrinkHitOffset(): { top: number; right: number; width: number; 
   return { top: padY - ICON_SLOP_PX, right, width: size, height: size };
 }
 
-/** Viewport position for a hit target that sits above the OOP iframe, not inside it. */
 export function shrinkHitPosition(state: { x: number; y: number; width: number }): { left: number; top: number } {
   const hit = shrinkHitOffset();
   return {
@@ -34,11 +26,8 @@ export interface ShellBox {
 }
 
 export interface ShellGeometry {
-  /** Host layout box. Stays expanded during the clip animation. */
   shell: ShellBox;
-  /** Iframe paint size. Always the expanded window so the document never reflows. */
   iframe: ShellBox;
-  /** Compositor clip. Pixel insets interpolate; `inset(0)` does not. */
   clipPath: string;
 }
 
@@ -47,13 +36,7 @@ export const SHRINK_EASE = "cubic-bezier(0.16, 1, 0.3, 1)";
 
 export interface ApplyShellOptions {
   animate: boolean;
-  /** After the clip animation, collapse the hit box to the title bar. */
   settle?: boolean;
-  /**
-   * `false` leaves the current clip so WAAPI can interpolate it.
-   * A string override is ignored when `settle` is set — the animation's `to`
-   * inset is for the expanded box and would hide a title-bar-sized shell.
-   */
   clipPath?: string | false;
 }
 
@@ -67,7 +50,6 @@ export function shellClipPath(height: number, shrunk: boolean, settle = false): 
   return `inset(0px 0px ${bottom}px 0px ${radius})`;
 }
 
-/** Hidden while closed, clipped, or still expanding onto the page. */
 export function resizeHitHidden(
   state: { open: boolean; shrunk: boolean },
   clipSettled: boolean,
@@ -90,14 +72,23 @@ export function shellGeometry(
   };
 }
 
-/** Applies clip vs paint sizes. Iframe pixels stay put when only `shrunk` changes. */
+type ShellLayoutState = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  open: boolean;
+  shrunk: boolean;
+};
+
 export function applyShellStyles(
   shell: HTMLElement,
   frame: HTMLElement,
-  state: { x: number; y: number; width: number; height: number; open: boolean; shrunk: boolean },
+  state: ShellLayoutState,
   options: ApplyShellOptions,
 ): void {
-  const { shell: box, iframe, clipPath } = shellGeometry(state, options.settle === true);
+  const settle = options.settle === true;
+  const { shell: box, iframe, clipPath } = shellGeometry(state, settle);
   shell.dataset.open = String(state.open);
   shell.dataset.shrunk = String(state.shrunk);
   shell.dataset.animate = String(options.animate);
@@ -108,7 +99,7 @@ export function applyShellStyles(
     height: `${box.height}px`,
   };
   if (options.clipPath !== false) {
-    next.clipPath = options.settle === true ? clipPath : (options.clipPath ?? clipPath);
+    next.clipPath = settle ? clipPath : (options.clipPath ?? clipPath);
   }
   Object.assign(shell.style, next);
   Object.assign(frame.style, {
@@ -145,24 +136,15 @@ export function resizeScale(
   return { sx: to.width / from.width, sy: to.height / from.height };
 }
 
-/** Opposite corner stays put while the dragged handle moves. */
 export function resizeTransformOrigin(corner: ResizeCorner): string {
   const x = corner.includes("w") ? "right" : "left";
   const y = corner.includes("n") ? "bottom" : "top";
   return `${y} ${x}`;
 }
 
-/** Live resize uses transform only — iframe pixels stay at `from`. */
-export function applyResizePreview(
-  shell: HTMLElement,
-  from: { width: number; height: number },
-  to: { width: number; height: number },
-  corner: ResizeCorner = "se",
-): void {
-  const { sx, sy } = resizeScale(from, to);
-  shell.style.willChange = "transform";
-  shell.style.transformOrigin = resizeTransformOrigin(corner);
-  shell.style.transform = `scale(${sx}, ${sy})`;
+export function applyResizePreview(shell: HTMLElement, frame: HTMLElement, state: ShellLayoutState): void {
+  clearResizePreview(shell);
+  applyShellStyles(shell, frame, state, { animate: false, settle: state.shrunk });
 }
 
 export function clearResizePreview(shell: HTMLElement): void {
@@ -174,14 +156,35 @@ export function clearResizePreview(shell: HTMLElement): void {
 export function resizeHitPosition(
   state: { x: number; y: number; width: number; height: number },
   corner: ResizeCorner = "se",
-): {
-  left: number;
-  top: number;
-} {
+): { left: number; top: number } {
   return {
     left: corner.includes("w") ? state.x : state.x + state.width - RESIZE_HIT_PX,
     top: corner.includes("n") ? state.y : state.y + state.height - RESIZE_HIT_PX,
   };
+}
+
+function clampResizeAxis(
+  pos: number,
+  size: number,
+  minSize: number,
+  maxBound: number,
+  anchored: boolean,
+  farEdge: number,
+): { pos: number; size: number } {
+  if (size < minSize) {
+    size = minSize;
+    if (anchored) pos = farEdge - size;
+  }
+  if (pos < 0) {
+    pos = 0;
+    if (anchored) size = farEdge;
+  }
+  const maxSize = Math.max(minSize, maxBound - pos);
+  if (size > maxSize) {
+    size = maxSize;
+    if (anchored) pos = farEdge - size;
+  }
+  return { pos, size };
 }
 
 export function liveResizeRect(
@@ -194,40 +197,11 @@ export function liveResizeRect(
   const north = corner.includes("n");
   const right = start.x + start.width;
   const bottom = start.y + start.height;
-
   let x = west ? start.x + pointer.dx : start.x;
   let y = north ? start.y + pointer.dy : start.y;
   let width = west ? right - x : start.width + pointer.dx;
   let height = north ? bottom - y : start.height + pointer.dy;
-
-  if (width < MIN_PANEL_WIDTH) {
-    width = MIN_PANEL_WIDTH;
-    if (west) x = right - width;
-  }
-  if (height < MIN_PANEL_HEIGHT) {
-    height = MIN_PANEL_HEIGHT;
-    if (north) y = bottom - height;
-  }
-
-  if (x < 0) {
-    x = 0;
-    if (west) width = right;
-  }
-  if (y < 0) {
-    y = 0;
-    if (north) height = bottom;
-  }
-
-  const maxW = Math.max(MIN_PANEL_WIDTH, viewport.width - x);
-  const maxH = Math.max(MIN_PANEL_HEIGHT, viewport.height - y);
-  if (width > maxW) {
-    width = maxW;
-    if (west) x = right - width;
-  }
-  if (height > maxH) {
-    height = maxH;
-    if (north) y = bottom - height;
-  }
-
+  ({ pos: x, size: width } = clampResizeAxis(x, width, MIN_PANEL_WIDTH, viewport.width, west, right));
+  ({ pos: y, size: height } = clampResizeAxis(y, height, MIN_PANEL_HEIGHT, viewport.height, north, bottom));
   return { x, y, width, height };
 }

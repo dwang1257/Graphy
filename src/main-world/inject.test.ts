@@ -1,5 +1,7 @@
 import { afterEach, expect, test, vi } from "vitest";
 
+import { pageTraceMessage } from "../shared/protocol.js";
+
 interface PageHarness {
   snapshots: Array<{ payload: SnapshotPayload }>;
   sentBodies: string[];
@@ -9,6 +11,10 @@ interface PageHarness {
   pauseSelectionOf(index: number): void;
   dispatchInput(): void;
   dispatchClick(): void;
+  dispatchPageMessage(
+    data: unknown,
+    extras?: { origin?: string; source?: unknown },
+  ): void;
   setPathname(pathname: string): void;
   whenSelected(index: number, fn: () => void): void;
   unmountConsole(): void;
@@ -183,9 +189,15 @@ function installTabbedPage(
     getElementById: () => null,
   };
 
+  const pageMessages: Array<(event: MessageEvent) => void> = [];
+
   const fakeWindow = {
     postMessage: (message: { payload: SnapshotPayload }) => {
       snapshots.push(message);
+    },
+    addEventListener: (type: string, listener: EventListenerOrEventListenerObject) => {
+      if (type !== "message" || typeof listener !== "function") return;
+      pageMessages.push(listener as (event: MessageEvent) => void);
     },
     setInterval: () => 0,
     fetch: (input: RequestInfo | URL, init?: RequestInit) => {
@@ -304,6 +316,14 @@ function installTabbedPage(
     },
     dispatchClick: () => {
       for (const listener of listeners.get("click") ?? []) listener();
+    },
+    dispatchPageMessage: (data, extras) => {
+      const event = {
+        data,
+        origin: extras?.origin ?? locationState.origin,
+        source: extras?.source ?? fakeWindow,
+      } as MessageEvent;
+      for (const listener of pageMessages) listener(event);
     },
     setPathname: (pathname: string) => {
       locationState.pathname = pathname;
@@ -725,24 +745,72 @@ test("forwards per-case stdout from std_output_list", async () => {
   );
 });
 
-test("appends a Python tracer on Run but snapshots the editor code", async () => {
-  const page = installTabbedPage([["[4,2,7]"]], 0, {
-    code: "class Solution:\n    def invertTree(self, root):\n        return root\n",
-  });
-  await import("./inject.js");
-  const typed = "class Solution:\n    def invertTree(self, root):\n        return root\n";
+const PYTHON_TYPED = "class Solution:\n    def invertTree(self, root):\n        return root\n";
+
+async function runPython(typed = PYTHON_TYPED): Promise<void> {
   await window.fetch("https://leetcode.com/problems/example/interpret_solution/", {
     method: "POST",
     body: JSON.stringify({ data_input: "[4,2,7]", typed_code: typed, lang: "python3" }),
   });
+}
+
+function lastTyped(page: PageHarness): string | undefined {
+  const sent = JSON.parse(page.sentBodies.at(-1) ?? "{}") as { typed_code?: string };
+  return sent.typed_code;
+}
+
+test("does not rewrite Python Run when tracing has never been enabled", async () => {
+  const page = installTabbedPage([["[4,2,7]"]], 0, { code: PYTHON_TYPED });
+  await import("./inject.js");
+  await runPython();
   await page.flushCapture();
   await finishCheck();
   await page.flushCapture();
 
-  const sent = JSON.parse(page.sentBodies.at(-1) ?? "{}") as { typed_code?: string };
-  expect(sent.typed_code).toContain("GRAPHY_TRACE_V1");
-  expect(page.snapshots.at(-1)?.payload.code).toBe(typed);
+  expect(lastTyped(page)).toBe(PYTHON_TYPED);
+  expect(lastTyped(page)).not.toContain("GRAPHY_TRACE_V1");
+  expect(page.snapshots.at(-1)?.payload.code).toBe(PYTHON_TYPED);
+});
+
+test("appends a Python tracer on Run after tracing is enabled, and snapshots the editor code", async () => {
+  const page = installTabbedPage([["[4,2,7]"]], 0, { code: PYTHON_TYPED });
+  await import("./inject.js");
+  page.dispatchPageMessage(pageTraceMessage(true));
+  await runPython();
+  await page.flushCapture();
+  await finishCheck();
+  await page.flushCapture();
+
+  expect(lastTyped(page)).toContain("GRAPHY_TRACE_V1");
+  expect(page.snapshots.at(-1)?.payload.code).toBe(PYTHON_TYPED);
   expect(page.snapshots.at(-1)?.payload.code).not.toContain("GRAPHY_TRACE_V1");
+});
+
+test("stops rewriting Python Run after tracing is disabled", async () => {
+  const page = installTabbedPage([["[4,2,7]"]], 0, { code: PYTHON_TYPED });
+  await import("./inject.js");
+  page.dispatchPageMessage(pageTraceMessage(true));
+  await runPython();
+  expect(lastTyped(page)).toContain("GRAPHY_TRACE_V1");
+
+  page.dispatchPageMessage(pageTraceMessage(false));
+  await runPython();
+  expect(lastTyped(page)).toBe(PYTHON_TYPED);
+  expect(lastTyped(page)).not.toContain("GRAPHY_TRACE_V1");
+});
+
+test("ignores a trace post that is not same-window or not a boolean flag", async () => {
+  const page = installTabbedPage([["[4,2,7]"]], 0, { code: PYTHON_TYPED });
+  await import("./inject.js");
+  page.dispatchPageMessage(pageTraceMessage(true), { source: {} });
+  page.dispatchPageMessage(pageTraceMessage(true), { origin: "https://evil.example" });
+  page.dispatchPageMessage({ channel: "graphy:page", type: "trace", enabled: 1 });
+  await runPython();
+  expect(lastTyped(page)).toBe(PYTHON_TYPED);
+
+  page.dispatchPageMessage(pageTraceMessage(true));
+  await runPython();
+  expect(lastTyped(page)).toContain("GRAPHY_TRACE_V1");
 });
 
 test("XHR load skips parsing unrelated URLs but still walks check results", async () => {

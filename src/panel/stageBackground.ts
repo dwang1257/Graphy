@@ -1,16 +1,26 @@
 import type { JSX } from "preact";
 
-/** Stage fill that shows the whole photo, stretched to the window on every ratio. */
+import { stageOverlayInk } from "./imageInk.js";
+
+export function stageInkVars(
+  background: string,
+  imageInk: string | null = null,
+): { "--stage-ink": string; "--stage-halo": string } {
+  const { ink, halo } = stageOverlayInk(background, imageInk);
+  return { "--stage-ink": ink, "--stage-halo": halo };
+}
+
 export function stageBackgroundStyle(
   background: string,
   backgroundImage: string | null,
 ): JSX.CSSProperties {
-  const style: JSX.CSSProperties = { backgroundColor: background };
-  if (backgroundImage) {
-    style.backgroundImage = `url(${backgroundImage})`;
-    style.backgroundSize = "100% 100%";
-    style.backgroundPosition = "center";
-    style.backgroundRepeat = "no-repeat";
-  }
-  return style;
+  if (!backgroundImage) return { backgroundColor: background };
+  return {
+    backgroundColor: background,
+    backgroundImage: `url(${backgroundImage})`,
+    backgroundSize: "100% 100%",
+    backgroundPosition: "center",
+    backgroundRepeat: "no-repeat",
+    imageRendering: "auto",
+  };
 }

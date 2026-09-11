@@ -1,5 +1,7 @@
 /** @vitest-environment happy-dom */
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { render } from "preact";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -108,5 +110,15 @@ describe("TitleBar structure dropdown", () => {
     select.value = "linked-list";
     select.dispatchEvent(new Event("change", { bubbles: true }));
     expect(root.querySelector(".kind-value")?.textContent).toBe("Linked list");
+  });
+});
+
+describe("kind label contrast", () => {
+  it("paints the visible kind label with stage ink and a halo", () => {
+    const css = readFileSync(join(process.cwd(), "src/panel/styles.css"), "utf8");
+    const block = css.match(/\.kind-value \{[^}]+\}/)?.[0] ?? "";
+    expect(block).toMatch(/font-weight: (700|800)/);
+    expect(block).toMatch(/color: var\(--stage-ink\)/);
+    expect(block).toMatch(/text-shadow:[\s\S]*var\(--stage-halo\)/);
   });
 });

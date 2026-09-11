@@ -1,9 +1,8 @@
-import type { GraphModel } from "./types.js";
+import type { GNode, GraphModel } from "./types.js";
 import { deletedIds, parseTopologyTokens, type TreeLinks } from "./topology.js";
 
 export type { TreeLinks };
 
-/** One parsed stdout directive from a `#graphy ...` or compact `#g ...` line. */
 export type TraceEvent =
   | { kind: "current"; ref: string; line: number }
   | { kind: "visit"; ref: string; line: number }
@@ -11,41 +10,50 @@ export type TraceEvent =
   | { kind: "dequeue"; ref: string; line: number }
   | { kind: "frontier"; refs: string[]; line: number }
   | { kind: "topology"; links: TreeLinks; line: number; patch?: boolean }
+  | { kind: "alloc"; ref: string; label: string; line: number }
   | { kind: "clear"; line: number };
 
-/** Cumulative highlight state after one event — one scrubber frame. */
 export interface TraceFrame {
   current?: string;
   visited: string[];
   frontier: string[];
   line: number;
-  /** Short label for the playback UI (e.g. "current n0"). */
   label: string;
-  /** Current tree child pointers (seeded from the model, updated by topology). */
   links: TreeLinks;
-  /** Base node ids that are no longer reachable. */
   deleted: string[];
+  allocs: GNode[];
 }
 
 const PREFIX = /^\s*#?(?:graphy|g)(?:\s+|\/)(.*)$/i;
-const VERBS = new Set([
-  "current",
-  "curr",
-  "c",
-  "visit",
-  "v",
-  "enqueue",
-  "dequeue",
-  "frontier",
-  "clear",
-  "/",
-  "walk",
-  "topology",
-  "t",
-]);
 
-function isVerb(token: string): boolean {
-  return VERBS.has(token.toLowerCase());
+type Verb =
+  | "current"
+  | "visit"
+  | "enqueue"
+  | "dequeue"
+  | "frontier"
+  | "clear"
+  | "walk"
+  | "topology";
+
+const VERBS: Record<string, Verb> = {
+  current: "current",
+  curr: "current",
+  c: "current",
+  visit: "visit",
+  v: "visit",
+  enqueue: "enqueue",
+  dequeue: "dequeue",
+  frontier: "frontier",
+  clear: "clear",
+  "/": "clear",
+  walk: "walk",
+  topology: "topology",
+  t: "topology",
+};
+
+function verbOf(token: string): Verb | undefined {
+  return VERBS[token.toLowerCase()];
 }
 
 function nodeRef(index: number): string {
@@ -56,9 +64,8 @@ function childFromAtom(value: number | null): string | undefined {
   return value === null ? undefined : nodeRef(value);
 }
 
-type ArrayItem = number | [number, number | null, number | null];
+type ArrayItem = number | string | Array<number | null>;
 
-/** Parses `#graphy/[0,(0,2,1),2]` — ints are current+visit, tuples are topology patches. */
 function parseCompactArray(raw: string): ArrayItem[] {
   const s = raw.trim();
   if (!s.startsWith("[") || !s.endsWith("]")) return [];
@@ -66,12 +73,16 @@ function parseCompactArray(raw: string): ArrayItem[] {
   const items: ArrayItem[] = [];
   let i = 0;
 
-  const skip = (): void => {
+  function skipSep(): void {
     while (i < inner.length && /[\s,]/.test(inner[i] ?? "")) i += 1;
-  };
+  }
 
-  const parseAtom = (): number | null => {
-    skip();
+  function skipWs(): void {
+    while (i < inner.length && /\s/.test(inner[i] ?? "")) i += 1;
+  }
+
+  function parseAtom(): number | null {
+    skipSep();
     if (inner.startsWith("None", i)) {
       i += 4;
       return null;
@@ -88,62 +99,71 @@ function parseCompactArray(raw: string): ArrayItem[] {
     }
     i += match[0].length;
     return Number(match[0]);
-  };
+  }
 
   while (i < inner.length) {
-    skip();
+    skipSep();
     if (i >= inner.length) break;
-    if (inner[i] === "(") {
-      i += 1;
-      const id = parseAtom();
-      skip();
-      if (inner[i] === ",") i += 1;
-      const left = parseAtom();
-      skip();
-      if (inner[i] === ",") i += 1;
-      const right = parseAtom();
-      skip();
-      if (inner[i] === ")") i += 1;
-      if (id !== null) items.push([id, left, right]);
+    if (inner[i] !== "(") {
+      const value = parseAtom();
+      if (value !== null) items.push(value);
       continue;
     }
-    const value = parseAtom();
-    if (value !== null) items.push(value);
+    i += 1;
+    const atoms: Array<number | null> = [];
+    for (;;) {
+      atoms.push(parseAtom());
+      skipWs();
+      if (inner[i] === "," && atoms.length < 4) {
+        i += 1;
+        continue;
+      }
+      break;
+    }
+    if (inner[i] === ")") i += 1;
+    const first = atoms[0];
+    if (first === null || first === undefined) continue;
+    if (atoms.length >= 4) items.push([first, atoms[1] ?? null, atoms[2] ?? null, atoms[3] ?? null]);
+    else if (atoms.length >= 3) items.push([first, atoms[1] ?? null, atoms[2] ?? null]);
+    else if (atoms.length >= 2 && atoms[1] !== null && atoms[1] !== undefined) {
+      items.push(`${first},${atoms[1]}`);
+    }
   }
   return items;
+}
+
+function topologyEntry(left: number | null, right?: number | null): { left?: string; right?: string } {
+  const entry: { left?: string; right?: string } = {};
+  const lid = childFromAtom(left);
+  if (lid) entry.left = lid;
+  if (right !== undefined) {
+    const rid = childFromAtom(right);
+    if (rid) entry.right = rid;
+  }
+  return entry;
 }
 
 function parseArrayEvents(raw: string, line: number): TraceEvent[] {
   const events: TraceEvent[] = [];
   for (const item of parseCompactArray(raw)) {
-    if (typeof item === "number") {
-      const ref = nodeRef(item);
+    if (!Array.isArray(item)) {
+      const ref = typeof item === "number" ? nodeRef(item) : item;
       events.push({ kind: "current", ref, line }, { kind: "visit", ref, line });
       continue;
     }
-    const [id, left, right] = item;
-    const entry: { left?: string; right?: string } = {};
-    const lid = childFromAtom(left);
-    const rid = childFromAtom(right);
-    if (lid) entry.left = lid;
-    if (rid) entry.right = rid;
-    events.push({ kind: "topology", links: { [nodeRef(id)]: entry }, line, patch: true });
+    const [id, left, right, val] = item;
+    const ref = nodeRef(id!);
+    if (item.length >= 4) {
+      events.push({ kind: "alloc", ref, label: String(val ?? 0), line });
+    }
+    const kids = item.length >= 4
+      ? topologyEntry(left ?? null)
+      : topologyEntry(left ?? null, right ?? null);
+    events.push({ kind: "topology", links: { [ref]: kids }, line, patch: true });
   }
   return events;
 }
 
-function pushRefEvents(events: TraceEvent[], verb: string, ref: string, line: number): void {
-  if (verb === "walk") {
-    events.push({ kind: "current", ref, line }, { kind: "visit", ref, line });
-    return;
-  }
-  if (verb === "current" || verb === "curr" || verb === "c") events.push({ kind: "current", ref, line });
-  else if (verb === "visit" || verb === "v") events.push({ kind: "visit", ref, line });
-  else if (verb === "enqueue") events.push({ kind: "enqueue", ref, line });
-  else if (verb === "dequeue") events.push({ kind: "dequeue", ref, line });
-}
-
-/** Extracts Graphy trace events from LeetCode Run stdout. */
 export function parseTrace(stdout: string): TraceEvent[] {
   const events: TraceEvent[] = [];
   const lines = stdout.split(/\r?\n/);
@@ -159,52 +179,40 @@ export function parseTrace(stdout: string): TraceEvent[] {
     const tokens = payload.split(/\s+/).filter(Boolean);
     let index = 0;
     while (index < tokens.length) {
-      const raw = tokens[index] ?? "";
-      const verb = raw.toLowerCase();
-      if (!isVerb(verb)) {
+      const verb = verbOf(tokens[index] ?? "");
+      if (!verb) {
         index += 1;
         continue;
       }
       index += 1;
-      if (verb === "clear" || verb === "/") {
+      if (verb === "clear") {
         events.push({ kind: "clear", line });
         continue;
       }
-      if (verb === "frontier") {
-        const refs: string[] = [];
-        while (index < tokens.length && !isVerb(tokens[index] ?? "")) {
-          refs.push(tokens[index] ?? "");
-          index += 1;
-        }
-        if (refs.length > 0) events.push({ kind: "frontier", refs, line });
-        continue;
-      }
-      if (verb === "topology" || verb === "t") {
-        const parts: string[] = [];
-        while (index < tokens.length && !isVerb(tokens[index] ?? "")) {
-          parts.push(tokens[index] ?? "");
-          index += 1;
-        }
-        events.push({ kind: "topology", links: parseTopologyTokens(parts.join(" ")), line });
-        continue;
-      }
-      while (index < tokens.length && !isVerb(tokens[index] ?? "")) {
-        pushRefEvents(events, verb, tokens[index] ?? "", line);
+      const args: string[] = [];
+      while (index < tokens.length && !verbOf(tokens[index] ?? "")) {
+        args.push(tokens[index] ?? "");
         index += 1;
+      }
+      if (verb === "frontier") {
+        if (args.length > 0) events.push({ kind: "frontier", refs: args, line });
+      } else if (verb === "topology") {
+        events.push({ kind: "topology", links: parseTopologyTokens(args.join(" ")), line });
+      } else {
+        for (const ref of args) {
+          if (verb === "walk") {
+            events.push({ kind: "current", ref, line }, { kind: "visit", ref, line });
+          } else {
+            events.push({ kind: verb, ref, line });
+          }
+        }
       }
     }
   }
   return events;
 }
 
-/**
- * Maps a user ref onto a highlight target id.
- * - `n0` → node id
- * - `@2` → `n2` (tree/list index) or ignored on matrices unless `@r,c`
- * - `1,0` / `@1,0` → `cell:1,0` on matrices
- * - bare `3` → first visible node whose label is `3`
- */
-export function resolveRef(ref: string, model: GraphModel): string | undefined {
+export function resolveRef(ref: string, model: GraphModel, extra: GNode[] = []): string | undefined {
   if (model.matrix) {
     const cell = parseCellRef(ref);
     if (!cell) return undefined;
@@ -213,17 +221,13 @@ export function resolveRef(ref: string, model: GraphModel): string | undefined {
     return `cell:${cell.r},${cell.c}`;
   }
 
-  if (/^n\d+$/i.test(ref)) {
-    const id = ref.toLowerCase();
-    return model.nodes.some((n) => n.id === id) ? id : undefined;
-  }
+  const nodes = extra.length > 0 ? [...model.nodes, ...extra] : model.nodes;
+  let byId: string | undefined;
+  if (/^n\d+$/i.test(ref)) byId = ref.toLowerCase();
+  else if (/^@\d+$/.test(ref)) byId = `n${ref.slice(1)}`;
+  if (byId) return nodes.some((n) => n.id === byId) ? byId : undefined;
 
-  if (/^@\d+$/.test(ref)) {
-    const id = `n${ref.slice(1)}`;
-    return model.nodes.some((n) => n.id === id) ? id : undefined;
-  }
-
-  for (const node of model.nodes) {
+  for (const node of nodes) {
     if (node.role === "spine" || node.role === "null") continue;
     if (node.label === ref) return node.id;
   }
@@ -236,25 +240,12 @@ function parseCellRef(ref: string): { r: number; c: number } | null {
   return { r: Number(match[1]), c: Number(match[2]) };
 }
 
-function visibleBaseIds(model: GraphModel): string[] {
-  return model.nodes
-    .filter((n) => n.role !== "spine" && n.role !== "null")
-    .map((n) => n.id);
+function pushUnique(ids: string[], seen: Set<string>, id: string): void {
+  if (seen.has(id)) return;
+  seen.add(id);
+  ids.push(id);
 }
 
-function snapshotFrame(
-  partial: Omit<TraceFrame, "links" | "deleted">,
-  links: TreeLinks,
-  baseIds: string[],
-): TraceFrame {
-  return {
-    ...partial,
-    links: { ...links },
-    deleted: deletedIds(baseIds, links),
-  };
-}
-
-/** Parses stdout and folds events into cumulative frames ready for the scrubber. */
 export function framesFromStdout(stdout: string, model: GraphModel): TraceFrame[] {
   const events = parseTrace(stdout);
   const frames: TraceFrame[] = [];
@@ -264,7 +255,24 @@ export function framesFromStdout(stdout: string, model: GraphModel): TraceFrame[
   const visitedSet = new Set<string>();
   const frontierSet = new Set<string>();
   let links: TreeLinks = model.links ? structuredClone(model.links) : {};
-  const baseIds = visibleBaseIds(model);
+  const baseIds = model.nodes
+    .filter((n) => n.role !== "spine" && n.role !== "null")
+    .map((n) => n.id);
+  const allocs: GNode[] = [];
+  const allocIds = new Set<string>();
+
+  function frame(label: string, line: number): TraceFrame {
+    return {
+      current,
+      visited: [...visited],
+      frontier: [...frontier],
+      line,
+      label,
+      links: { ...links },
+      deleted: model.kind === "linked-list" ? [] : deletedIds(baseIds, links),
+      allocs: [...allocs],
+    };
+  }
 
   for (const event of events) {
     if (event.kind === "clear") {
@@ -273,37 +281,22 @@ export function framesFromStdout(stdout: string, model: GraphModel): TraceFrame[
       frontier.length = 0;
       visitedSet.clear();
       frontierSet.clear();
-      frames.push(
-        snapshotFrame(
-          {
-            current: undefined,
-            visited: [],
-            frontier: [],
-            line: event.line,
-            label: "clear",
-          },
-          links,
-          baseIds,
-        ),
-      );
+      frames.push(frame("clear", event.line));
+      continue;
+    }
+
+    if (event.kind === "alloc") {
+      if (!allocIds.has(event.ref) && !model.nodes.some((n) => n.id === event.ref)) {
+        allocIds.add(event.ref);
+        allocs.push({ id: event.ref, label: event.label, role: "normal" });
+      }
+      frames.push(frame(`alloc ${event.ref}`, event.line));
       continue;
     }
 
     if (event.kind === "topology") {
       links = event.patch ? { ...links, ...event.links } : event.links;
-      frames.push(
-        snapshotFrame(
-          {
-            current,
-            visited: [...visited],
-            frontier: [...frontier],
-            line: event.line,
-            label: "topology",
-          },
-          links,
-          baseIds,
-        ),
-      );
+      frames.push(frame("topology", event.line));
       continue;
     }
 
@@ -311,63 +304,29 @@ export function framesFromStdout(stdout: string, model: GraphModel): TraceFrame[
       frontier.length = 0;
       frontierSet.clear();
       for (const raw of event.refs) {
-        const id = resolveRef(raw, model);
-        if (!id || frontierSet.has(id)) continue;
-        frontierSet.add(id);
-        frontier.push(id);
+        const id = resolveRef(raw, model, allocs);
+        if (id) pushUnique(frontier, frontierSet, id);
       }
-      frames.push(
-        snapshotFrame(
-          {
-            current,
-            visited: [...visited],
-            frontier: [...frontier],
-            line: event.line,
-            label: `frontier ${event.refs.join(" ")}`,
-          },
-          links,
-          baseIds,
-        ),
-      );
+      frames.push(frame(`frontier ${event.refs.join(" ")}`, event.line));
       continue;
     }
 
-    const id = resolveRef(event.ref, model);
+    const id = resolveRef(event.ref, model, allocs);
     if (!id) continue;
 
     if (event.kind === "current") {
       current = id;
     } else if (event.kind === "visit") {
-      if (!visitedSet.has(id)) {
-        visitedSet.add(id);
-        visited.push(id);
-      }
+      pushUnique(visited, visitedSet, id);
     } else if (event.kind === "enqueue") {
-      if (!frontierSet.has(id)) {
-        frontierSet.add(id);
-        frontier.push(id);
-      }
-    } else if (event.kind === "dequeue") {
-      if (frontierSet.has(id)) {
-        frontierSet.delete(id);
-        const index = frontier.indexOf(id);
-        if (index >= 0) frontier.splice(index, 1);
-      }
+      pushUnique(frontier, frontierSet, id);
+    } else if (event.kind === "dequeue" && frontierSet.has(id)) {
+      frontierSet.delete(id);
+      const index = frontier.indexOf(id);
+      if (index >= 0) frontier.splice(index, 1);
     }
 
-    frames.push(
-      snapshotFrame(
-        {
-          current,
-          visited: [...visited],
-          frontier: [...frontier],
-          line: event.line,
-          label: `${event.kind} ${event.ref}`,
-        },
-        links,
-        baseIds,
-      ),
-    );
+    frames.push(frame(`${event.kind} ${event.ref}`, event.line));
   }
 
   return frames;

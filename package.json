@@ -3,9 +3,12 @@
   "version": "1.0.0",
   "description": "Chrome extension that renders LeetCode custom test cases as interactive graphs.",
   "scripts": {
+    "postinstall": "node ./scripts/patch-rxjs-node.mjs",
+    "prebuild": "node ./scripts/patch-rxjs-node.mjs",
+    "pretest": "node ./scripts/patch-rxjs-node.mjs",
     "dev": "vite",
     "build": "vite build",
-    "test": "vitest run",
+    "test": "node --test scripts/rxjs-node-import.test.mjs && vitest run",
     "typecheck": "tsc --noEmit"
   },
   "repository": {

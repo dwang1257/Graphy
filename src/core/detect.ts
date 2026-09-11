@@ -15,7 +15,7 @@ const TYPE_RULES: Array<[RegExp, StructureKind]> = [
 
 const NAME_RULES: Array<[Set<string>, Role]> = [
   [set("root root1 root2 subRoot p q original cloned target"), { kind: "binary-tree" }],
-  [set("head headA headB l1 l2 list1 list2 list"), { kind: "linked-list" }],
+  [set("head headA headB l1 l2 l3 list1 list2 list3 list"), { kind: "linked-list" }],
   [set("grid board matrix mat image maze forest heights land dungeon obstacleGrid isWater box picture isConnected"), { kind: "matrix" }],
   [set("n numCourses numNodes numVertices size"), { kind: "node-count" }],
   [set("pos"), { kind: "cycle-pos" }],
@@ -25,7 +25,6 @@ function set(words: string): Set<string> {
   return new Set(words.split(" "));
 }
 
-/** Classifies one parameter using its declared type, then its name, then its data. */
 export function detectRole(param: SigParam | undefined, value: LCValue): Role {
   if (param) {
     for (const [pattern, kind] of TYPE_RULES) {
@@ -46,29 +45,18 @@ function isScalarType(type: string): boolean {
   return SCALAR_TYPE.test(bare);
 }
 
-/** Last-resort classification from the literal alone. */
 function fromShape(value: LCValue): Role {
   if (!isArray(value)) return { kind: "ignore" };
 
   if (isNestedArray(value)) {
-    if (isSquareBinaryGrid(value)) return { kind: "matrix" };
-    const widths = new Set(value.map((row) => row.length));
-    // Equal-width rows are a grid; irregular nesting is not a supported structure.
-    if (widths.size === 1) return { kind: "matrix" };
+    if (new Set(value.map((row) => row.length)).size === 1) return { kind: "matrix" };
     return { kind: "ignore" };
   }
 
   if (value.some((v) => v === null)) return { kind: "binary-tree" };
-  // Equal-length strings are a character grid ("11110", "10001").
   if (value.length > 1 && value.every((v) => typeof v === "string")) {
-    const lengths = new Set(value.map((v) => (v as string).length));
-    if (lengths.size === 1 && (value[0] as string).length > 1) return { kind: "matrix" };
+    const width = (value[0] as string).length;
+    if (width > 1 && value.every((v) => (v as string).length === width)) return { kind: "matrix" };
   }
   return { kind: "ignore" };
-}
-
-function isSquareBinaryGrid(rows: LCValue[][]): boolean {
-  return rows.length > 0
-    && rows.every((row) => row.length === rows.length
-      && row.every((value) => value === 0 || value === 1));
 }

@@ -3,7 +3,6 @@ export interface CanvasPreset {
   label: string;
 }
 
-/** Neutral stage fills. First and fifth match LIGHT / DARK defaults. */
 export const CANVAS_PRESETS: readonly CanvasPreset[] = [
   { hex: "#ffffff", label: "White" },
   { hex: "#f4f6fa", label: "Paper" },
@@ -13,11 +12,18 @@ export const CANVAS_PRESETS: readonly CanvasPreset[] = [
   { hex: "#0b1220", label: "Night" },
 ];
 
-/** `#rgb` / `#rrggbb` (hash optional) → `#rrggbb`, or null if the native picker cannot use it. */
+export const NODE_FILL_PRESETS: readonly CanvasPreset[] = [
+  { hex: "#eef2ff", label: "Ice" },
+  { hex: "#c7d2fe", label: "Periwinkle" },
+  { hex: "#4f46e5", label: "Indigo" },
+  { hex: "#312e81", label: "Deep" },
+  { hex: "#1e293b", label: "Slate" },
+  { hex: "#ffffff", label: "White" },
+];
+
 export function normalizeCssHex(value: unknown): string | null {
   if (typeof value !== "string") return null;
-  const raw = value.trim().toLowerCase();
-  const hex = raw.startsWith("#") ? raw.slice(1) : raw;
+  const hex = value.trim().toLowerCase().replace(/^#/, "");
   if (/^[0-9a-f]{3}$/.test(hex)) {
     return `#${hex[0]}${hex[0]}${hex[1]}${hex[1]}${hex[2]}${hex[2]}`;
   }

@@ -25,6 +25,12 @@ export interface Snapshot {
 
 export type PageMessage = { channel: typeof PAGE_CHANNEL; type: "snapshot"; payload: Snapshot };
 
+export type PageTraceMessage = { channel: typeof PAGE_CHANNEL; type: "trace"; enabled: boolean };
+
+export function pageTraceMessage(enabled: boolean): PageTraceMessage {
+  return { channel: PAGE_CHANNEL, type: "trace", enabled };
+}
+
 export type ToPanel =
   | { channel: typeof PANEL_CHANNEL; type: "snapshot"; payload: Snapshot }
   | { channel: typeof PANEL_CHANNEL; type: "shrunk"; shrunk: boolean };
@@ -69,6 +75,12 @@ export function isPageMessage(data: unknown): data is PageMessage {
   if (!onChannel(data, PAGE_CHANNEL)) return false;
   const m = data as { type?: unknown; payload?: unknown };
   return m.type === "snapshot" && isSnapshot(m.payload);
+}
+
+export function isPageTraceMessage(data: unknown): data is PageTraceMessage {
+  if (!onChannel(data, PAGE_CHANNEL)) return false;
+  const m = data as { type?: unknown; enabled?: unknown };
+  return m.type === "trace" && typeof m.enabled === "boolean";
 }
 
 export function isPanelMessage(data: unknown): data is FromPanel {

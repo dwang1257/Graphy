@@ -1,5 +1,6 @@
 import { PANEL_CHANNEL, isPanelMessage, type ToPanel } from "../shared/protocol.js";
 import { DEFAULT_PANEL, loadPanelState, savePanelState, type PanelState } from "../settings/storage.js";
+import { notifyPageTrace } from "./pageTrace.js";
 import {
   RESIZE_CORNERS,
   RESIZE_HIT_PX,
@@ -21,8 +22,9 @@ import {
 } from "./shellLayout.js";
 
 const HIT = shrinkHitOffset();
-
 const HOST_ID = "graphy-root";
+
+type Box = { x: number; y: number; width: number; height: number };
 
 const STYLE = `
 :host {
@@ -115,6 +117,14 @@ const RESIZE_LABELS: Record<ResizeCorner, string> = {
   se: "Resize panel from bottom right",
 };
 
+function makeButton(className: string, label?: string): HTMLButtonElement {
+  const el = document.createElement("button");
+  el.className = className;
+  el.type = "button";
+  if (label) el.setAttribute("aria-label", label);
+  return el;
+}
+
 export class PanelHost {
   private root: ShadowRoot;
   private readonly frameOrigin: string;
@@ -123,37 +133,28 @@ export class PanelHost {
   private shrinkHit!: HTMLButtonElement;
   private resizeHits!: Record<ResizeCorner, HTMLButtonElement>;
   private launcher!: HTMLButtonElement;
-  private resizing: {
+  private resizing: (Box & {
     startX: number;
     startY: number;
-    x: number;
-    y: number;
-    width: number;
-    height: number;
     corner: ResizeCorner;
     hit: HTMLButtonElement;
-  } | null = null;
+  }) | null = null;
   private state: PanelState = { ...DEFAULT_PANEL };
   private ready = false;
-  /** One queued message per type, so a later snapshot replaces an earlier one. */
   private pending = new Map<string, ToPanel>();
   private saveTimer: number | undefined;
   private clipAnim: Animation | undefined;
   private clipSettled = true;
-  private resizeCommit: number | undefined;
   private resizePointerId: number | undefined;
-  /** Resolves once stored geometry has been applied. */
   readonly restored: Promise<void>;
 
   constructor(private frameUrl: string) {
     const frameLocation = new URL(frameUrl);
     this.frameOrigin = `${frameLocation.protocol}//${frameLocation.host}`;
-    const existing = document.getElementById(HOST_ID);
-    existing?.remove();
+    document.getElementById(HOST_ID)?.remove();
 
     const host = document.createElement("div");
     host.id = HOST_ID;
-    // `all: initial` on the host keeps LeetCode's cascade from reaching in.
     host.style.cssText = "all: initial; position: static;";
     this.root = host.attachShadow({ mode: "closed" });
     (document.body ?? document.documentElement).appendChild(host);
@@ -173,25 +174,18 @@ export class PanelHost {
     this.frame.setAttribute("title", "Graphy Visualizer");
     this.shell.appendChild(this.frame);
 
-    this.shrinkHit = document.createElement("button");
-    this.shrinkHit.className = "shrink-hit";
-    this.shrinkHit.type = "button";
-    this.shrinkHit.setAttribute("aria-label", "Shrink panel");
+    this.shrinkHit = makeButton("shrink-hit", "Shrink panel");
     this.shrinkHit.addEventListener("click", this.onShrinkClick);
 
     this.resizeHits = {} as Record<ResizeCorner, HTMLButtonElement>;
     for (const corner of RESIZE_CORNERS) {
-      const hit = document.createElement("button");
-      hit.className = "resize-hit";
-      hit.type = "button";
+      const hit = makeButton("resize-hit", RESIZE_LABELS[corner]);
       hit.dataset.corner = corner;
-      hit.setAttribute("aria-label", RESIZE_LABELS[corner]);
       hit.addEventListener("pointerdown", this.onResizePointerDown);
       this.resizeHits[corner] = hit;
     }
 
-    this.launcher = document.createElement("button");
-    this.launcher.className = "launcher";
+    this.launcher = makeButton("launcher");
     this.launcher.textContent = "Graphy";
     this.launcher.addEventListener("click", () => this.open());
 
@@ -214,17 +208,23 @@ export class PanelHost {
     this.state.y = Math.max(16, window.innerHeight - this.state.height - 24);
   }
 
+  private paint(settle: boolean, clipPath?: string): void {
+    applyShellStyles(this.shell, this.frame, this.state, {
+      animate: false,
+      settle,
+      ...(clipPath === undefined ? {} : { clipPath }),
+    });
+    this.launcher.hidden = this.state.open;
+    this.syncHits();
+  }
+
   private apply(): void {
     this.clipAnim?.cancel();
     this.clipAnim = undefined;
     this.clipSettled = true;
     clearResizePreview(this.shell);
-    applyShellStyles(this.shell, this.frame, this.state, {
-      animate: false,
-      settle: this.state.shrunk,
-    });
-    this.launcher.hidden = this.state.open;
-    this.syncHits();
+    this.paint(this.state.shrunk);
+    notifyPageTrace(this.state.open);
   }
 
   private onShrinkClick = (): void => {
@@ -243,14 +243,7 @@ export class PanelHost {
     const to = shellClipPath(height, shrunk);
     this.clipAnim?.cancel();
     this.clipSettled = false;
-
-    applyShellStyles(this.shell, this.frame, this.state, {
-      animate: false,
-      settle: false,
-      clipPath: from,
-    });
-    this.launcher.hidden = this.state.open;
-    this.syncHits();
+    this.paint(false, from);
 
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     this.clipAnim = this.shell.animate(clipAnimation(from, to), {
@@ -262,33 +255,32 @@ export class PanelHost {
       this.clipAnim?.cancel();
       if (this.state.shrunk !== shrunk) return;
       this.clipSettled = true;
-      applyShellStyles(this.shell, this.frame, this.state, {
-        animate: false,
-        settle: this.state.shrunk,
-      });
-      this.syncHits();
+      this.paint(this.state.shrunk);
     };
     this.send({ channel: PANEL_CHANNEL, type: "shrunk", shrunk });
     this.persist();
   }
 
+  private viewport(): { width: number; height: number } {
+    return { width: window.innerWidth, height: window.innerHeight };
+  }
+
   private clamp = (): void => {
     if (this.resizing) return;
+    const view = this.viewport();
     const size = clampPanelSize(
       { width: this.state.width, height: this.state.height },
-      { width: window.innerWidth, height: window.innerHeight },
+      view,
       { x: this.state.x, y: this.state.y },
     );
     this.state.width = size.width;
     this.state.height = size.height;
-    this.state.x = Math.min(Math.max(0, this.state.x), Math.max(0, window.innerWidth - 80));
-    this.state.y = Math.min(Math.max(0, this.state.y), Math.max(0, window.innerHeight - 40));
+    this.state.x = Math.min(Math.max(0, this.state.x), Math.max(0, view.width - 80));
+    this.state.y = Math.min(Math.max(0, this.state.y), Math.max(0, view.height - 40));
     this.apply();
   };
 
-  private syncHits(
-    box: { x: number; y: number; width: number; height: number } = this.state,
-  ): void {
+  private syncHits(box: Box = this.state): void {
     const shrink = shrinkHitPosition(box);
     Object.assign(this.shrinkHit.style, {
       left: `${shrink.left}px`,
@@ -311,38 +303,29 @@ export class PanelHost {
     }
   }
 
-  private commitResizeLayout(): void {
-    if (this.resizeCommit !== undefined) {
-      window.cancelAnimationFrame(this.resizeCommit);
-      this.resizeCommit = undefined;
+  private listenResize(hit: HTMLButtonElement, on: boolean): void {
+    if (on) {
+      hit.addEventListener("pointermove", this.onResizePointerMove);
+      hit.addEventListener("pointerup", this.onResizePointerUp);
+      hit.addEventListener("pointercancel", this.onResizePointerUp);
+      return;
     }
-    clearResizePreview(this.shell);
-    applyShellStyles(this.shell, this.frame, this.state, {
-      animate: false,
-      settle: this.state.shrunk,
-    });
-    this.syncHits();
+    hit.removeEventListener("pointermove", this.onResizePointerMove);
+    hit.removeEventListener("pointerup", this.onResizePointerUp);
+    hit.removeEventListener("pointercancel", this.onResizePointerUp);
   }
 
   private abortResize(): void {
     const hit = this.resizing?.hit;
     if (this.resizing) {
       this.resizing = null;
-      hit?.removeEventListener("pointermove", this.onResizePointerMove);
-      hit?.removeEventListener("pointerup", this.onResizePointerUp);
-      hit?.removeEventListener("pointercancel", this.onResizePointerUp);
+      if (hit) this.listenResize(hit, false);
     }
     if (this.resizePointerId !== undefined) {
       try {
         hit?.releasePointerCapture(this.resizePointerId);
-      } catch {
-        /* Already released or never captured. */
-      }
+      } catch {}
       this.resizePointerId = undefined;
-    }
-    if (this.resizeCommit !== undefined) {
-      window.cancelAnimationFrame(this.resizeCommit);
-      this.resizeCommit = undefined;
     }
     clearResizePreview(this.shell);
   }
@@ -354,14 +337,12 @@ export class PanelHost {
     const corner = hit.dataset.corner;
     if (!RESIZE_CORNERS.includes(corner as ResizeCorner)) return;
     event.preventDefault();
-    this.commitResizeLayout();
-    this.shell.style.willChange = "transform";
+    applyResizePreview(this.shell, this.frame, this.state);
+    this.syncHits();
     this.resizePointerId = event.pointerId;
     try {
       hit.setPointerCapture(event.pointerId);
-    } catch {
-      /* Move/up still fire on the handle if capture is unavailable. */
-    }
+    } catch {}
     this.resizing = {
       startX: event.clientX,
       startY: event.clientY,
@@ -372,62 +353,36 @@ export class PanelHost {
       corner: corner as ResizeCorner,
       hit,
     };
-    hit.addEventListener("pointermove", this.onResizePointerMove);
-    hit.addEventListener("pointerup", this.onResizePointerUp);
-    hit.addEventListener("pointercancel", this.onResizePointerUp);
+    this.listenResize(hit, true);
   };
 
-  private liveRect(event: PointerEvent): {
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-  } {
-    const start = this.resizing;
-    if (!start) {
-      return { x: this.state.x, y: this.state.y, width: this.state.width, height: this.state.height };
-    }
+  private liveRect(event: PointerEvent): Box {
+    const start = this.resizing!;
     return liveResizeRect(
       { x: start.x, y: start.y, width: start.width, height: start.height },
       start.corner,
       { dx: event.clientX - start.startX, dy: event.clientY - start.startY },
-      { width: window.innerWidth, height: window.innerHeight },
+      this.viewport(),
     );
   }
 
   private onResizePointerMove = (event: PointerEvent): void => {
-    const start = this.resizing;
-    if (!start) return;
+    if (!this.resizing) return;
     const next = this.liveRect(event);
-    applyResizePreview(this.shell, start, next, start.corner);
+    applyResizePreview(this.shell, this.frame, { ...this.state, ...next });
     this.syncHits(next);
   };
 
   private onResizePointerUp = (event: PointerEvent): void => {
-    const start = this.resizing;
-    if (!start) return;
+    if (!this.resizing) return;
     const next = this.liveRect(event);
-    const hit = start.hit;
+    this.listenResize(this.resizing.hit, false);
     this.resizing = null;
-    hit.removeEventListener("pointermove", this.onResizePointerMove);
-    hit.removeEventListener("pointerup", this.onResizePointerUp);
-    hit.removeEventListener("pointercancel", this.onResizePointerUp);
     this.resizePointerId = undefined;
-    this.state.x = next.x;
-    this.state.y = next.y;
-    this.state.width = next.width;
-    this.state.height = next.height;
+    Object.assign(this.state, next);
     this.syncHits();
     this.persist();
-    // Keep the scale preview up until the iframe can resize off the pointer path.
-    this.resizeCommit = window.requestAnimationFrame(() => {
-      this.resizeCommit = window.requestAnimationFrame(() => {
-        this.resizeCommit = undefined;
-        if (this.resizing) return;
-        clearResizePreview(this.shell);
-        this.apply();
-      });
-    });
+    this.apply();
   };
 
   private persist(): void {
@@ -435,10 +390,14 @@ export class PanelHost {
     this.saveTimer = window.setTimeout(() => void savePanelState(this.state), 400);
   }
 
-  open(): void {
-    this.state.open = true;
+  private setOpen(open: boolean): void {
+    this.state.open = open;
     this.apply();
     this.persist();
+  }
+
+  open(): void {
+    this.setOpen(true);
   }
 
   get isOpen(): boolean {
@@ -451,12 +410,9 @@ export class PanelHost {
   }
 
   close(): void {
-    this.state.open = false;
-    this.apply();
-    this.persist();
+    this.setOpen(false);
   }
 
-  /** Queues until the panel signals ready, so the first snapshot is never lost. */
   send(message: ToPanel): void {
     if (!this.ready) {
       this.pending.set(message.type, message);
@@ -478,8 +434,7 @@ export class PanelHost {
   }
 
   private onMessage = (event: MessageEvent): void => {
-    if (event.source !== this.frame.contentWindow) return;
-    if (event.origin !== this.frameOrigin) return;
+    if (event.source !== this.frame.contentWindow || event.origin !== this.frameOrigin) return;
     const data: unknown = event.data;
     if (!isPanelMessage(data)) return;
 

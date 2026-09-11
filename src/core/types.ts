@@ -1,6 +1,5 @@
 import type { TreeLinks } from "./topology.js";
 
-/** Structure kinds Graphy can visualize. */
 export type StructureKind =
   | "binary-tree"
   | "linked-list"
@@ -25,32 +24,28 @@ export interface GEdge {
 
 export interface MatrixCell {
   text: string;
-  /** Truthy cells get accent fill (land in grid problems, 1s in a bitmap). */
   filled: boolean;
 }
 
 export interface MatrixData {
   rows: MatrixCell[][];
-  /** Renders row/column indices in a header gutter. */
   showIndices: boolean;
 }
 
 export interface RankGroup {
-  /** Node ids forced onto the same graphviz rank (keeps binary-tree levels flat). */
   ids: string[];
 }
 
 export interface GraphModel {
   kind: StructureKind;
   directed: boolean;
-  /** Rendered above the graph; usually the parameter name. */
   title?: string;
   nodes: GNode[];
   edges: GEdge[];
   ranks: RankGroup[];
   matrix?: MatrixData;
-  /** Binary-tree child pointers for topology morph playback. */
   links?: TreeLinks;
+  listGroups?: string[][];
 }
 
 export const KIND_LABELS: Record<StructureKind, string> = {
@@ -60,23 +55,14 @@ export const KIND_LABELS: Record<StructureKind, string> = {
 };
 
 export function visibleNodeCount(model: GraphModel): number {
-  if (model.matrix) {
-    let cells = 0;
-    for (const row of model.matrix.rows) cells += row.length;
-    return cells;
-  }
-  let count = 0;
-  for (const node of model.nodes) {
-    if (node.role !== "spine" && node.role !== "null") count += 1;
-  }
-  return count;
+  if (model.matrix) return model.matrix.rows.reduce((n, row) => n + row.length, 0);
+  return model.nodes.filter((n) => n.role !== "spine" && n.role !== "null").length;
 }
 
 export function emptyModel(kind: StructureKind, title?: string): GraphModel {
   return { kind, directed: true, title, nodes: [], edges: [], ranks: [] };
 }
 
-/** One visualizable input parameter, after recipe mapping. */
 export interface Pane {
   id: string;
   title: string;

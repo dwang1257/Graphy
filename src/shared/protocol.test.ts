@@ -4,8 +4,10 @@ import {
   PAGE_CHANNEL,
   PANEL_CHANNEL,
   isPageMessage,
+  isPageTraceMessage,
   isPanelMessage,
   isToPanel,
+  pageTraceMessage,
 } from "./protocol.js";
 
 const validSnapshot = {
@@ -120,5 +122,25 @@ describe("setShrunk messages", () => {
   it("rejects a setShrunk payload that is not a boolean", () => {
     expect(isPanelMessage({ channel: PANEL_CHANNEL, type: "setShrunk", shrunk: 1 })).toBe(false);
     expect(isPanelMessage({ channel: PANEL_CHANNEL, type: "setShrunk" })).toBe(false);
+  });
+});
+
+describe("page trace messages", () => {
+  it("accepts an enabled or disabled trace flag", () => {
+    expect(isPageTraceMessage({ channel: PAGE_CHANNEL, type: "trace", enabled: true })).toBe(true);
+    expect(isPageTraceMessage({ channel: PAGE_CHANNEL, type: "trace", enabled: false })).toBe(true);
+    expect(isPageTraceMessage(pageTraceMessage(true))).toBe(true);
+  });
+
+  it("rejects a trace flag that is not a boolean", () => {
+    expect(isPageTraceMessage({ channel: PAGE_CHANNEL, type: "trace", enabled: 1 })).toBe(false);
+    expect(isPageTraceMessage({ channel: PAGE_CHANNEL, type: "trace" })).toBe(false);
+    expect(isPageTraceMessage({ channel: PAGE_CHANNEL, type: "snapshot", enabled: true })).toBe(false);
+    expect(isPageTraceMessage({ type: "trace", enabled: true })).toBe(false);
+  });
+
+  it("does not treat a trace flag as a snapshot", () => {
+    expect(isPageMessage({ channel: PAGE_CHANNEL, type: "trace", enabled: true })).toBe(false);
+    expect(isPageMessage(pageTraceMessage(false))).toBe(false);
   });
 });

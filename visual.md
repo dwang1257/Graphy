@@ -41,6 +41,8 @@ Any language. After Run, Graphy parses lines like:
 
 Refs: `n0` (id), `@2` (index → `n2`), bare `4` (first node with that label), `1,0` (matrix cell).
 
+Compact `#graphy/[…]`: ints are tree/list visits (`0` → `n0`). **3-tuples** `(id,left,right)` patch tree topology. **2-tuples** `(r,c)` are grid cell current+visit (`"r,c"` → `cell:r,c`). Example: `#graphy/[(0,0),(0,1),(1,0)]`.
+
 Topology tokens are `parent:left,right` with `-` for `None`. Only nodes reachable from the root are listed. When topology changes, Graphy rebuilds the tree (stable ids), re-runs Graphviz, and FLIP-animates nodes to their new positions; deleted ids fade out.
 
 Playback is a scrubber under the graph. Highlights are CSS on the SVG. Walk-only frames keep the current layout; topology frames morph.
@@ -54,15 +56,15 @@ On **Run** (`interpret_solution`), not Submit:
 1. If `lang` is `python` or `python3`, append a preamble marked `GRAPHY_TRACE_V1`.
 2. The editor snapshot stays the original `typed_code`.
 3. In the judge, the preamble wraps `Solution` methods.
-4. On entry it tags `TreeNode`s with the same **level-order ids** Graphy uses (`n0` is the root; null children still consume an index).
-5. `sys.settrace` watches locals (`node`, `curr`, `root`, …) and prints `#graphy current|visit` when they point at a tagged node.
-6. After each line (and on unwind) it snapshots child pointers and prints `#graphy topology …` when the edge set changes.
-7. Repeat prints for the same current node are dropped.
+4. On entry it tags `TreeNode`s with the same **level-order ids** Graphy uses (`n0` is the root; null children still consume an index). `ListNode` chains are tagged along `.next` with the same `n{i}` ids as `parseLinkedList` (head = n0). Cycles stop when a node is seen again.
+5. `sys.settrace` watches locals (`node`, `curr`, `root`, `head`, …) and prints compact `#graphy/[…]` integers when they point at a tagged node. Grid walks emit `(r,c)` 2-tuples when `i`/`j`, `r`/`c`, `row`/`col`, or `x`/`y` are in range.
+6. After each line (and on unwind) trees snapshot child pointers and emit `(id,left,right)` patches when the edge set changes. Lists emit current/visit integers only — topology 3-tuples would corrupt list layout.
+7. Repeat prints for the same current node or cell are dropped.
 8. The stdout → frame → overlay / morph path lights and reshapes the graph.
 
-Invert Binary Tree then works with a clean editor: hit Run, scrub the walk — children slide when swaps happen. Unlinking a child fades that subtree.
+Invert Binary Tree, linked-list walks, and grid/graph cell walks then work with a clean editor: hit Run, scrub the walk. Tree children slide when swaps happen; unlinking a child fades that subtree. Lists light up as `curr`/`head`/`p`/`q` walk the chain. Matrices labeled Graph highlight `cell:r,c`.
 
-Lists and non-Python languages still need the manual protocol (or a later injector). Other languages can print `#graphy topology` by hand.
+Non-Python languages still need the manual protocol (or a later injector). Other languages can print `#graphy topology` by hand.
 
 ## Node id contract
 
@@ -81,6 +83,7 @@ The tracer’s BFS must use the same cursor rules as `parseBinaryTree`. Object i
 - `src/core/topology.ts` — topology token parse / reachability / canonicalize
 - `src/core/treeModel.ts` — `modelFromTree` / `applyTopology`
 - `src/main-world/instrument.ts` — Python snippet + Run-body rewrite
+- `src/main-world/graphTrace.ts` — grid helpers; emit compact `(r,c)` 2-tuples
 - `src/main-world/inject.ts` — apply rewrite on fetch/XHR Run; remember original code
 - `src/main-world/runResult.ts` — pull stdout out of `/check`
 - `src/panel/traceOverlay.ts` — mark SVG nodes / matrix cells
@@ -91,14 +94,13 @@ The tracer’s BFS must use the same cursor rules as `parseBinaryTree`. Object i
 
 ## What this does not do yet
 
-- Auto-trace C++ / Java / JS
-- Linked lists or grids without manual `#graphy` lines
-- Nodes allocated during the run (not in the entry BFS tag map)
+- Auto-trace C++ / Java / JS (Python trees, lists, and grids are injected on Run)
+- Nodes allocated during the run (not in the entry tag map)
 - Submit (payload is never rewritten)
 
 ## Later, if we outgrow inject-on-Run
 
 - **JS injector** on the same hook
-- **ListNode** tagging (`next` chain, same `n{i}` ids)
 - **Local replay** when we want step-through without a judge round-trip
 - **Input vs output morph** from the return value (no trace needed)
+- **Graph Node.neighbors** adjacency graphs beyond the matrix/"Graph" grid view

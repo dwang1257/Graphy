@@ -12,6 +12,18 @@ function svgDoc(markup: string): Document {
   );
 }
 
+function frame(partial: Partial<TraceFrame> & Pick<TraceFrame, "current" | "label">): TraceFrame {
+  return {
+    visited: [],
+    frontier: [],
+    line: 1,
+    links: {},
+    deleted: [],
+    allocs: [],
+    ...partial,
+  };
+}
+
 describe("applyTraceOverlay", () => {
   it("marks current, visited, and frontier nodes by title id", () => {
     const doc = svgDoc(`
@@ -19,16 +31,12 @@ describe("applyTraceOverlay", () => {
       <g id="node2" class="node"><title>n1</title><ellipse /></g>
       <g id="node3" class="node"><title>n2</title><ellipse /></g>
     `);
-    const frame: TraceFrame = {
+    applyTraceOverlay(doc.documentElement, frame({
       current: "n1",
       visited: ["n0"],
       frontier: ["n2"],
-      line: 1,
       label: "current n1",
-      links: {},
-      deleted: [],
-    };
-    applyTraceOverlay(doc.documentElement, frame);
+    }));
 
     expect(doc.querySelector('g.node[data-graphy-id="n0"]')?.getAttribute("data-graphy-state")).toContain(
       "visited",
@@ -46,15 +54,11 @@ describe("applyTraceOverlay", () => {
       <a data-graphy-href="graphy://cell/0/1"><polygon /></a>
       <a href="graphy://cell/1/0"><polygon /></a>
     `);
-    applyTraceOverlay(doc.documentElement, {
+    applyTraceOverlay(doc.documentElement, frame({
       current: "cell:0,1",
       visited: ["cell:1,0"],
-      frontier: [],
-      line: 1,
       label: "current 0,1",
-      links: {},
-      deleted: [],
-    });
+    }));
     expect(doc.querySelector('a[data-graphy-id="cell:0,1"]')?.getAttribute("data-graphy-state")).toContain(
       "current",
     );
@@ -70,15 +74,11 @@ describe("applyTraceOverlay", () => {
       <g class="node"><title>n2</title><ellipse fill="url(#graphy-node-bg)" /></g>
     `);
     doc.documentElement.setAttribute("data-graphy-image-tone", "light");
-    applyTraceOverlay(doc.documentElement, {
+    applyTraceOverlay(doc.documentElement, frame({
       current: "n1",
       visited: ["n0", "n2"],
-      frontier: [],
-      line: 1,
       label: "current n1",
-      links: {},
-      deleted: [],
-    });
+    }));
     expect(doc.querySelector('g.node[data-graphy-id="n0"]')?.getAttribute("data-graphy-tone")).toBe(
       "light",
     );
@@ -92,15 +92,7 @@ describe("applyTraceOverlay", () => {
 
   it("clearTraceOverlay removes prior marks", () => {
     const doc = svgDoc(`<g class="node"><title>n0</title><ellipse /></g>`);
-    applyTraceOverlay(doc.documentElement, {
-      current: "n0",
-      visited: [],
-      frontier: [],
-      line: 1,
-      label: "current n0",
-      links: {},
-      deleted: [],
-    });
+    applyTraceOverlay(doc.documentElement, frame({ current: "n0", label: "current n0" }));
     clearTraceOverlay(doc.documentElement);
     expect(doc.querySelector("[data-graphy-state]")).toBeNull();
     expect(doc.querySelector("[data-graphy-tone]")).toBeNull();

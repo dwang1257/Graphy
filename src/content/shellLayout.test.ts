@@ -27,6 +27,13 @@ import {
 
 const ROUND = `round ${SHELL_RADIUS_PX}px`;
 const EXPANDED_CLIP = `inset(0px 0px 0px 0px ${ROUND})`;
+const OPEN = { x: 10, y: 20, width: 460, height: 520, open: true, shrunk: false };
+const START = { x: 100, y: 50, width: 460, height: 520 };
+const VIEWPORT = { width: 800, height: 600 };
+
+function elements(): { shell: HTMLDivElement; frame: HTMLIFrameElement } {
+  return { shell: document.createElement("div"), frame: document.createElement("iframe") };
+}
 
 describe("shellGeometry", () => {
   const expanded = { width: 460, height: 520, shrunk: false };
@@ -65,7 +72,6 @@ describe("shellGeometry", () => {
 
 describe("shrinkHitOffset", () => {
   it("sits over the shrink chevron, not the close button", () => {
-    // titlebar: 12px pad, 28px close, 12px gap, 28px shrink, 6px vertical pad (see TitleBar + styles.css)
     expect(shrinkHitOffset()).toEqual({ top: 0, right: 46, width: 40, height: 40 });
   });
 
@@ -80,14 +86,11 @@ describe("shrinkHitOffset", () => {
 
 describe("applyShellStyles", () => {
   it("does not change iframe pixel size when the shell shrinks", () => {
-    const shell = document.createElement("div");
-    const frame = document.createElement("iframe");
-    const state = { x: 10, y: 20, width: 460, height: 520, open: true, shrunk: false };
-
-    applyShellStyles(shell, frame, state, { animate: false });
+    const { shell, frame } = elements();
+    applyShellStyles(shell, frame, OPEN, { animate: false });
     const width = frame.style.width;
     const height = frame.style.height;
-    applyShellStyles(shell, frame, { ...state, shrunk: true }, { animate: true });
+    applyShellStyles(shell, frame, { ...OPEN, shrunk: true }, { animate: true });
 
     expect(frame.style.width).toBe(width);
     expect(frame.style.height).toBe(height);
@@ -97,10 +100,8 @@ describe("applyShellStyles", () => {
   });
 
   it("does not rewrite iframe pixels when settling the shrunk box", () => {
-    const shell = document.createElement("div");
-    const frame = document.createElement("iframe");
-    const state = { x: 10, y: 20, width: 460, height: 520, open: true, shrunk: true };
-
+    const { shell, frame } = elements();
+    const state = { ...OPEN, shrunk: true };
     applyShellStyles(shell, frame, state, { animate: true, settle: false });
     const before = `${frame.style.width}|${frame.style.height}`;
     applyShellStyles(shell, frame, state, { animate: false, settle: true });
@@ -111,9 +112,8 @@ describe("applyShellStyles", () => {
   });
 
   it("can leave clip-path untouched so WAAPI owns the interpolation", () => {
-    const shell = document.createElement("div");
-    const frame = document.createElement("iframe");
-    const state = { x: 10, y: 20, width: 460, height: 520, open: true, shrunk: true };
+    const { shell, frame } = elements();
+    const state = { ...OPEN, shrunk: true };
     applyShellStyles(shell, frame, state, { animate: false, settle: false });
     shell.style.clipPath = "inset(0px)";
     applyShellStyles(shell, frame, state, { animate: false, settle: false, clipPath: false });
@@ -121,11 +121,9 @@ describe("applyShellStyles", () => {
   });
 
   it("keeps the title bar visible after the shrink clip settles", () => {
-    const shell = document.createElement("div");
-    const frame = document.createElement("iframe");
-    const state = { x: 10, y: 20, width: 460, height: 520, open: true, shrunk: true };
+    const { shell, frame } = elements();
+    const state = { ...OPEN, shrunk: true };
     const animatedTo = shellClipPath(state.height, true);
-
     applyShellStyles(shell, frame, state, {
       animate: false,
       settle: true,
@@ -159,83 +157,107 @@ describe("clipAnimation", () => {
 });
 
 describe("live resize", () => {
-  it("scales the shell without changing iframe pixels", () => {
-    const shell = document.createElement("div");
+  it("resizes the shell and iframe to native pixels without a scale transform", () => {
+    const { shell, frame } = elements();
     const from = { width: 460, height: 520 };
-    const to = { width: 230, height: 260 };
-    expect(resizeScale(from, to)).toEqual({ sx: 0.5, sy: 0.5 });
-    applyResizePreview(shell, from, to);
-    expect(shell.style.transform).toBe("scale(0.5, 0.5)");
-    expect(shell.style.transformOrigin).toBe("top left");
-    expect(shell.style.willChange).toBe("transform");
+    const to = { width: 920, height: 1040 };
+    expect(resizeScale(from, to)).toEqual({ sx: 2, sy: 2 });
+    applyResizePreview(shell, frame, { ...OPEN, width: to.width, height: to.height });
+    expect(shell.style.transform).toBe("");
+    expect(shell.style.width).toBe("920px");
+    expect(shell.style.height).toBe("1040px");
+    expect(frame.style.width).toBe("920px");
+    expect(frame.style.height).toBe("1040px");
     clearResizePreview(shell);
     expect(shell.style.transform).toBe("");
     expect(shell.style.willChange).toBe("");
   });
 
+  it("settled resize path does not leave a scale transform on the shell", () => {
+    const { shell, frame } = elements();
+    applyShellStyles(shell, frame, OPEN, { animate: false });
+    shell.style.transform = "scale(2, 2)";
+    shell.style.transformOrigin = "top left";
+    shell.style.willChange = "transform";
+
+    applyResizePreview(shell, frame, { ...OPEN, width: 920, height: 1040 });
+    clearResizePreview(shell);
+    applyShellStyles(shell, frame, { ...OPEN, width: 920, height: 1040 }, { animate: false, settle: false });
+
+    expect(shell.style.transform).toBe("");
+    expect(shell.style.transformOrigin).toBe("");
+    expect(shell.style.willChange).toBe("");
+    expect(shell.style.width).toBe("920px");
+    expect(shell.style.height).toBe("1040px");
+    expect(frame.style.width).toBe("920px");
+    expect(frame.style.height).toBe("1040px");
+  });
+
   it("clamps to a minimum and to the viewport", () => {
-    expect(clampPanelSize({ width: 10, height: 10 }, { width: 800, height: 600 }, { x: 0, y: 0 })).toEqual({
+    expect(clampPanelSize({ width: 10, height: 10 }, VIEWPORT, { x: 0, y: 0 })).toEqual({
       width: MIN_PANEL_WIDTH,
       height: MIN_PANEL_HEIGHT,
     });
-    expect(clampPanelSize({ width: 900, height: 900 }, { width: 800, height: 600 }, { x: 100, y: 100 })).toEqual({
+    expect(clampPanelSize({ width: 900, height: 900 }, VIEWPORT, { x: 100, y: 100 })).toEqual({
       width: 700,
       height: 500,
     });
   });
 
   it("places a resize handle on each corner", () => {
-    const box = { x: 100, y: 50, width: 460, height: 520 };
-    expect(resizeHitPosition(box, "se")).toEqual({
+    expect(resizeHitPosition(START, "se")).toEqual({
       left: 100 + 460 - RESIZE_HIT_PX,
       top: 50 + 520 - RESIZE_HIT_PX,
     });
-    expect(resizeHitPosition(box, "sw")).toEqual({
+    expect(resizeHitPosition(START, "sw")).toEqual({
       left: 100,
       top: 50 + 520 - RESIZE_HIT_PX,
     });
-    expect(resizeHitPosition(box, "ne")).toEqual({
+    expect(resizeHitPosition(START, "ne")).toEqual({
       left: 100 + 460 - RESIZE_HIT_PX,
       top: 50,
     });
-    expect(resizeHitPosition(box, "nw")).toEqual({
+    expect(resizeHitPosition(START, "nw")).toEqual({
       left: 100,
       top: 50,
     });
   });
 
-  it("scales from the opposite corner of the dragged handle", () => {
+  it("keeps the opposite edge fixed in native layout, not a scale origin", () => {
     expect(resizeTransformOrigin("se")).toBe("top left");
     expect(resizeTransformOrigin("sw")).toBe("top right");
     expect(resizeTransformOrigin("ne")).toBe("bottom left");
     expect(resizeTransformOrigin("nw")).toBe("bottom right");
-    const shell = document.createElement("div");
-    applyResizePreview(shell, { width: 460, height: 520 }, { width: 230, height: 260 }, "nw");
-    expect(shell.style.transformOrigin).toBe("bottom right");
+    const { shell, frame } = elements();
+    applyResizePreview(shell, frame, { x: 110, y: 70, width: 450, height: 500, open: true, shrunk: false });
+    expect(shell.style.left).toBe("110px");
+    expect(shell.style.top).toBe("70px");
+    expect(shell.style.width).toBe("450px");
+    expect(frame.style.width).toBe("450px");
+    expect(shell.style.transform).toBe("");
   });
 
   it("resizes from any corner and keeps the opposite edge fixed", () => {
-    const start = { x: 100, y: 50, width: 460, height: 520 };
-    const viewport = { width: 800, height: 600 };
-    expect(liveResizeRect(start, "se", { dx: 10, dy: 20 }, viewport)).toEqual({
+    const delta = { dx: 10, dy: 20 };
+    expect(liveResizeRect(START, "se", delta, VIEWPORT)).toEqual({
       x: 100,
       y: 50,
       width: 470,
       height: 540,
     });
-    expect(liveResizeRect(start, "sw", { dx: 10, dy: 20 }, viewport)).toEqual({
+    expect(liveResizeRect(START, "sw", delta, VIEWPORT)).toEqual({
       x: 110,
       y: 50,
       width: 450,
       height: 540,
     });
-    expect(liveResizeRect(start, "ne", { dx: 10, dy: 20 }, viewport)).toEqual({
+    expect(liveResizeRect(START, "ne", delta, VIEWPORT)).toEqual({
       x: 100,
       y: 70,
       width: 470,
       height: 500,
     });
-    expect(liveResizeRect(start, "nw", { dx: 10, dy: 20 }, viewport)).toEqual({
+    expect(liveResizeRect(START, "nw", delta, VIEWPORT)).toEqual({
       x: 110,
       y: 70,
       width: 450,
@@ -244,15 +266,13 @@ describe("live resize", () => {
   });
 
   it("clamps a west or north drag to the viewport and minimum size", () => {
-    const start = { x: 100, y: 50, width: 460, height: 520 };
-    const viewport = { width: 800, height: 600 };
-    expect(liveResizeRect(start, "sw", { dx: -200, dy: 0 }, viewport)).toEqual({
+    expect(liveResizeRect(START, "sw", { dx: -200, dy: 0 }, VIEWPORT)).toEqual({
       x: 0,
       y: 50,
       width: 560,
       height: 520,
     });
-    expect(liveResizeRect(start, "nw", { dx: 400, dy: 400 }, viewport)).toEqual({
+    expect(liveResizeRect(START, "nw", { dx: 400, dy: 400 }, VIEWPORT)).toEqual({
       x: 100 + 460 - MIN_PANEL_WIDTH,
       y: 50 + 520 - MIN_PANEL_HEIGHT,
       width: MIN_PANEL_WIDTH,

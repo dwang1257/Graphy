@@ -1,6 +1,6 @@
-import type { JSX } from "preact";
+import type { ComponentChildren, JSX } from "preact";
 import { useEffect, useState } from "preact/hooks";
-import { CANVAS_PRESETS, normalizeCssHex } from "../settings/cssColor.js";
+import { CANVAS_PRESETS, NODE_FILL_PRESETS, normalizeCssHex, type CanvasPreset } from "../settings/cssColor.js";
 import {
   DEFAULT_LAYOUT,
   DARK,
@@ -59,27 +59,24 @@ export function SettingsDrawer({ settings, activePalette, onChange, onClose }: P
   const palette = settings[activePalette];
   const defaults = activePalette === "light" ? LIGHT : DARK;
 
-  const setLayout = <K extends keyof typeof layout>(key: K, value: (typeof layout)[K]): void => {
+  function setLayout<K extends keyof typeof layout>(key: K, value: (typeof layout)[K]): void {
     onChange({ ...settings, layout: { ...layout, [key]: value } });
-  };
+  }
 
-  const setPalette = (patch: Partial<Palette>): void => {
+  function setPalette(patch: Partial<Palette>): void {
     onChange({ ...settings, [activePalette]: { ...palette, ...patch } });
-  };
+  }
 
-  const onImageUpload = (
-    file: File | undefined,
-    key: "backgroundImage" | "nodeBackgroundImage",
-  ): void => {
+  function onImageUpload(file: File | undefined, key: "backgroundImage" | "nodeBackgroundImage"): void {
     if (!file) return;
     const reader = new FileReader();
     reader.onload = () => {
       if (typeof reader.result === "string") setPalette({ [key]: reader.result });
     };
     reader.readAsDataURL(file);
-  };
+  }
 
-  const resetStyle = (): void => {
+  function resetStyle(): void {
     onChange({
       ...settings,
       layout: {
@@ -93,10 +90,11 @@ export function SettingsDrawer({ settings, activePalette, onChange, onClose }: P
         background: defaults.background,
         backgroundImage: defaults.backgroundImage,
         nodeBackgroundImage: defaults.nodeBackgroundImage,
+        nodeFill: defaults.nodeFill,
         edgeColor: defaults.edgeColor,
       },
     });
-  };
+  }
 
   return (
     <aside class="style-rail" role="dialog" aria-label="Style your graph">
@@ -107,69 +105,46 @@ export function SettingsDrawer({ settings, activePalette, onChange, onClose }: P
       </header>
 
       <div class="style-rail-body">
-        <section class="style-section">
-          <h3 class="style-section-title">APPEARANCE</h3>
-          <div class="shape-group cols-2" role="group" aria-label="Color mode">
-            {MODES.map(({ value, label }) => (
-              <button
-                key={value}
-                type="button"
-                class="shape-btn"
-                aria-pressed={settings.mode === value}
-                onClick={() => onChange({ ...settings, mode: value })}
-              >
-                <span class="shape-label">{label}</span>
-              </button>
-            ))}
-          </div>
-        </section>
+        <Section title="APPEARANCE">
+          <ChoiceGroup
+            ariaLabel="Color mode"
+            cols={2}
+            items={MODES.map(({ value, label }) => ({
+              key: value,
+              label,
+              pressed: settings.mode === value,
+              onClick: () => onChange({ ...settings, mode: value }),
+            }))}
+          />
+        </Section>
 
-        <section class="style-section">
-          <h3 class="style-section-title">NODE SHAPE</h3>
-          <div class="shape-group" role="group" aria-label="Node shape">
-            {styleNodeShapes().map(([value, label]) => {
-              const Icon = SHAPE_ICONS[value];
-              return (
-                <button
-                  key={value}
-                  type="button"
-                  class="shape-btn"
-                  aria-label={label}
-                  aria-pressed={layout.nodeShape === value}
-                  onClick={() => setLayout("nodeShape", value)}
-                >
-                  <span class="shape-icon">
-                    <Icon />
-                  </span>
-                  <span class="shape-label">{label}</span>
-                </button>
-              );
-            })}
-          </div>
-        </section>
+        <Section title="NODE SHAPE">
+          <ChoiceGroup
+            ariaLabel="Node shape"
+            items={styleNodeShapes().map(([value, label]) => ({
+              key: value,
+              label,
+              ariaLabel: label,
+              pressed: layout.nodeShape === value,
+              icon: SHAPE_ICONS[value],
+              onClick: () => setLayout("nodeShape", value),
+            }))}
+          />
+        </Section>
 
-        <section class="style-section">
-          <h3 class="style-section-title">EDGES</h3>
-          <div class="shape-group cols-4" role="group" aria-label="Edge style">
-            {styleEdgeStyles().map(([value, label]) => {
-              const Icon = EDGE_ICONS[value];
-              return (
-                <button
-                  key={value}
-                  type="button"
-                  class="shape-btn"
-                  aria-label={label}
-                  aria-pressed={layout.edgeStyle === value}
-                  onClick={() => setLayout("edgeStyle", value)}
-                >
-                  <span class="shape-icon">
-                    <Icon />
-                  </span>
-                  <span class="shape-label">{label}</span>
-                </button>
-              );
-            })}
-          </div>
+        <Section title="EDGES">
+          <ChoiceGroup
+            ariaLabel="Edge style"
+            cols={4}
+            items={styleEdgeStyles().map(([value, label]) => ({
+              key: value,
+              label,
+              ariaLabel: label,
+              pressed: layout.edgeStyle === value,
+              icon: EDGE_ICONS[value],
+              onClick: () => setLayout("edgeStyle", value),
+            }))}
+          />
           <HexColorField
             id="edge-hex"
             label="Color"
@@ -179,28 +154,17 @@ export function SettingsDrawer({ settings, activePalette, onChange, onClose }: P
             onChange={(edgeColor) => setPalette({ edgeColor })}
           />
           <label class="color-field-label">Arrows</label>
-          <div class="shape-group cols-2" role="group" aria-label="Arrowheads">
-            {(
-              [
-                [true, "On"],
-                [false, "Off"],
-              ] as const
-            ).map(([value, label]) => (
-              <button
-                key={label}
-                type="button"
-                class="shape-btn"
-                aria-pressed={layout.showArrowheads === value}
-                onClick={() => setLayout("showArrowheads", value)}
-              >
-                <span class="shape-label">{label}</span>
-              </button>
-            ))}
-          </div>
-        </section>
+          <ChoiceGroup
+            ariaLabel="Arrowheads"
+            cols={2}
+            items={[
+              { key: "on", label: "On", pressed: layout.showArrowheads, onClick: () => setLayout("showArrowheads", true) },
+              { key: "off", label: "Off", pressed: !layout.showArrowheads, onClick: () => setLayout("showArrowheads", false) },
+            ]}
+          />
+        </Section>
 
-        <section class="style-section">
-          <h3 class="style-section-title">BACKGROUND</h3>
+        <Section title="BACKGROUND">
           <HexColorField
             id="bg-hex"
             label="Color"
@@ -209,61 +173,40 @@ export function SettingsDrawer({ settings, activePalette, onChange, onClose }: P
             fallback={defaults.background}
             onChange={(background) => setPalette({ background })}
           />
-          <div class="color-presets" role="group" aria-label="Background presets">
-            {CANVAS_PRESETS.map(({ hex: preset, label }) => (
-              <button
-                key={preset}
-                type="button"
-                class="color-preset"
-                style={{ "--swatch": preset } as JSX.CSSProperties}
-                aria-label={label}
-                aria-pressed={(normalizeCssHex(palette.background) ?? defaults.background) === preset}
-                title={label}
-                onClick={() => setPalette({ background: preset })}
-              />
-            ))}
-          </div>
-          <div class="bg-image-row">
-            <label class="btn btn-primary bg-upload-btn">
-              Upload image
-              <input
-                type="file"
-                accept="image/*"
-                hidden
-                onChange={(e) => onImageUpload(e.currentTarget.files?.[0], "backgroundImage")}
-              />
-            </label>
-            {palette.backgroundImage && (
-              <button type="button" class="btn" onClick={() => setPalette({ backgroundImage: null })}>
-                Clear
-              </button>
-            )}
-          </div>
-        </section>
+          <PresetRow
+            ariaLabel="Background presets"
+            presets={CANVAS_PRESETS}
+            selected={normalizeCssHex(palette.background) ?? defaults.background}
+            onPick={(background) => setPalette({ background })}
+          />
+          <ImageRow
+            image={palette.backgroundImage}
+            onUpload={(file) => onImageUpload(file, "backgroundImage")}
+            onClear={() => setPalette({ backgroundImage: null })}
+          />
+        </Section>
 
-        <section class="style-section">
-          <h3 class="style-section-title">NODE BACKGROUND</h3>
-          <div class="node-bg-image-row">
-            <label class="btn btn-primary node-bg-upload-btn">
-              Upload image
-              <input
-                type="file"
-                accept="image/*"
-                hidden
-                onChange={(e) => onImageUpload(e.currentTarget.files?.[0], "nodeBackgroundImage")}
-              />
-            </label>
-            {palette.nodeBackgroundImage && (
-              <button
-                type="button"
-                class="btn"
-                onClick={() => setPalette({ nodeBackgroundImage: null })}
-              >
-                Clear
-              </button>
-            )}
-          </div>
-        </section>
+        <Section title="NODE BACKGROUND">
+          <HexColorField
+            id="node-fill-hex"
+            label="Color"
+            ariaLabel="Node background color"
+            value={palette.nodeFill}
+            fallback={defaults.nodeFill}
+            onChange={(nodeFill) => setPalette({ nodeFill })}
+          />
+          <PresetRow
+            ariaLabel="Node background presets"
+            presets={NODE_FILL_PRESETS}
+            selected={normalizeCssHex(palette.nodeFill) ?? defaults.nodeFill}
+            onPick={(nodeFill) => setPalette({ nodeFill })}
+          />
+          <ImageRow
+            image={palette.nodeBackgroundImage}
+            onUpload={(file) => onImageUpload(file, "nodeBackgroundImage")}
+            onClear={() => setPalette({ nodeBackgroundImage: null })}
+          />
+        </Section>
       </div>
 
       <footer class="style-rail-footer">
@@ -275,14 +218,105 @@ export function SettingsDrawer({ settings, activePalette, onChange, onClose }: P
   );
 }
 
-function HexColorField(props: {
+function Section(props: { title: string; children: ComponentChildren }): JSX.Element {
+  return (
+    <section class="style-section">
+      <h3 class="style-section-title">{props.title}</h3>
+      {props.children}
+    </section>
+  );
+}
+
+interface Choice {
+  key: string;
+  label: string;
+  pressed: boolean;
+  onClick: () => void;
+  icon?: () => JSX.Element;
+  ariaLabel?: string;
+}
+
+function ChoiceGroup(props: { ariaLabel: string; cols?: 2 | 4; items: Choice[] }): JSX.Element {
+  return (
+    <div class={props.cols ? `shape-group cols-${props.cols}` : "shape-group"} role="group" aria-label={props.ariaLabel}>
+      {props.items.map((item) => {
+        const Icon = item.icon;
+        return (
+          <button
+            key={item.key}
+            type="button"
+            class="shape-btn"
+            aria-label={item.ariaLabel}
+            aria-pressed={item.pressed}
+            onClick={item.onClick}
+          >
+            {Icon ? (
+              <span class="shape-icon">
+                <Icon />
+              </span>
+            ) : null}
+            <span class="shape-label">{item.label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function PresetRow(props: {
+  ariaLabel: string;
+  presets: readonly CanvasPreset[];
+  selected: string;
+  onPick: (hex: string) => void;
+}): JSX.Element {
+  return (
+    <div class="color-presets" role="group" aria-label={props.ariaLabel}>
+      {props.presets.map(({ hex, label }) => (
+        <button
+          key={hex}
+          type="button"
+          class="color-preset"
+          style={{ "--swatch": hex } as JSX.CSSProperties}
+          aria-label={label}
+          aria-pressed={props.selected === hex}
+          title={label}
+          onClick={() => props.onPick(hex)}
+        />
+      ))}
+    </div>
+  );
+}
+
+function ImageRow(props: {
+  image: string | null;
+  onUpload: (file: File | undefined) => void;
+  onClear: () => void;
+}): JSX.Element {
+  return (
+    <div class="image-row">
+      <label class="btn btn-primary">
+        Upload image
+        <input type="file" accept="image/*" hidden onChange={(e) => props.onUpload(e.currentTarget.files?.[0])} />
+      </label>
+      {props.image ? (
+        <button type="button" class="btn" onClick={props.onClear}>
+          Clear
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+interface HexColorFieldProps {
   id: string;
   label: string;
   ariaLabel: string;
   value: string;
   fallback: string;
   onChange: (hex: string) => void;
-}): JSX.Element {
+}
+
+function HexColorField(props: HexColorFieldProps): JSX.Element {
   const hex = normalizeCssHex(props.value) ?? props.fallback;
   const [hexDraft, setHexDraft] = useState(hex);
   const [hexInvalid, setHexInvalid] = useState(false);
@@ -292,33 +326,29 @@ function HexColorField(props: {
     setHexInvalid(false);
   }, [hex]);
 
-  const commit = (raw: string, persistInvalid: boolean): void => {
+  function apply(raw: string, persistInvalid: boolean, rewriteDraft: boolean): void {
     const next = normalizeCssHex(raw);
     if (next) {
-      setHexDraft(next);
+      if (rewriteDraft) setHexDraft(next);
       setHexInvalid(false);
       if (next !== props.value) props.onChange(next);
       return;
     }
     if (persistInvalid) setHexInvalid(true);
-  };
+  }
 
   return (
     <>
       <label class="color-field-label" for={props.id}>{props.label}</label>
       <div class="color-field">
-        <label
-          class="color-swatch"
-          style={{ "--swatch": hex } as JSX.CSSProperties}
-          title="Pick a custom color"
-        >
+        <label class="color-swatch" style={{ "--swatch": hex } as JSX.CSSProperties} title="Pick a custom color">
           <span class="color-swatch-fill" />
           <input
             type="color"
             class="color-swatch-native"
             value={hex}
             aria-label={props.ariaLabel}
-            onInput={(e) => commit(e.currentTarget.value, false)}
+            onInput={(e) => apply(e.currentTarget.value, false, true)}
           />
         </label>
         <input
@@ -336,13 +366,9 @@ function HexColorField(props: {
           onInput={(e) => {
             const raw = e.currentTarget.value;
             setHexDraft(raw);
-            const next = normalizeCssHex(raw);
-            if (next) {
-              setHexInvalid(false);
-              if (next !== props.value) props.onChange(next);
-            }
+            apply(raw, false, false);
           }}
-          onBlur={() => commit(hexDraft, true)}
+          onBlur={() => apply(hexDraft, true, true)}
         />
       </div>
     </>

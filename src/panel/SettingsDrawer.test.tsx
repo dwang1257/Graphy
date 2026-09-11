@@ -3,19 +3,17 @@
 import { render } from "preact";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { DEFAULT_SETTINGS } from "../settings/schema.js";
+import { DARK, DEFAULT_SETTINGS, type Settings } from "../settings/schema.js";
 import { SettingsDrawer } from "./SettingsDrawer.js";
 
-function mount(): HTMLDivElement {
+function mount(
+  settings: Settings = DEFAULT_SETTINGS,
+  onChange: (next: Settings) => void = () => {},
+): HTMLDivElement {
   const root = document.createElement("div");
   document.body.appendChild(root);
   render(
-    <SettingsDrawer
-      settings={DEFAULT_SETTINGS}
-      activePalette="dark"
-      onChange={() => {}}
-      onClose={() => {}}
-    />,
+    <SettingsDrawer settings={settings} activePalette="dark" onChange={onChange} onClose={() => {}} />,
     root,
   );
   return root;
@@ -69,5 +67,26 @@ describe("SettingsDrawer", () => {
     expect(labels(root, "Edge style")).toEqual(["Solid", "Dashed", "Dotted", "Bold"]);
     expect(root.querySelector('[aria-label="Edge color"]')).not.toBeNull();
     expect(labels(root, "Arrowheads")).toEqual(["On", "Off"]);
+  });
+
+  it("offers a node background color control", () => {
+    const root = mount();
+    expect(root.querySelector('[aria-label="Node background color"]')).not.toBeNull();
+    expect(root.querySelector('[aria-label="Node background color hex"]')).not.toBeNull();
+  });
+
+  it("resets node fill to the theme default", () => {
+    const captured: Array<typeof DEFAULT_SETTINGS> = [];
+    mount(
+      { ...DEFAULT_SETTINGS, dark: { ...DEFAULT_SETTINGS.dark, nodeFill: "#ff00aa" } },
+      (next) => captured.push(next),
+    );
+
+    const reset = [...document.querySelectorAll("button")].find((btn) => btn.textContent === "Reset style");
+    expect(reset).toBeDefined();
+    reset?.click();
+
+    expect(captured).toHaveLength(1);
+    expect(captured[0]?.dark.nodeFill).toBe(DARK.nodeFill);
   });
 });

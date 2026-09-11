@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
 import { GRAPHY_TRACE_MARK, PYTHON_TRACER, instrumentPython, instrumentRunBody } from "./instrument.js";
@@ -15,6 +16,31 @@ const invert = `class Solution:
 `;
 
 describe("instrumentPython", () => {
+  it("compiles a typical reverse-list Solution.py after instrumentation", () => {
+    const starter = `# Definition for singly-linked list.
+# class ListNode:
+#     def __init__(self, val=0, next=None):
+#         self.val = val
+#         self.next = next
+class Solution:
+    def reverseList(self, head):
+        prev = None
+        curr = head
+        while curr:
+            nxt = curr.next
+            curr.next = prev
+            prev = curr
+            curr = nxt
+        return prev
+`;
+    expect(() => {
+      execFileSync("python3", ["-c", "compile(__import__('sys').stdin.read(), 'Solution.py', 'exec')"], {
+        input: instrumentPython(starter),
+        encoding: "utf8",
+      });
+    }).not.toThrow();
+  });
+
   it("appends the tracer once", () => {
     const once = instrumentPython(invert);
     expect(once).toContain("def invertTree");
@@ -28,6 +54,10 @@ describe("instrumentPython", () => {
     expect(PYTHON_TRACER).not.toContain("#graphy current");
     expect(PYTHON_TRACER).not.toContain("#graphy visit");
     expect(PYTHON_TRACER).not.toContain("#graphy topology");
+    expect(PYTHON_TRACER).toContain("def is_list");
+    expect(PYTHON_TRACER).toContain("def is_grid");
+    expect(PYTHON_TRACER).toContain('return "(%s,%s)" % item');
+    expect(PYTHON_TRACER).not.toMatch(/\bnonlocal\b/);
   });
 });
 

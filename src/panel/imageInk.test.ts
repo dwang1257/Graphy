@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
   contrastInk,
+  contrastInkFromCss,
   DARK_INK,
+  haloFromInk,
   LIGHT_INK,
   imageToneFromInk,
   medianLuminance,
   paintTone,
+  stageOverlayInk,
 } from "./imageInk.js";
 
 function rgba(...pixels: Array<[number, number, number, number?]>): Uint8ClampedArray {
@@ -52,5 +55,39 @@ describe("contrast ink from image brightness", () => {
       [255, 255, 255] as [number, number, number],
     ];
     expect(contrastInk(medianLuminance(rgba(...pixels)))).toBe(LIGHT_INK);
+  });
+});
+
+describe("contrast ink from CSS fills", () => {
+  it("picks dark ink on a light CSS fill so numbers stay readable", () => {
+    expect(contrastInkFromCss("#eef2ff")).toBe(DARK_INK);
+    expect(contrastInkFromCss("#ffffff")).toBe(DARK_INK);
+    expect(contrastInkFromCss("rgb(248, 250, 252)")).toBe(DARK_INK);
+  });
+
+  it("picks light ink on a dark CSS fill so numbers stay readable", () => {
+    expect(contrastInkFromCss("#312e81")).toBe(LIGHT_INK);
+    expect(contrastInkFromCss("#111827")).toBe(LIGHT_INK);
+    expect(contrastInkFromCss("rgb(79, 70, 229)")).toBe(LIGHT_INK);
+  });
+});
+
+describe("stage overlay ink and halo", () => {
+  it("uses dark letters and a light halo on a solid light fill", () => {
+    expect(stageOverlayInk("#ffffff")).toEqual({ ink: DARK_INK, halo: LIGHT_INK });
+    expect(stageOverlayInk("#eef2ff")).toEqual({ ink: DARK_INK, halo: LIGHT_INK });
+    expect(haloFromInk(DARK_INK)).toBe(LIGHT_INK);
+  });
+
+  it("uses light letters and a dark halo on a solid dark fill", () => {
+    expect(stageOverlayInk("#1a1a1a")).toEqual({ ink: LIGHT_INK, halo: DARK_INK });
+    expect(stageOverlayInk("#111827")).toEqual({ ink: LIGHT_INK, halo: DARK_INK });
+    expect(haloFromInk(LIGHT_INK)).toBe(DARK_INK);
+  });
+
+  it("uses photo ink instead of the fallback fill color", () => {
+    expect(stageOverlayInk("#ffffff", LIGHT_INK)).toEqual({ ink: LIGHT_INK, halo: DARK_INK });
+    expect(stageOverlayInk("#1a1a1a", DARK_INK)).toEqual({ ink: DARK_INK, halo: LIGHT_INK });
+    expect(stageOverlayInk("#ffffff", null)).toEqual({ ink: DARK_INK, halo: LIGHT_INK });
   });
 });

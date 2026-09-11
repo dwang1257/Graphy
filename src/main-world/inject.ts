@@ -1,4 +1,4 @@
-import { PAGE_CHANNEL, type Snapshot } from "../shared/protocol.js";
+import { PAGE_CHANNEL, isPageTraceMessage, type Snapshot } from "../shared/protocol.js";
 import { instrumentRunBody } from "./instrument.js";
 import { extractRunStdout, extractRunStdoutByCase } from "./runResult.js";
 import { captureCasesFromTabs } from "./testcaseCapture.js";
@@ -22,6 +22,16 @@ let last = "";
 let generation = 0;
 let cache: { slug: string; cases: string[] } | null = null;
 let flight: Promise<void> = Promise.resolve();
+let tracingEnabled = false;
+
+function onPageMessage(event: MessageEvent): void {
+  if (event.source !== window) return;
+  if (event.origin !== location.origin) return;
+  if (!isPageTraceMessage(event.data)) return;
+  tracingEnabled = event.data.enabled;
+}
+
+window.addEventListener("message", onPageMessage);
 
 function docOf(content: CMNode): string | null {
   const view = content.cmView?.rootView?.view;
@@ -212,7 +222,7 @@ function maybeWalkResults(url: string, body: Record<string, unknown> | null): vo
 }
 
 function outgoingRun(body: unknown): { remember: unknown; send: unknown } {
-  const rewritten = instrumentRunBody(body);
+  const rewritten = tracingEnabled ? instrumentRunBody(body) : null;
   return {
     remember: body,
     send: rewritten ? rewritten.body : body,

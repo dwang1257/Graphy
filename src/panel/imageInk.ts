@@ -1,14 +1,10 @@
-/** Theme ink on light paper — used when the photo itself is light. */
 export const DARK_INK = "#1e1b4b";
-/** Near-paper ink — used when the photo itself is dark. */
 export const LIGHT_INK = "#f8fafc";
 export const NODE_OUTLINE = "#000000";
-/** Set on the SVG root when a node-background photo's luminance is known. */
 export const IMAGE_TONE_ATTR = "data-graphy-image-tone";
 
 export type PaintTone = "light" | "dark";
 
-/** Relative luminance above this counts as a light image. */
 const LIGHT_THRESHOLD = 0.55;
 
 function channelToLinear(channel: number): number {
@@ -16,12 +12,10 @@ function channelToLinear(channel: number): number {
   return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
 }
 
-/** WCAG relative luminance for an sRGB triple. */
 export function relativeLuminance(r: number, g: number, b: number): number {
   return 0.2126 * channelToLinear(r) + 0.7152 * channelToLinear(g) + 0.0722 * channelToLinear(b);
 }
 
-/** Median luminance of opaque pixels in an RGBA buffer. */
 export function medianLuminance(rgba: Uint8ClampedArray | Uint8Array): number {
   const values: number[] = [];
   for (let i = 0; i + 3 < rgba.length; i += 4) {
@@ -34,59 +28,51 @@ export function medianLuminance(rgba: Uint8ClampedArray | Uint8Array): number {
   return values.length % 2 === 1 ? values[mid]! : (values[mid - 1]! + values[mid]!) / 2;
 }
 
-export function contrastInk(luminance: number): string {
-  return luminance > LIGHT_THRESHOLD ? DARK_INK : LIGHT_INK;
-}
-
 export function toneFromLuminance(luminance: number): PaintTone {
   return luminance > LIGHT_THRESHOLD ? "light" : "dark";
 }
 
-/** Light photo → dark ink, so the SVG root's tone is the inverse of contrast ink. */
+export function contrastInk(luminance: number): string {
+  return toneFromLuminance(luminance) === "light" ? DARK_INK : LIGHT_INK;
+}
+
+export function contrastInkFromCss(color: string): string {
+  const rgb = rgbFromCssColor(color);
+  return rgb ? contrastInk(relativeLuminance(...rgb)) : DARK_INK;
+}
+
+export function haloFromInk(ink: string): string {
+  return ink === DARK_INK ? LIGHT_INK : DARK_INK;
+}
+
+export function stageOverlayInk(background: string, imageInk?: string | null): { ink: string; halo: string } {
+  const ink = imageInk ?? contrastInkFromCss(background);
+  return { ink, halo: haloFromInk(ink) };
+}
+
 export function imageToneFromInk(ink: string): PaintTone {
   return ink === DARK_INK ? "light" : "dark";
 }
 
-/** Parse `#rgb`, `#rrggbb`, and `rgb()` / `rgba()` fills Graphviz and palettes emit. */
 export function rgbFromCssColor(value: string): [number, number, number] | null {
   const s = value.trim().toLowerCase();
-  const hex = /^#([0-9a-f]{3,8})$/.exec(s);
-  if (hex) {
-    const h = hex[1]!;
-    if (h.length === 3 || h.length === 4) {
-      return [
-        parseInt(h[0]! + h[0]!, 16),
-        parseInt(h[1]! + h[1]!, 16),
-        parseInt(h[2]! + h[2]!, 16),
-      ];
-    }
-    if (h.length === 6 || h.length === 8) {
-      return [
-        parseInt(h.slice(0, 2), 16),
-        parseInt(h.slice(2, 4), 16),
-        parseInt(h.slice(4, 6), 16),
-      ];
-    }
+  const hex = /^#([0-9a-f]{3,8})$/.exec(s)?.[1];
+  if (hex && (hex.length === 3 || hex.length === 4 || hex.length === 6 || hex.length === 8)) {
+    const packed = hex.length <= 4 ? `${hex[0]}${hex[0]}${hex[1]}${hex[1]}${hex[2]}${hex[2]}` : hex;
+    return [
+      parseInt(packed.slice(0, 2), 16),
+      parseInt(packed.slice(2, 4), 16),
+      parseInt(packed.slice(4, 6), 16),
+    ];
   }
   const rgb = /^rgba?\(\s*([\d.]+)\s*[, ]\s*([\d.]+)\s*[, ]\s*([\d.]+)/.exec(s);
-  if (rgb) return [Number(rgb[1]), Number(rgb[2]), Number(rgb[3])];
-  return null;
+  return rgb ? [Number(rgb[1]), Number(rgb[2]), Number(rgb[3])] : null;
 }
 
-/**
- * Whether a node's current paint is light or dark.
- * Pattern fills (`url(#graphy-node-bg)`) use the photo tone; solid fills use luminance.
- */
-export function paintTone(
-  fill: string | null | undefined,
-  imageTone?: PaintTone | null,
-): PaintTone {
-  if (fill && /^\s*url\(/i.test(fill)) {
-    return imageTone === "light" || imageTone === "dark" ? imageTone : "dark";
-  }
+export function paintTone(fill: string | null | undefined, imageTone?: PaintTone | null): PaintTone {
+  if (fill && /^\s*url\(/i.test(fill)) return imageTone === "light" ? "light" : "dark";
   const rgb = fill ? rgbFromCssColor(fill) : null;
-  if (!rgb) return imageTone ?? "light";
-  return toneFromLuminance(relativeLuminance(...rgb));
+  return rgb ? toneFromLuminance(relativeLuminance(...rgb)) : (imageTone ?? "light");
 }
 
 function loadImage(url: string): Promise<HTMLImageElement> {
@@ -98,7 +84,6 @@ function loadImage(url: string): Promise<HTMLImageElement> {
   });
 }
 
-/** Downscales the photo and returns its median perceived luminance. */
 export async function luminanceFromDataUrl(url: string): Promise<number> {
   const image = await loadImage(url);
   const width = image.naturalWidth || image.width;

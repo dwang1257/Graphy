@@ -1,6 +1,7 @@
 import { PANEL_CHANNEL, isPageMessage, type Snapshot } from "../shared/protocol.js";
 import { loadSettings } from "../settings/storage.js";
 import { PanelHost } from "./host.js";
+import { notifyPageTrace } from "./pageTrace.js";
 
 const PROBLEM_PATH = /^\/problems\/[^/]+/;
 
@@ -32,10 +33,12 @@ function mount(): void {
   void Promise.all([created.restored, loadSettings()]).then(([, settings]) => {
     if (host !== created) return;
     if (settings.autoOpen || created.isOpen) created.open();
+    notifyPageTrace(created.isOpen);
   });
 }
 
 function unmount(): void {
+  notifyPageTrace(false);
   host?.destroy();
   host = null;
 }

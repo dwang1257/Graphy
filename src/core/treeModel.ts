@@ -1,32 +1,26 @@
+import { applyListTopology } from "./parse/linkedList.js";
 import { emptyModel, type GNode, type GraphModel } from "./types.js";
 import { reachableIds, type TreeLinks } from "./topology.js";
 
 interface Slot {
-  id: string;
   left?: string;
   right?: string;
   depth: number;
 }
 
-/**
- * Builds a binary-tree GraphModel from stable nodes + child pointers.
- * Reuses the same left/right ordering scaffold as the original parser.
- */
 export function modelFromTree(
   nodes: GNode[],
   links: TreeLinks,
   title?: string,
 ): GraphModel {
   const model = emptyModel("binary-tree", title);
-  if (nodes.length === 0) {
-    return model;
-  }
+  if (nodes.length === 0) return model;
 
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const slots = new Map<string, Slot>();
   const byDepth = new Map<number, string[]>();
 
-  const addVisible = (id: string, depth: number) => {
+  function addVisible(id: string, depth: number): void {
     const source = byId.get(id);
     if (!source || slots.has(id)) return;
     model.nodes.push({
@@ -34,15 +28,13 @@ export function modelFromTree(
       label: source.label,
       role: depth === 0 ? "root" : "normal",
     });
-    slots.set(id, { id, depth });
-    const level = byDepth.get(depth) ?? [];
-    level.push(id);
-    byDepth.set(depth, level);
-  };
+    slots.set(id, { depth });
+    levelAt(byDepth, depth).push(id);
+  }
 
   const rootId = nodes.find((n) => n.role === "root")?.id ?? nodes[0]!.id;
-  const queue: string[] = [rootId];
   addVisible(rootId, 0);
+  const queue = [rootId];
 
   while (queue.length > 0) {
     const parentId = queue.shift()!;
@@ -61,13 +53,12 @@ export function modelFromTree(
     }
   }
 
-  // Only keep links for nodes that made it into the model.
   const trimmed: TreeLinks = {};
   for (const id of slots.keys()) {
-    const entry = links[id] ?? {};
+    const { left, right } = links[id] ?? {};
     trimmed[id] = {
-      ...(entry.left && slots.has(entry.left) ? { left: entry.left } : {}),
-      ...(entry.right && slots.has(entry.right) ? { right: entry.right } : {}),
+      ...(left && slots.has(left) ? { left } : {}),
+      ...(right && slots.has(right) ? { right } : {}),
     };
   }
   model.links = trimmed;
@@ -76,8 +67,8 @@ export function modelFromTree(
   return model;
 }
 
-/** Rebuilds a tree model from a topology snapshot, keeping base labels. */
 export function applyTopology(base: GraphModel, links: TreeLinks): GraphModel {
+  if (base.kind === "linked-list") return applyListTopology(base, links);
   const live = reachableIds(links);
   const nodes = base.nodes.filter(
     (n) => (n.role === "root" || n.role === "normal") && live.has(n.id),
@@ -85,31 +76,34 @@ export function applyTopology(base: GraphModel, links: TreeLinks): GraphModel {
   return modelFromTree(nodes, links, base.title);
 }
 
+function levelAt(byDepth: Map<number, string[]>, depth: number): string[] {
+  const level = byDepth.get(depth) ?? [];
+  byDepth.set(depth, level);
+  return level;
+}
+
 function addOrderingScaffold(
   model: GraphModel,
   slots: Map<string, Slot>,
   byDepth: Map<number, string[]>,
 ): void {
-  for (const slot of slots.values()) {
+  for (const [id, slot] of slots) {
     const { left, right } = slot;
     if (!left && !right) continue;
 
-    const childDepth = slot.depth + 1;
-    const level = byDepth.get(childDepth) ?? [];
-    byDepth.set(childDepth, level);
-
-    const spineId = `s_${slot.id}`;
+    const level = levelAt(byDepth, slot.depth + 1);
+    const spineId = `s_${id}`;
     model.nodes.push({ id: spineId, label: "", role: "spine" });
-    model.edges.push({ from: slot.id, to: spineId, role: "spine" });
+    model.edges.push({ from: id, to: spineId, role: "spine" });
 
-    const leftId = left ?? addAnchor(model, `${slot.id}_L`, level);
-    const rightId = right ?? addAnchor(model, `${slot.id}_R`, level);
-    if (!left) model.edges.push({ from: slot.id, to: leftId, role: "null" });
-    if (!right) model.edges.push({ from: slot.id, to: rightId, role: "null" });
+    const leftId = left ?? addAnchor(model, `${id}_L`, level);
+    const rightId = right ?? addAnchor(model, `${id}_R`, level);
+    if (!left) model.edges.push({ from: id, to: leftId, role: "null" });
+    if (!right) model.edges.push({ from: id, to: rightId, role: "null" });
 
     level.push(spineId);
     model.ranks.push({ ids: [leftId, spineId, rightId] });
-    reorderChildEdges(model, slot.id, [leftId, spineId, rightId]);
+    reorderChildEdges(model, id, [leftId, spineId, rightId]);
   }
 }
 
@@ -122,15 +116,15 @@ function addAnchor(model: GraphModel, id: string, level: string[]): string {
 function reorderChildEdges(model: GraphModel, parentId: string, order: string[]): void {
   const rank = new Map(order.map((id, i) => [id, i]));
   const mine: number[] = [];
-  model.edges.forEach((edge, i) => {
-    if (edge.from === parentId) mine.push(i);
-  });
+  for (let i = 0; i < model.edges.length; i += 1) {
+    if (model.edges[i]!.from === parentId) mine.push(i);
+  }
   const sorted = mine
     .map((i) => model.edges[i]!)
     .sort((a, b) => (rank.get(a.to) ?? 99) - (rank.get(b.to) ?? 99));
-  mine.forEach((slotIndex, k) => {
-    model.edges[slotIndex] = sorted[k]!;
-  });
+  for (let k = 0; k < mine.length; k += 1) {
+    model.edges[mine[k]!] = sorted[k]!;
+  }
 }
 
 function buildRanks(model: GraphModel, byDepth: Map<number, string[]>): void {

@@ -6,9 +6,10 @@ import { stdoutForCase } from "../core/traceCases.js";
 import { buildPanes } from "../core/build.js";
 import { emitDot } from "../core/dot/emit.js";
 import { parseSignature } from "../core/signature.js";
-import { framesFromStdout } from "../core/trace.js";
-import { canonicalizeLinks } from "../core/topology.js";
+import { framesFromStdout, type TraceFrame } from "../core/trace.js";
+import { canonicalizeLinks, supportsTopologyMorph } from "../core/topology.js";
 import { applyTopology } from "../core/treeModel.js";
+import { withListAllocs } from "../core/parse/linkedList.js";
 import { EMPTY_STAGE_COPY, isEmptyStage, isTooLarge, tooLargeCopy } from "./emptyStage.js";
 import { visibleNodeCount, type StructureKind } from "../core/types.js";
 import { useStructureKind } from "./useStructureKind.js";
@@ -27,7 +28,8 @@ import { PANEL_CHANNEL, isToPanel, type FromPanel, type Snapshot } from "../shar
 import { SETTINGS_DOT_DEBOUNCE_MS, dotStyleKey } from "./dotStyle.js";
 import { GraphView } from "./GraphView.js";
 import { SettingsDrawer } from "./SettingsDrawer.js";
-import { stageBackgroundStyle } from "./stageBackground.js";
+import { inkFromDataUrl } from "./imageInk.js";
+import { stageBackgroundStyle, stageInkVars } from "./stageBackground.js";
 import { TitleBar } from "./TitleBar.js";
 import { TracePlayback } from "./TracePlayback.js";
 import { preload, renderDot } from "./graphviz.js";
@@ -35,6 +37,23 @@ import { detectParentOrigin, isAllowedParentOrigin } from "./parentOrigin.js";
 
 const PARENT_ORIGIN = detectParentOrigin();
 const MAX_TOPOLOGY_LAYOUTS = 40;
+
+function frameLayoutKey(frame: TraceFrame): string {
+  return `${canonicalizeLinks(frame.links)}#${frame.allocs.map((n) => n.id).join(",")}`;
+}
+
+function frameTopoKey(frame: TraceFrame | null | undefined): string {
+  return frame && Object.keys(frame.links).length > 0 ? frameLayoutKey(frame) : "";
+}
+
+function svgForFrame(
+  frame: TraceFrame | null | undefined,
+  topologySvgs: Record<string, string>,
+  fallback: string,
+): string {
+  const key = frameTopoKey(frame);
+  return (key && topologySvgs[key]) || fallback;
+}
 
 function toHost(message: FromPanel): void {
   if (!PARENT_ORIGIN) return;
@@ -54,6 +73,7 @@ export function App(): JSX.Element {
   const [traceIndex, setTraceIndex] = useState(0);
   const [tracePlaying, setTracePlaying] = useState(false);
   const [shrunk, setShrunk] = useState(false);
+  const [stageImageInk, setStageImageInk] = useState<string | null>(null);
   const prevTraceIndex = useRef(0);
 
   const liveUpdate = useRef(true);
@@ -72,7 +92,6 @@ export function App(): JSX.Element {
       if (!sawHostShrunk.current) setShrunk(state.shrunk);
     });
     const stop = onSettingsChanged((incoming) => {
-      // Skip the echo of this panel's own debounced write.
       if (JSON.stringify(incoming) === lastSaved.current) return;
       setSettings(incoming);
     });
@@ -86,23 +105,14 @@ export function App(): JSX.Element {
         setShrunk(data.shrunk);
         return;
       }
-      // With live updates off, only a Run refreshes the view.
       if (data.payload.source === "editor" && !liveUpdate.current && hasRendered.current) return;
       setSnapshot((prev) => {
         const next = data.payload;
-        // Keep the last Run's stdout across editor keystrokes so the scrubber survives typing.
-        if (next.source === "editor") {
-          const keepStdout = next.stdout === undefined && prev?.stdout !== undefined;
-          const keepByCase = next.stdoutByCase === undefined && prev?.stdoutByCase !== undefined;
-          if (keepStdout || keepByCase) {
-            return {
-              ...next,
-              ...(keepStdout ? { stdout: prev?.stdout } : {}),
-              ...(keepByCase ? { stdoutByCase: prev?.stdoutByCase } : {}),
-            };
-          }
-        }
-        return next;
+        if (next.source !== "editor") return next;
+        const stdout = next.stdout ?? prev?.stdout;
+        const stdoutByCase = next.stdoutByCase ?? prev?.stdoutByCase;
+        if (stdout === next.stdout && stdoutByCase === next.stdoutByCase) return next;
+        return { ...next, stdout, stdoutByCase };
       });
     };
 
@@ -165,9 +175,20 @@ export function App(): JSX.Element {
     settings.layout.showMatrixIndices,
   ]);
 
-  // One graph per Case: first visualizable parameter of the selected case.
   const pane = result.panes[0];
   const palette = settings[settings.mode];
+
+  useEffect(() => {
+    const url = palette.backgroundImage;
+    setStageImageInk(null);
+    if (!url) return;
+    let cancelled = false;
+    void inkFromDataUrl(url).then(
+      (ink) => { if (!cancelled) setStageImageInk(ink); },
+      () => { if (!cancelled) setStageImageInk(null); },
+    );
+    return () => { cancelled = true; };
+  }, [palette.backgroundImage]);
 
   const scopedStdout = useMemo(
     () => stdoutForCase(snapshot, caseIndex),
@@ -194,8 +215,6 @@ export function App(): JSX.Element {
     hasFailure: result.failures.length > 0,
   });
 
-  // CSS-only palette fields (stage bg / node photo) stay out of this key so
-  // they update via stage CSS and GraphView without emitDot / renderDot.
   const styleKey = useMemo(
     () => dotStyleKey(palette, settings.layout),
     [palette, settings.layout],
@@ -208,7 +227,6 @@ export function App(): JSX.Element {
     return () => window.clearTimeout(timer);
   }, [styleKey, debouncedStyleKey]);
 
-  // Structure/case/snapshot rebuild immediately; settings wait for the style key.
   const dot = useMemo(() => {
     if (!pane || tooLarge || emptyStage) return "";
     try {
@@ -219,11 +237,12 @@ export function App(): JSX.Element {
   }, [pane, tooLarge, emptyStage, debouncedStyleKey]);
 
   const topologyKeys = useMemo(() => {
-    if (!pane?.model.links || pane.model.kind !== "binary-tree") return [] as string[];
+    if (!pane?.model.links || !supportsTopologyMorph(pane.model.kind)) return [] as string[];
     const keys = new Set<string>();
     for (const frame of traceFrames) {
-      if (Object.keys(frame.links).length === 0) continue;
-      keys.add(canonicalizeLinks(frame.links));
+      const key = frameTopoKey(frame);
+      if (!key) continue;
+      keys.add(key);
       if (keys.size >= MAX_TOPOLOGY_LAYOUTS) break;
     }
     return [...keys];
@@ -267,13 +286,11 @@ export function App(): JSX.Element {
       for (const key of topologyKeys) {
         if (cancelled) return;
         try {
-          const frame = traceFrames.find((f) => canonicalizeLinks(f.links) === key);
+          const frame = traceFrames.find((f) => frameLayoutKey(f) === key);
           if (!frame) continue;
-          const model = applyTopology(pane.model, frame.links);
-          const topoDot = emitDot(model, options);
-          next[key] = await renderDot(topoDot);
+          const model = applyTopology(withListAllocs(pane.model, frame.allocs), frame.links);
+          next[key] = await renderDot(emitDot(model, options));
         } catch {
-          // Skip failed topology layouts; playback falls back to the base SVG.
         }
       }
       if (!cancelled) setTopologySvgs(next);
@@ -284,24 +301,9 @@ export function App(): JSX.Element {
   }, [pane, tooLarge, emptyStage, topologyKeys, debouncedStyleKey, traceFrames, palette, settings.layout]);
 
   const activeFrame = traceFrames[traceIndex] ?? null;
-  const activeTopoKey =
-    activeFrame && Object.keys(activeFrame.links).length > 0
-      ? canonicalizeLinks(activeFrame.links)
-      : "";
-  const displaySvg =
-    (activeTopoKey && topologySvgs[activeTopoKey]) || svg;
-
+  const displaySvg = svgForFrame(activeFrame, topologySvgs, svg);
   const prevFrame = traceIndex > 0 ? traceFrames[traceIndex - 1] : null;
-  const prevTopoKey =
-    prevFrame && Object.keys(prevFrame.links).length > 0
-      ? canonicalizeLinks(prevFrame.links)
-      : "";
-  const morphFromSvg =
-    prevTopoKey && topologySvgs[prevTopoKey]
-      ? topologySvgs[prevTopoKey]
-      : prevFrame
-        ? svg
-        : null;
+  const morphFromSvg = prevFrame ? svgForFrame(prevFrame, topologySvgs, svg) : null;
 
   const steppedForward = traceIndex === prevTraceIndex.current + 1;
   useEffect(() => {
@@ -329,11 +331,15 @@ export function App(): JSX.Element {
     () => stageBackgroundStyle(palette.background, palette.backgroundImage),
     [palette.background, palette.backgroundImage],
   );
+  const panelStyle = useMemo(
+    () => ({ "--stage-bg": palette.background, ...stageInkVars(palette.background, stageImageInk) }) as JSX.CSSProperties,
+    [palette.background, stageImageInk],
+  );
 
   return (
     <div
       class={`panel${settings.mode === "dark" ? " dark" : ""}${shrunk ? " is-shrunk" : ""}`}
-      style={{ "--stage-bg": palette.background } as JSX.CSSProperties}
+      style={panelStyle}
     >
       <TitleBar
         showSettings={showSettings}
@@ -366,7 +372,7 @@ export function App(): JSX.Element {
             onClose={() => setShowSettings(false)}
           />
         )}
-        <div class="stage-area stage-bg" style={stageStyle}>
+        <div class="stage-area" style={stageStyle}>
           {displaySvg ? (
             <GraphView
               svg={displaySvg}
@@ -377,17 +383,17 @@ export function App(): JSX.Element {
               morph={shouldMorph}
             />
           ) : (
-            <div class="stage" />
-          )}
-          {!displaySvg && (
-            <Placeholder
-              snapshot={snapshot}
-              error={error}
-              tooLarge={tooLarge}
-              nodeCount={paneSize}
-              emptyStage={emptyStage}
-              failure={result.failures[0]?.reason}
-            />
+            <>
+              <div class="stage" />
+              <Placeholder
+                snapshot={snapshot}
+                error={error}
+                tooLarge={tooLarge}
+                nodeCount={paneSize}
+                emptyStage={emptyStage}
+                failure={result.failures[0]?.reason}
+              />
+            </>
           )}
         </div>
       </div>
@@ -442,30 +448,22 @@ function Placeholder(props: PlaceholderProps): JSX.Element {
       </div>
     );
   }
+
+  let message = props.failure ?? "This input does not look like a graph structure.";
+  let error = false;
   if (props.snapshot?.captureError) {
-    return (
-      <div class="placeholder error">
-        <p>Case split failed. {props.snapshot.captureError}</p>
-      </div>
-    );
+    message = `Case split failed. ${props.snapshot.captureError}`;
+    error = true;
+  } else if (props.tooLarge) {
+    message = tooLargeCopy(props.nodeCount);
+    error = true;
+  } else if (props.emptyStage) {
+    message = EMPTY_STAGE_COPY;
   }
-  if (props.tooLarge) {
-    return (
-      <div class="placeholder error">
-        <p>{tooLargeCopy(props.nodeCount)}</p>
-      </div>
-    );
-  }
-  if (props.emptyStage) {
-    return (
-      <div class="placeholder">
-        <p>{EMPTY_STAGE_COPY}</p>
-      </div>
-    );
-  }
+
   return (
-    <div class="placeholder">
-      <p>{props.failure ?? "This input does not look like a graph structure."}</p>
+    <div class={error ? "placeholder error" : "placeholder"}>
+      <p>{message}</p>
     </div>
   );
 }

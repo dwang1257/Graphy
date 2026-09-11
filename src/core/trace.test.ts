@@ -1,7 +1,26 @@
 import { describe, expect, it } from "vitest";
 
+import { parseLinkedList } from "./parse/linkedList.js";
 import { emptyModel, type GraphModel } from "./types.js";
 import { parseTrace, resolveRef, framesFromStdout } from "./trace.js";
+
+const grid: GraphModel = {
+  ...emptyModel("matrix", "grid"),
+  directed: false,
+  matrix: {
+    showIndices: true,
+    rows: [
+      [
+        { text: "1", filled: true },
+        { text: "0", filled: false },
+      ],
+      [
+        { text: "0", filled: false },
+        { text: "1", filled: true },
+      ],
+    ],
+  },
+};
 
 describe("parseTrace", () => {
   it("ignores non-graphy lines", () => {
@@ -121,6 +140,30 @@ describe("parseTrace", () => {
       },
     ]);
   });
+
+  it("parses compact 2-tuples as matrix cell current+visit refs", () => {
+    expect(parseTrace("#graphy/[(0,1),(1,0)]")).toEqual([
+      { kind: "current", ref: "0,1", line: 1 },
+      { kind: "visit", ref: "0,1", line: 1 },
+      { kind: "current", ref: "1,0", line: 1 },
+      { kind: "visit", ref: "1,0", line: 1 },
+    ]);
+  });
+
+  it("keeps 3-tuples as topology when mixed with visits", () => {
+    expect(parseTrace("#graphy/[0,(0,2,1),2]")).toEqual([
+      { kind: "current", ref: "n0", line: 1 },
+      { kind: "visit", ref: "n0", line: 1 },
+      {
+        kind: "topology",
+        links: { n0: { left: "n2", right: "n1" } },
+        line: 1,
+        patch: true,
+      },
+      { kind: "current", ref: "n2", line: 1 },
+      { kind: "visit", ref: "n2", line: 1 },
+    ]);
+  });
 });
 
 
@@ -133,24 +176,6 @@ describe("resolveRef", () => {
       { id: "n2", label: "20", role: "normal" },
       { id: "s_n0", label: "", role: "spine" },
     ],
-  };
-
-  const grid: GraphModel = {
-    ...emptyModel("matrix", "grid"),
-    directed: false,
-    matrix: {
-      showIndices: true,
-      rows: [
-        [
-          { text: "1", filled: true },
-          { text: "0", filled: false },
-        ],
-        [
-          { text: "0", filled: false },
-          { text: "1", filled: true },
-        ],
-      ],
-    },
   };
 
   it("keeps explicit node ids", () => {
@@ -208,6 +233,15 @@ describe("framesFromStdout", () => {
 
   it("returns an empty list when stdout has no graphy lines", () => {
     expect(framesFromStdout("Accepted\n", list)).toEqual([]);
+  });
+
+  it("maps compact cell 2-tuples onto matrix cell ids", () => {
+    const frames = framesFromStdout("#graphy/[(0,1),(1,0)]", grid);
+    expect(frames.some((frame) => frame.current === "cell:0,1")).toBe(true);
+    expect(frames.at(-1)).toMatchObject({
+      current: "cell:1,0",
+      visited: ["cell:0,1", "cell:1,0"],
+    });
   });
 });
 
@@ -269,6 +303,51 @@ describe("framesFromStdout topology", () => {
     });
     expect(frames.at(-1)?.current).toBe("n0");
     expect(frames.at(-1)?.visited).toEqual(["n0"]);
+  });
+
+  it("does not mark unlinked list nodes as deleted during reverse", () => {
+    const list = parseLinkedList([1, 2, 3], "head");
+    const frames = framesFromStdout("#graphy/[(0,None,None)]", list);
+    expect(frames.at(-1)?.links.n0).toEqual({});
+    expect(frames.at(-1)?.links.n1).toEqual({ left: "n2" });
+    expect(frames.at(-1)?.deleted).toEqual([]);
+  });
+
+  it("parses compact 4-tuples as allocated list nodes with values", () => {
+    expect(parseTrace("#graphy/[(6,None,None,0),(6,7,None),(7,None,None,7)]")).toEqual([
+      { kind: "alloc", ref: "n6", label: "0", line: 1 },
+      {
+        kind: "topology",
+        links: { n6: {} },
+        line: 1,
+        patch: true,
+      },
+      {
+        kind: "topology",
+        links: { n6: { left: "n7" } },
+        line: 1,
+        patch: true,
+      },
+      { kind: "alloc", ref: "n7", label: "7", line: 1 },
+      {
+        kind: "topology",
+        links: { n7: {} },
+        line: 1,
+        patch: true,
+      },
+    ]);
+  });
+
+  it("keeps allocated list nodes on frames so a third chain can be drawn", () => {
+    const lists = parseLinkedList([2, 4, 3], "l1");
+    const frames = framesFromStdout("#graphy/[(6,None,None,0),(7,None,None,7),(6,7,None)]", lists);
+    const last = frames.at(-1);
+    expect(last?.allocs).toEqual([
+      { id: "n6", label: "0", role: "normal" },
+      { id: "n7", label: "7", role: "normal" },
+    ]);
+    expect(last?.links.n6).toEqual({ left: "n7" });
+    expect(last?.current).toBeUndefined();
   });
 });
 
