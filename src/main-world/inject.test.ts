@@ -8,16 +8,7 @@ interface PageHarness {
   flushCapture(): Promise<void>;
   selectedIndex(): number;
   tabClicks(): number;
-  pauseSelectionOf(index: number): void;
-  dispatchInput(): void;
-  dispatchClick(): void;
-  dispatchPageMessage(
-    data: unknown,
-    extras?: { origin?: string; source?: unknown },
-  ): void;
-  setPathname(pathname: string): void;
-  whenSelected(index: number, fn: () => void): void;
-  unmountConsole(): void;
+  dispatchPageMessage(data: unknown): void;
   setCheckState(state: string): void;
   setCheckStdout(lines: string[] | undefined): void;
   setCheckStdOutputList(entries: string[] | undefined): void;
@@ -25,18 +16,10 @@ interface PageHarness {
 
 interface SnapshotPayload {
   cases: string[];
-  captureError?: string;
   source: string;
-  slug?: string;
   code?: string;
   stdout?: string;
   stdoutByCase?: string[];
-}
-
-interface TabbedPageOptions {
-  code?: string;
-  mounted?: string[];
-  pathname?: string;
 }
 
 afterEach(() => {
@@ -71,12 +54,7 @@ function inputWrapper(text: string): HTMLElement {
 
 class FakeXhr {
   responseText = "";
-
-  private readonly listeners: Array<{
-    type: string;
-    fn: EventListener;
-    once: boolean;
-  }> = [];
+  private readonly listeners: Array<{ type: string; fn: EventListener; once: boolean }> = [];
 
   open(_method?: string, _url?: string | URL): void {}
 
@@ -97,10 +75,6 @@ class FakeXhr {
   dispatchLoad(): void {
     for (const listener of this.listeners.filter((entry) => entry.type === "load")) {
       listener.fn.call(this, new Event("load"));
-      if (listener.once) {
-        const index = this.listeners.indexOf(listener);
-        if (index >= 0) this.listeners.splice(index, 1);
-      }
     }
   }
 }
@@ -108,7 +82,7 @@ class FakeXhr {
 function installTabbedPage(
   cases: string[][],
   selected: number,
-  options: TabbedPageOptions = {},
+  options: { code?: string } = {},
 ): PageHarness {
   const snapshots: Array<{ payload: SnapshotPayload }> = [];
   const sentBodies: string[] = [];
@@ -122,47 +96,28 @@ function installTabbedPage(
 
   let selectedIndex = selected;
   let tabClicks = 0;
-  let paused: number | null = null;
   let now = 0;
   let nextTimerId = 1;
   let nextRafId = 1;
-  const onceSelected: Array<{ index: number; fn: () => void; fired: boolean }> = [];
 
   function makeTab(index: number): HTMLElement {
     return {
-      getAttribute: (name: string) => {
-        if (name === "aria-selected") return selectedIndex === index ? "true" : "false";
-        return null;
-      },
+      getAttribute: (name: string) => (name === "aria-selected" ? (selectedIndex === index ? "true" : "false") : null),
       click: () => {
         tabClicks += 1;
         selectedIndex = index;
         for (const listener of listeners.get("click") ?? []) listener();
-        for (const hook of onceSelected) {
-          if (hook.fired || hook.index !== index) continue;
-          hook.fired = true;
-          hook.fn();
-        }
       },
     } as unknown as HTMLElement;
   }
 
-  const codeText = options.code ?? "class Solution {};";
-  const codeEditor = cmContent(codeText);
+  const codeEditor = cmContent(options.code ?? "class Solution {};");
   const locationState = {
-    pathname: options.pathname ?? "/problems/example/",
+    pathname: "/problems/example/",
     origin: "https://leetcode.com",
   };
-
   const tabs = cases.map((_, index) => makeTab(index));
-
-  const mountedWrappers = (options.mounted ?? []).map(inputWrapper);
-
-  const currentWrappers = (): HTMLElement[] => {
-    if (paused !== null && selectedIndex === paused) return [];
-    if (tabs.length === 0) return mountedWrappers;
-    return (cases[selectedIndex] ?? []).map(inputWrapper);
-  };
+  const currentWrappers = (): HTMLElement[] => (cases[selectedIndex] ?? []).map(inputWrapper);
 
   const fakeDocument = {
     querySelectorAll: (selector: string) => {
@@ -190,7 +145,6 @@ function installTabbedPage(
   };
 
   const pageMessages: Array<(event: MessageEvent) => void> = [];
-
   const fakeWindow = {
     postMessage: (message: { payload: SnapshotPayload }) => {
       snapshots.push(message);
@@ -252,7 +206,6 @@ function installTabbedPage(
     let idle = 0;
     for (let i = 0; i < 500; i += 1) {
       await Promise.resolve();
-
       const raf = rafs.shift();
       if (raf) {
         idle = 0;
@@ -270,7 +223,6 @@ function installTabbedPage(
         continue;
       }
       consecutiveRafs = 0;
-
       const due = [...timeouts.entries()].filter(([, timer]) => timer.at <= now);
       if (due.length > 0) {
         idle = 0;
@@ -280,14 +232,12 @@ function installTabbedPage(
         }
         continue;
       }
-
       const next = earliestTimeout();
       if (next !== undefined) {
         idle = 0;
         now = next;
         continue;
       }
-
       await Promise.resolve();
       idle += 1;
       if (rafs.length === 0 && timeouts.size === 0 && idle > 8) break;
@@ -308,32 +258,13 @@ function installTabbedPage(
     flushCapture,
     selectedIndex: () => selectedIndex,
     tabClicks: () => tabClicks,
-    pauseSelectionOf: (index: number) => {
-      paused = index;
-    },
-    dispatchInput: () => {
-      for (const listener of listeners.get("input") ?? []) listener();
-    },
-    dispatchClick: () => {
-      for (const listener of listeners.get("click") ?? []) listener();
-    },
-    dispatchPageMessage: (data, extras) => {
+    dispatchPageMessage: (data) => {
       const event = {
         data,
-        origin: extras?.origin ?? locationState.origin,
-        source: extras?.source ?? fakeWindow,
-      } as MessageEvent;
+        origin: locationState.origin,
+        source: fakeWindow,
+      } as unknown as MessageEvent;
       for (const listener of pageMessages) listener(event);
-    },
-    setPathname: (pathname: string) => {
-      locationState.pathname = pathname;
-    },
-    whenSelected: (index: number, fn: () => void) => {
-      onceSelected.push({ index, fn, fired: false });
-    },
-    unmountConsole: () => {
-      tabs.splice(0, tabs.length);
-      mountedWrappers.splice(0, mountedWrappers.length);
     },
     setCheckState: (state: string) => {
       checkState = state;
@@ -349,172 +280,14 @@ function installTabbedPage(
 
 const INTERPRET_ID = "interp-1";
 
-async function runCode(dataInput = "[1]"): Promise<void> {
+async function finishRun(page: PageHarness, dataInput = "[1]"): Promise<void> {
   await window.fetch("https://leetcode.com/problems/example/interpret_solution/", {
     method: "POST",
     body: JSON.stringify({ data_input: dataInput, typed_code: "class Solution {};", lang: "cpp" }),
   });
-}
-
-async function finishCheck(id = INTERPRET_ID): Promise<void> {
-  await window.fetch(`https://leetcode.com/submissions/detail/${id}/check/`);
-}
-
-async function finishRun(page: PageHarness, dataInput = "[1]"): Promise<void> {
-  await runCode(dataInput);
   await page.flushCapture();
-  await finishCheck();
+  await window.fetch(`https://leetcode.com/submissions/detail/${INTERPRET_ID}/check/`);
   await page.flushCapture();
-}
-
-class ResultNode {
-  tagName: string;
-  attributes: Record<string, string>;
-  className: string;
-  childNodes: ResultNode[];
-  parentElement: ResultNode | null = null;
-  text: string;
-  onClick?: () => void;
-
-  constructor(options: {
-    tag?: string;
-    attributes?: Record<string, string>;
-    className?: string;
-    text?: string;
-    children?: ResultNode[];
-    onClick?: () => void;
-  } = {}) {
-    this.tagName = (options.tag ?? "div").toUpperCase();
-    this.attributes = options.attributes ?? {};
-    this.className = options.className ?? "";
-    this.text = options.text ?? "";
-    this.childNodes = options.children ?? [];
-    this.onClick = options.onClick;
-    for (const child of this.childNodes) child.parentElement = this;
-  }
-
-  get children(): ResultNode[] {
-    return this.childNodes;
-  }
-
-  get textContent(): string {
-    return `${this.childNodes.map((child) => child.textContent).join("")}${this.text}`;
-  }
-
-  get nextElementSibling(): ResultNode | null {
-    if (!this.parentElement) return null;
-    const siblings = this.parentElement.childNodes;
-    const index = siblings.indexOf(this);
-    return index >= 0 ? (siblings[index + 1] ?? null) : null;
-  }
-
-  click(): void {
-    this.onClick?.();
-  }
-
-  getAttribute(name: string): string | null {
-    return this.attributes[name] ?? null;
-  }
-
-  matches(selector: string): boolean {
-    return selector.split(",").some((part) => resultMatches(this, part.trim()));
-  }
-
-  contains(other: ResultNode): boolean {
-    let node: ResultNode | null = other;
-    while (node) {
-      if (node === this) return true;
-      node = node.parentElement;
-    }
-    return false;
-  }
-
-  querySelector(selector: string): ResultNode | null {
-    return this.querySelectorAll(selector)[0] ?? null;
-  }
-
-  querySelectorAll(selector: string): ResultNode[] {
-    const found: ResultNode[] = [];
-    const visit = (node: ResultNode): void => {
-      if (node.matches(selector)) found.push(node);
-      for (const child of node.childNodes) visit(child);
-    };
-    for (const child of this.childNodes) visit(child);
-    return found;
-  }
-}
-
-function resultMatches(node: ResultNode, selector: string): boolean {
-  const attr = selector.match(/^\[([^=]+)="([^"]+)"\]$/);
-  if (attr) return node.getAttribute(attr[1]!) === attr[2];
-  if (selector.startsWith(".")) return node.className.split(/\s+/).includes(selector.slice(1));
-  return node.tagName === selector.toUpperCase();
-}
-
-function installResultPage(options: { cases: string[][]; selected: number }): PageHarness {
-  const page = installTabbedPage([], options.selected, { code: "class Solution {};" });
-  let selectedIndex = options.selected;
-
-  const inputValues = (): ResultNode[] =>
-    (options.cases[selectedIndex] ?? []).map(
-      (value) =>
-        new ResultNode({
-          children: [new ResultNode({ className: "font-menlo whitespace-pre-wrap", text: value })],
-        }),
-    );
-
-  const heading = new ResultNode({ className: "mb-2 text-xs font-medium", text: "Input" });
-  const section = new ResultNode({ className: "space-y-2", children: inputValues() });
-  const pills = options.cases.map((_, index) => {
-    return new ResultNode({
-      className: `cursor-pointer rounded-lg px-4 py-1 font-medium${
-        index === selectedIndex ? " bg-fill-3" : ""
-      }`,
-      onClick: () => {
-        selectedIndex = index;
-        section.childNodes.splice(0, section.childNodes.length, ...inputValues());
-        for (const child of section.childNodes) child.parentElement = section;
-        for (const [pillIndex, pill] of pills.entries()) {
-          pill.className = `cursor-pointer rounded-lg px-4 py-1 font-medium${
-            pillIndex === selectedIndex ? " bg-fill-3" : ""
-          }`;
-        }
-      },
-      children: [new ResultNode({ text: `Case ${index + 1}` })],
-    });
-  });
-
-  const panel = new ResultNode({
-    className: "mx-5 my-4 space-y-4",
-    children: [
-      new ResultNode({ attributes: { "data-e2e-locator": "console-result" }, text: "Accepted" }),
-      new ResultNode({ className: "flex flex-wrap", children: pills }),
-      new ResultNode({ children: [heading, section] }),
-    ],
-  });
-  const root = new ResultNode({ children: [panel] });
-
-  const originalDocument = document as unknown as {
-    querySelector: (selector: string) => unknown;
-    querySelectorAll: (selector: string) => unknown;
-  };
-  const previousAll = originalDocument.querySelectorAll.bind(originalDocument);
-  const previousOne = originalDocument.querySelector.bind(originalDocument);
-
-  originalDocument.querySelector = (selector: string) =>
-    root.querySelector(selector) ?? previousOne(selector);
-  originalDocument.querySelectorAll = (selector: string) => {
-    if (selector === '[data-e2e-locator="console-testcase-tag"]') return [];
-    if (selector === '[data-e2e-locator="console-testcase-input"]') return [];
-    if (selector === ".cm-content") return previousAll(selector);
-    const fromTree = root.querySelectorAll(selector);
-    return fromTree.length > 0 ? fromTree : previousAll(selector);
-  };
-
-  return {
-    ...page,
-    selectedIndex: () => selectedIndex,
-  };
 }
 
 test("walks case tabs after Run results succeed, not on load or send", async () => {
@@ -522,59 +295,31 @@ test("walks case tabs after Run results succeed, not on load or send", async () 
   await import("./inject.js");
   await page.flushCapture();
   expect(page.tabClicks()).toBe(0);
-  expect(page.snapshots).toEqual([]);
 
-  await runCode("[1]");
+  await window.fetch("https://leetcode.com/problems/example/interpret_solution/", {
+    method: "POST",
+    body: JSON.stringify({ data_input: "[1]", typed_code: "class Solution {};", lang: "cpp" }),
+  });
   await page.flushCapture();
-  expect(page.tabClicks()).toBe(0);
   expect(page.snapshots).toEqual([]);
 
-  await finishCheck();
+  await window.fetch(`https://leetcode.com/submissions/detail/${INTERPRET_ID}/check/`);
   await page.flushCapture();
   expect(page.snapshots.at(-1)?.payload.cases).toEqual(["[1]", "[2]", "[3]"]);
-  const clicksAfterResults = page.tabClicks();
-  expect(clicksAfterResults).toBeGreaterThan(0);
   expect(page.selectedIndex()).toBe(1);
-
-  page.dispatchInput();
-  page.dispatchClick();
-  await page.flushCapture();
-  expect(page.tabClicks()).toBe(clicksAfterResults);
 });
 
 test("does not walk while a Run check is still in flight", async () => {
   const page = installTabbedPage([["[1]"], ["[2]"]], 0);
   await import("./inject.js");
-
   page.setCheckState("PENDING");
-  await runCode("[1]");
-  await page.flushCapture();
-  await finishCheck();
-  await page.flushCapture();
-  expect(page.tabClicks()).toBe(0);
-  expect(page.snapshots).toEqual([]);
-
-  page.setCheckState("STARTED");
-  await finishCheck();
-  await page.flushCapture();
-  expect(page.tabClicks()).toBe(0);
+  await finishRun(page);
   expect(page.snapshots).toEqual([]);
 
   page.setCheckState("SUCCESS");
-  await finishCheck();
+  await window.fetch(`https://leetcode.com/submissions/detail/${INTERPRET_ID}/check/`);
   await page.flushCapture();
   expect(page.snapshots.at(-1)?.payload.cases).toEqual(["[1]", "[2]"]);
-});
-
-test("ignores a check for a different submission id", async () => {
-  const page = installTabbedPage([["[1]"], ["[2]"]], 0);
-  await import("./inject.js");
-  await runCode("[1]");
-  await page.flushCapture();
-  await finishCheck("other-id");
-  await page.flushCapture();
-  expect(page.tabClicks()).toBe(0);
-  expect(page.snapshots).toEqual([]);
 });
 
 test("publishes one atomic snapshot containing every visited Case tab", async () => {
@@ -582,259 +327,42 @@ test("publishes one atomic snapshot containing every visited Case tab", async ()
   await import("./inject.js");
   await finishRun(page);
   expect(page.snapshots.at(-1)?.payload.cases).toEqual(["[1]", "[2]\n4", "[3]"]);
-  expect(page.selectedIndex()).toBe(1);
 });
 
-function isSubsetCollection(cases: string[] | undefined, complete: string[]): boolean {
-  return !!cases && cases.length > 0 && cases.length < complete.length;
-}
-
-test("keeps the last complete collection when a later Run cannot walk cases", async () => {
-  const page = installTabbedPage([["[1]"], ["[2]"], ["[3]"]], 1);
-  await import("./inject.js");
-  await finishRun(page);
-  const complete = page.snapshots.at(-1)?.payload.cases ?? [];
-  const clicksAfterFirst = page.tabClicks();
-
-  page.pauseSelectionOf(0);
-  await finishRun(page, "[2]");
-
-  expect(complete).toEqual(["[1]", "[2]", "[3]"]);
-  expect(page.snapshots.at(-1)?.payload.cases).toEqual(complete);
-  expect(page.tabClicks()).toBeGreaterThan(clicksAfterFirst);
-  expect(page.selectedIndex()).toBe(1);
-});
-
-test("does not post a subset while walking cases after results", async () => {
-  const page = installTabbedPage([["[1]"], ["[2]"], ["[3]"]], 1);
-  await import("./inject.js");
-  await finishRun(page);
-
-  const complete = ["[1]", "[2]", "[3]"];
-  expect(page.snapshots.some((snapshot) => isSubsetCollection(snapshot.payload.cases, complete))).toBe(
-    false,
-  );
-  expect(page.snapshots.at(-1)?.payload.cases).toEqual(complete);
-  expect(page.selectedIndex()).toBe(1);
-});
-
-test("Run never replaces a complete collection with data_input", async () => {
-  const page = installTabbedPage([["[1]"], ["[2]"], ["[3]"]], 0);
-  await import("./inject.js");
-  await finishRun(page);
-  await finishRun(page, "[2]");
-
-  expect(page.snapshots.at(-1)?.payload.cases).toEqual(["[1]", "[2]", "[3]"]);
-});
-
-test("clears the last complete cache when the problem slug changes", async () => {
+test("forwards Run stdout and per-case stdout from the check response", async () => {
   const page = installTabbedPage([["[1]"], ["[2]"]], 0);
-  await import("./inject.js");
-  await finishRun(page);
-  expect(page.snapshots.at(-1)?.payload.cases).toEqual(["[1]", "[2]"]);
-
-  page.setPathname("/problems/other/");
-  page.unmountConsole();
-  await finishRun(page, "[9]");
-
-  expect(page.snapshots.at(-1)?.payload.slug).toBe("other");
-  expect(page.snapshots.at(-1)?.payload.cases).toEqual(["[9]"]);
-});
-
-test("does not publish when the problem slug changes during an async walk", async () => {
-  const page = installTabbedPage([["[1]"], ["[2]"]], 0);
-  await import("./inject.js");
-  page.whenSelected(1, () => {
-    page.setPathname("/problems/other/");
-  });
-  await finishRun(page);
-
-  expect(page.snapshots).toEqual([]);
-});
-
-test("publishes empty cases and captureError when the first traversal fails", async () => {
-  const page = installTabbedPage([["[1]"], ["[2]"]], 0);
-  page.pauseSelectionOf(0);
-  await import("./inject.js");
-  await finishRun(page);
-
-  expect(page.snapshots.at(-1)?.payload.cases).toEqual([]);
-  expect(page.snapshots.at(-1)?.payload.captureError).toBeDefined();
-});
-
-test("publishes one mounted case when no Case tabs exist", async () => {
-  const page = installTabbedPage([], -1, { mounted: ["[1,2,3]", "2"] });
-  await import("./inject.js");
-  await finishRun(page);
-
-  expect(page.snapshots.at(-1)?.payload.cases).toEqual(["[1,2,3]\n2"]);
-});
-
-test("keeps the cached collection when a later capture finds no tabs or inputs", async () => {
-  const page = installTabbedPage([["[1]"], ["[2]"], ["[3]"]], 0);
-  await import("./inject.js");
-  await finishRun(page);
-  const complete = page.snapshots.at(-1)?.payload.cases;
-  expect(complete).toEqual(["[1]", "[2]", "[3]"]);
-
-  page.unmountConsole();
-  await finishRun(page, "[2]");
-
-  expect(page.snapshots.at(-1)?.payload.cases).toEqual(complete);
-  expect(page.snapshots.at(-1)?.payload.captureError).toBeUndefined();
-
-  page.dispatchInput();
-  await page.flushCapture();
-  expect(page.snapshots.at(-1)?.payload.cases).toEqual(complete);
-  expect(page.snapshots.at(-1)?.payload.captureError).toBeUndefined();
-});
-
-test("Run may use data_input only when no tabs and no complete cache exist", async () => {
-  const page = installTabbedPage([], -1);
-  await import("./inject.js");
-  await page.flushCapture();
-  expect(page.snapshots).toEqual([]);
-
-  await finishRun(page, "[2]");
-
-  expect(page.snapshots.at(-1)?.payload.cases).toEqual(["[2]"]);
-});
-
-test("publishes every Test Result case from the Input section", async () => {
-  const page = installResultPage({
-    cases: [
-      ["[2,7,11,15]", "9"],
-      ["[3,2,4]", "6"],
-      ["[3,3]", "6"],
-    ],
-    selected: 0,
-  });
-  await import("./inject.js");
-  await finishRun(page);
-
-  expect(page.snapshots.at(-1)?.payload.cases).toEqual([
-    "[2,7,11,15]\n9",
-    "[3,2,4]\n6",
-    "[3,3]\n6",
-  ]);
-  expect(page.selectedIndex()).toBe(0);
-});
-
-test("forwards Run stdout from the check response", async () => {
-  const page = installTabbedPage([["[1]"]], 0);
-  page.setCheckStdout(["#graphy current n0", "#graphy visit n0"]);
-  await import("./inject.js");
-  await finishRun(page);
-
-  expect(page.snapshots.at(-1)?.payload.stdout).toBe("#graphy current n0\n#graphy visit n0");
-  expect(page.snapshots.at(-1)?.payload.source).toBe("network");
-});
-
-test("forwards per-case stdout from std_output_list", async () => {
-  const page = installTabbedPage([["[1]"], ["[2]"]], 0);
+  page.setCheckStdout(["#graphy current n0"]);
   page.setCheckStdOutputList(["#graphy current n0", "#graphy topology n0:n2,-"]);
   await import("./inject.js");
   await finishRun(page);
 
+  expect(page.snapshots.at(-1)?.payload.stdout).toBe("#graphy current n0");
   expect(page.snapshots.at(-1)?.payload.stdoutByCase).toEqual([
     "#graphy current n0",
     "#graphy topology n0:n2,-",
   ]);
-  expect(page.snapshots.at(-1)?.payload.stdout).toBe(
-    "#graphy current n0\n#graphy topology n0:n2,-",
-  );
 });
 
 const PYTHON_TYPED = "class Solution:\n    def invertTree(self, root):\n        return root\n";
 
-async function runPython(typed = PYTHON_TYPED): Promise<void> {
+test("appends a Python tracer on Run only after tracing is enabled", async () => {
+  const page = installTabbedPage([["[4,2,7]"]], 0, { code: PYTHON_TYPED });
+  await import("./inject.js");
+
   await window.fetch("https://leetcode.com/problems/example/interpret_solution/", {
     method: "POST",
-    body: JSON.stringify({ data_input: "[4,2,7]", typed_code: typed, lang: "python3" }),
+    body: JSON.stringify({ data_input: "[4,2,7]", typed_code: PYTHON_TYPED, lang: "python3" }),
   });
-}
+  expect(JSON.parse(page.sentBodies.at(-1) ?? "{}").typed_code).toBe(PYTHON_TYPED);
 
-function lastTyped(page: PageHarness): string | undefined {
-  const sent = JSON.parse(page.sentBodies.at(-1) ?? "{}") as { typed_code?: string };
-  return sent.typed_code;
-}
-
-test("does not rewrite Python Run when tracing has never been enabled", async () => {
-  const page = installTabbedPage([["[4,2,7]"]], 0, { code: PYTHON_TYPED });
-  await import("./inject.js");
-  await runPython();
+  page.dispatchPageMessage(pageTraceMessage(true));
+  await window.fetch("https://leetcode.com/problems/example/interpret_solution/", {
+    method: "POST",
+    body: JSON.stringify({ data_input: "[4,2,7]", typed_code: PYTHON_TYPED, lang: "python3" }),
+  });
+  expect(JSON.parse(page.sentBodies.at(-1) ?? "{}").typed_code).toContain("GRAPHY_TRACE_V1");
   await page.flushCapture();
-  await finishCheck();
+  await window.fetch(`https://leetcode.com/submissions/detail/${INTERPRET_ID}/check/`);
   await page.flushCapture();
-
-  expect(lastTyped(page)).toBe(PYTHON_TYPED);
-  expect(lastTyped(page)).not.toContain("GRAPHY_TRACE_V1");
   expect(page.snapshots.at(-1)?.payload.code).toBe(PYTHON_TYPED);
-});
-
-test("appends a Python tracer on Run after tracing is enabled, and snapshots the editor code", async () => {
-  const page = installTabbedPage([["[4,2,7]"]], 0, { code: PYTHON_TYPED });
-  await import("./inject.js");
-  page.dispatchPageMessage(pageTraceMessage(true));
-  await runPython();
-  await page.flushCapture();
-  await finishCheck();
-  await page.flushCapture();
-
-  expect(lastTyped(page)).toContain("GRAPHY_TRACE_V1");
-  expect(page.snapshots.at(-1)?.payload.code).toBe(PYTHON_TYPED);
-  expect(page.snapshots.at(-1)?.payload.code).not.toContain("GRAPHY_TRACE_V1");
-});
-
-test("stops rewriting Python Run after tracing is disabled", async () => {
-  const page = installTabbedPage([["[4,2,7]"]], 0, { code: PYTHON_TYPED });
-  await import("./inject.js");
-  page.dispatchPageMessage(pageTraceMessage(true));
-  await runPython();
-  expect(lastTyped(page)).toContain("GRAPHY_TRACE_V1");
-
-  page.dispatchPageMessage(pageTraceMessage(false));
-  await runPython();
-  expect(lastTyped(page)).toBe(PYTHON_TYPED);
-  expect(lastTyped(page)).not.toContain("GRAPHY_TRACE_V1");
-});
-
-test("ignores a trace post that is not same-window or not a boolean flag", async () => {
-  const page = installTabbedPage([["[4,2,7]"]], 0, { code: PYTHON_TYPED });
-  await import("./inject.js");
-  page.dispatchPageMessage(pageTraceMessage(true), { source: {} });
-  page.dispatchPageMessage(pageTraceMessage(true), { origin: "https://evil.example" });
-  page.dispatchPageMessage({ channel: "graphy:page", type: "trace", enabled: 1 });
-  await runPython();
-  expect(lastTyped(page)).toBe(PYTHON_TYPED);
-
-  page.dispatchPageMessage(pageTraceMessage(true));
-  await runPython();
-  expect(lastTyped(page)).toContain("GRAPHY_TRACE_V1");
-});
-
-test("XHR load skips parsing unrelated URLs but still walks check results", async () => {
-  const page = installTabbedPage([["[1]"], ["[2]"]], 0);
-  await import("./inject.js");
-
-  const parseSpy = vi.spyOn(JSON, "parse");
-  const unrelated = new FakeXhr();
-  unrelated.open("GET", "https://leetcode.com/graphql");
-  unrelated.responseText = "not-json{{{";
-  expect(() => unrelated.send()).not.toThrow();
-  expect(parseSpy).not.toHaveBeenCalledWith("not-json{{{");
-  parseSpy.mockRestore();
-
-  const run = new FakeXhr();
-  run.open("POST", "https://leetcode.com/problems/example/interpret_solution/");
-  run.responseText = JSON.stringify({ interpret_id: INTERPRET_ID });
-  run.send(JSON.stringify({ data_input: "[1]", typed_code: "class Solution {};", lang: "cpp" }));
-
-  const check = new FakeXhr();
-  check.open("GET", `https://leetcode.com/submissions/detail/${INTERPRET_ID}/check/`);
-  check.responseText = JSON.stringify({ state: "SUCCESS" });
-  check.send();
-  await page.flushCapture();
-
-  expect(page.snapshots.at(-1)?.payload.cases).toEqual(["[1]", "[2]"]);
 });

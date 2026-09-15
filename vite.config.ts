@@ -1,8 +1,12 @@
 /// <reference types="vitest/config" />
 import { defineConfig } from "vite";
-import type { Plugin } from "vite";
+import type { Plugin, PluginOption } from "vite";
 import { crx } from "@crxjs/vite-plugin";
 import manifest from "./manifest.config.js";
+// @ts-expect-error no declaration file for the .mjs helper
+import { bundlePageWorld as bundlePageWorldJs } from "./scripts/bundle-page-world.mjs";
+
+const bundlePageWorld: () => void = bundlePageWorldJs;
 
 /**
  * The page-world script must be a standalone IIFE served from
@@ -11,24 +15,14 @@ import manifest from "./manifest.config.js";
 function pageWorldBundle(): Plugin {
   return {
     name: "graphy:page-world",
-    async buildStart() {
-      const { build } = await import("esbuild");
-      await build({
-        entryPoints: ["src/main-world/inject.ts"],
-        outfile: "public/injected.js",
-        bundle: true,
-        format: "iife",
-        target: "chrome110",
-        minify: process.env.NODE_ENV === "production",
-        legalComments: "none",
-        logLevel: "warning",
-      });
+    buildStart() {
+      bundlePageWorld();
     },
   };
 }
 
 export default defineConfig(async ({ command }) => {
-  const plugins: Plugin[] = [pageWorldBundle(), crx({ manifest })];
+  const plugins: PluginOption[] = [pageWorldBundle(), crx({ manifest })];
   // @preact/preset-vite pulls in Babel + fsevents on import, which can stall
   // `vite build`. Production JSX is handled by Oxc; Prefresh is only for serve.
   if (command === "serve") {
@@ -38,10 +32,16 @@ export default defineConfig(async ({ command }) => {
   return {
     plugins,
     oxc: {
-      jsx: { runtime: "automatic", importSource: "preact" },
+      jsx: { runtime: "automatic" as const, importSource: "preact" },
     },
     test: {
-      exclude: ["**/node_modules/**", "**/dist/**", "**/.worktrees/**"],
+      exclude: [
+        "**/node_modules/**",
+        "**/node_modules.nosync/**",
+        "**/node_modules.icloud-trash/**",
+        "**/dist/**",
+        "**/.worktrees/**",
+      ],
     },
     build: {
       target: "chrome110",

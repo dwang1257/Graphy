@@ -6,7 +6,14 @@ export default defineConfig({
     jsx: { runtime: "automatic", importSource: "preact" },
   },
   test: {
-    exclude: ["**/node_modules/**", "**/dist/**", "**/.worktrees/**", "**/scripts/**"],
+    exclude: [
+      "**/node_modules/**",
+      "**/node_modules.nosync/**",
+      "**/node_modules.icloud-trash/**",
+      "**/dist/**",
+      "**/.worktrees/**",
+      "**/scripts/**",
+    ],
     pool: "threads",
   },
 });

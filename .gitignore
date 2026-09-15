@@ -1,5 +1,8 @@
 /node_modules
+/node_modules.nosync
+/node_modules.icloud-trash
 /public/injected.js
+.DS_Store
 .cursor/
 .worktrees/
 .superpowers/
