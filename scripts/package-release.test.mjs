@@ -118,6 +118,20 @@ test("collectReleaseFiles rejects missing local references from manifest HTML an
   }
 });
 
+test("collectReleaseFiles rejects existing local references outside release candidates", () => {
+  const distDirectory = mkdtempSync(join(tmpdir(), "graphy-release-"));
+  mkdirSync(join(distDirectory, "assets"));
+  writeFileSync(join(distDirectory, "manifest.json"), JSON.stringify({
+    web_accessible_resources: [{ resources: ["assets/feature.test.js"] }],
+  }));
+  writeFileSync(join(distDirectory, "assets", "feature.test.js"), "export const feature = true;");
+
+  assert.throws(
+    () => collectReleaseFiles(distDirectory),
+    /assets\/feature\.test\.js.*manifest\.json.*outside deterministic release candidates/i,
+  );
+});
+
 test("collectReleaseFiles ignores external and data runtime references", () => {
   const distDirectory = mkdtempSync(join(tmpdir(), "graphy-release-"));
   mkdirSync(join(distDirectory, "src", "panel"), { recursive: true });
