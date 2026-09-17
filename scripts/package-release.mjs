@@ -7,6 +7,7 @@ const ICON_PATTERN = /^icons\/icon(?:16|32|48|128)\.png$/;
 const WORKER_PATTERN = /^service-worker\.ts-[^/]+\.js$/;
 const ASSET_PATTERN = /^assets\/[^/]+\.(?:css|js|wasm)$/;
 const DEVELOPMENT_PATTERN = /(?:^|[._-])(?:test|spec)(?:[._-]|$)/i;
+const FILE_REFERENCE_PATTERN = /^[A-Za-z0-9._/-]+\.(?:css|html|js|json|png|svg|wasm)$/i;
 
 function normalizePath(filePath) {
   return filePath.split(sep).join("/").replace(/^\.\//, "");
@@ -42,6 +43,7 @@ export function collectReleaseFiles(distDirectory) {
     selected.add(filePath);
     const source = readFileSync(join(distDirectory, filePath), "utf8");
     for (const reference of runtimeReferences(source, filePath)) {
+      if (!reference.includes("*") && !FILE_REFERENCE_PATTERN.test(reference)) continue;
       const matchingCandidates = reference.includes("*")
         ? [...candidates].filter((candidate) => matchesWildcard(reference, candidate))
         : candidates.has(reference) ? [reference] : [];

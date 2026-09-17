@@ -142,6 +142,17 @@ test("collectReleaseFiles ignores external and data runtime references", () => {
   assert.deepEqual(collectReleaseFiles(distDirectory), ["manifest.json"]);
 });
 
+test("collectReleaseFiles ignores non-file relative runtime tokens", () => {
+  const distDirectory = mkdtempSync(join(tmpdir(), "graphy-release-"));
+  mkdirSync(join(distDirectory, "assets"));
+  writeFileSync(join(distDirectory, "manifest.json"), JSON.stringify({
+    content_scripts: [{ js: ["assets/runtime.js"] }],
+  }));
+  writeFileSync(join(distDirectory, "assets", "runtime.js"), "const program = './this.program';");
+
+  assert.deepEqual(collectReleaseFiles(distDirectory), ["assets/runtime.js", "manifest.json"]);
+});
+
 test("collectReleaseFiles follows wildcard references that match release candidates", () => {
   const distDirectory = mkdtempSync(join(tmpdir(), "graphy-release-"));
   mkdirSync(join(distDirectory, "assets"));
