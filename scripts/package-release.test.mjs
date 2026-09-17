@@ -87,6 +87,18 @@ test("collectReleaseFiles rejects missing local references from manifest HTML an
       files: [["service-worker-loader.js", "import './assets/missing.js';"]],
       source: "service-worker-loader.js",
     },
+    {
+      manifest: { web_accessible_resources: [{ resources: ["src/panel/missing.js"] }] },
+      files: [],
+      reference: "src/panel/missing.js",
+      source: "manifest.json",
+    },
+    {
+      manifest: { icons: { 16: "icons/missing.svg" } },
+      files: [],
+      reference: "icons/missing.svg",
+      source: "manifest.json",
+    },
   ];
 
   for (const testCase of cases) {
@@ -101,7 +113,41 @@ test("collectReleaseFiles rejects missing local references from manifest HTML an
 
     assert.throws(
       () => collectReleaseFiles(distDirectory),
-      new RegExp(`missing local runtime file.*assets/missing\\.js.*${testCase.source}`, "i"),
+      new RegExp(`missing local runtime file.*${testCase.reference ?? "assets/missing.js"}.*${testCase.source}`, "i"),
     );
   }
+});
+
+test("collectReleaseFiles ignores external and data runtime references", () => {
+  const distDirectory = mkdtempSync(join(tmpdir(), "graphy-release-"));
+  mkdirSync(join(distDirectory, "src", "panel"), { recursive: true });
+  writeFileSync(join(distDirectory, "manifest.json"), JSON.stringify({
+    web_accessible_resources: [{ resources: ["https://cdn.example.com/assets/missing.js", "data:text/javascript,assets/missing.js"] }],
+  }));
+
+  assert.deepEqual(collectReleaseFiles(distDirectory), ["manifest.json"]);
+});
+
+test("collectReleaseFiles follows wildcard references that match release candidates", () => {
+  const distDirectory = mkdtempSync(join(tmpdir(), "graphy-release-"));
+  mkdirSync(join(distDirectory, "assets"));
+  writeFileSync(join(distDirectory, "manifest.json"), JSON.stringify({
+    web_accessible_resources: [{ resources: ["assets/*.js"] }],
+  }));
+  writeFileSync(join(distDirectory, "assets", "runtime.js"), "export const runtime = true;");
+
+  assert.deepEqual(collectReleaseFiles(distDirectory), ["assets/runtime.js", "manifest.json"]);
+});
+
+test("collectReleaseFiles rejects wildcard references without a release candidate", () => {
+  const distDirectory = mkdtempSync(join(tmpdir(), "graphy-release-"));
+  mkdirSync(join(distDirectory, "assets"));
+  writeFileSync(join(distDirectory, "manifest.json"), JSON.stringify({
+    web_accessible_resources: [{ resources: ["assets/*.js"] }],
+  }));
+
+  assert.throws(
+    () => collectReleaseFiles(distDirectory),
+    /Missing local runtime file "assets\/\*\.js" referenced by manifest\.json/i,
+  );
 });
