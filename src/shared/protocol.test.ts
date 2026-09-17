@@ -2,8 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import {
   PAGE_CHANNEL,
+  isPageControlMessage,
   isPageMessage,
   isPageTraceMessage,
+  isToPanel,
+  pageClearMessage,
+  pageHooksMessage,
   pageTraceMessage,
 } from "./protocol.js";
 
@@ -58,5 +62,18 @@ describe("page trace messages", () => {
     expect(isPageTraceMessage(pageTraceMessage(true))).toBe(true);
     expect(isPageTraceMessage({ channel: PAGE_CHANNEL, type: "trace", enabled: false })).toBe(true);
     expect(isPageMessage(pageTraceMessage(false))).toBe(false);
+  });
+});
+
+describe("page lifecycle messages", () => {
+  it("accepts hook activation and deactivation controls", () => {
+    expect(isPageControlMessage(pageHooksMessage(true))).toBe(true);
+    expect(isPageControlMessage(pageHooksMessage(false))).toBe(true);
+    expect(isPageMessage(pageHooksMessage(true))).toBe(false);
+  });
+
+  it("accepts clear messages for page and panel state", () => {
+    expect(isPageMessage(pageClearMessage())).toBe(true);
+    expect(isToPanel({ channel: "graphy:panel", type: "clear" })).toBe(true);
   });
 });

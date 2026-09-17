@@ -8,6 +8,7 @@ export interface TestcaseDomAdapter {
   selectedIndex(tabs: CaseTab[]): number;
   select(tab: CaseTab): void;
   readMountedParameters(): string[] | null;
+  waitUntilReady(isCurrent: () => boolean): Promise<boolean>;
   waitUntilSettled(tab: CaseTab, isCurrent: () => boolean): Promise<string[]>;
 }
 
@@ -28,6 +29,7 @@ const INPUT_SELECTOR = '[data-e2e-locator="console-testcase-input"]';
 const RESULT_SELECTOR = '[data-e2e-locator="console-result"]';
 const CASE_PILL_TEXT = /^Case\s+\d+$/i;
 const INPUT_HEADING = /^(Input|输入)$/;
+const READINESS_TIMEOUT_MS = 4_000;
 const SETTLE_TIMEOUT_MS = 2_000;
 
 function normalizeText(value: string): string {
@@ -236,6 +238,45 @@ export function createTestcaseDomAdapter(
       scheduleCheck();
     });
 
+  const waitUntilReady = (isCurrent: () => boolean): Promise<boolean> =>
+    new Promise((resolve) => {
+      let finished = false;
+      let framePending = false;
+
+      const finish = (ready: boolean): void => {
+        if (finished) return;
+        finished = true;
+        win.clearTimeout(timeout);
+        resolve(ready);
+      };
+
+      const timeout = win.setTimeout(() => finish(false), READINESS_TIMEOUT_MS);
+
+      const check = (): void => {
+        if (finished) return;
+        if (!isCurrent()) {
+          finish(false);
+          return;
+        }
+        if (tabs().length > 0 || readMountedParameters() !== null) {
+          finish(true);
+          return;
+        }
+        scheduleCheck();
+      };
+
+      const scheduleCheck = (): void => {
+        if (finished || framePending) return;
+        framePending = true;
+        win.requestAnimationFrame(() => {
+          framePending = false;
+          check();
+        });
+      };
+
+      scheduleCheck();
+    });
+
   return {
     tabs,
     selectedIndex,
@@ -244,6 +285,7 @@ export function createTestcaseDomAdapter(
       tab.element.click();
     },
     readMountedParameters,
+    waitUntilReady,
     waitUntilSettled,
   };
 }

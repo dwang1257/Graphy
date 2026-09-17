@@ -105,6 +105,17 @@ export function App(): JSX.Element {
         setShrunk(data.shrunk);
         return;
       }
+      if (data.type === "clear") {
+        hasRendered.current = false;
+        setSnapshot(null);
+        setError(null);
+        setActiveCase(0);
+        setTraceIndex(0);
+        setTracePlaying(false);
+        setSvg("");
+        setTopologySvgs({});
+        return;
+      }
       if (data.payload.source === "editor" && !liveUpdate.current && hasRendered.current) return;
       setSnapshot((prev) => {
         const next = data.payload;

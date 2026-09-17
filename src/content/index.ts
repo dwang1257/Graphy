@@ -1,12 +1,14 @@
 import { PANEL_CHANNEL, isPageMessage, type Snapshot } from "../shared/protocol.js";
 import { loadSettings } from "../settings/storage.js";
 import { PanelHost } from "./host.js";
-import { notifyPageTrace } from "./pageTrace.js";
+import { notifyPageHooks, notifyPageTrace } from "./pageTrace.js";
 
 const PROBLEM_PATH = /^\/problems\/[^/]+/;
 
 let host: PanelHost | null = null;
 let lastSnapshot: Snapshot | null = null;
+let pageScriptInjected = false;
+let pageHooksDesired = false;
 
 /**
  * The capture script must run in the page world to reach CodeMirror's view
@@ -14,11 +16,23 @@ let lastSnapshot: Snapshot | null = null;
  * than declared as a content script.
  */
 function injectPageScript(): void {
+  if (pageScriptInjected) return;
+  pageScriptInjected = true;
   const script = document.createElement("script");
   script.src = chrome.runtime.getURL("injected.js");
   script.async = false;
-  script.addEventListener("load", () => script.remove());
+  script.addEventListener("load", () => {
+    script.remove();
+    notifyPageHooks(pageHooksDesired);
+  });
   (document.head ?? document.documentElement).prepend(script);
+}
+
+function setPageHooks(enabled: boolean): void {
+  pageHooksDesired = enabled;
+  if (!enabled && !pageScriptInjected) return;
+  if (!pageScriptInjected) injectPageScript();
+  else notifyPageHooks(enabled);
 }
 
 function onProblemPage(): boolean {
@@ -47,10 +61,19 @@ function forward(snapshot: Snapshot): void {
   host?.send({ channel: PANEL_CHANNEL, type: "snapshot", payload: snapshot });
 }
 
+function clearPanel(): void {
+  host?.send({ channel: PANEL_CHANNEL, type: "clear" });
+}
+
 window.addEventListener("message", (event) => {
   if (event.source !== window) return;
   const data: unknown = event.data;
   if (!isPageMessage(data)) return;
+  if (data.type === "clear") {
+    lastSnapshot = null;
+    clearPanel();
+    return;
+  }
   lastSnapshot = data.payload;
   forward(data.payload);
 });
@@ -68,8 +91,14 @@ function watchNavigation(): void {
     if (location.pathname === path) return;
     path = location.pathname;
     lastSnapshot = null;
-    if (onProblemPage()) mount();
-    else unmount();
+    clearPanel();
+    if (onProblemPage()) {
+      mount();
+      setPageHooks(true);
+    } else {
+      setPageHooks(false);
+      unmount();
+    }
   };
   const patch = <K extends "pushState" | "replaceState">(key: K): void => {
     const native = history[key];
@@ -86,11 +115,13 @@ function watchNavigation(): void {
 }
 
 function start(): void {
-  if (onProblemPage()) mount();
+  if (onProblemPage()) {
+    mount();
+    setPageHooks(true);
+  }
   watchNavigation();
 }
 
-injectPageScript();
 // Mounting waits for <body> so the injected host never disturbs hydration.
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", start, { once: true });

@@ -1,7 +1,12 @@
-import { PAGE_CHANNEL, isPageTraceMessage, type Snapshot } from "../shared/protocol.js";
+import {
+  PAGE_CHANNEL,
+  isPageControlMessage,
+  pageClearMessage,
+  type Snapshot,
+} from "../shared/protocol.js";
 import { instrumentRunBody } from "./instrument.js";
 import { extractRunStdout, extractRunStdoutByCase } from "./runResult.js";
-import { captureCasesFromTabs } from "./testcaseCapture.js";
+import { captureCasesFromTabs, captureCasesWhenReady } from "./testcaseCapture.js";
 import { createTestcaseDomAdapter, type TestcaseDomAdapter } from "./testcaseDom.js";
 
 /**
@@ -23,12 +28,18 @@ let generation = 0;
 let cache: { slug: string; cases: string[] } | null = null;
 let flight: Promise<void> = Promise.resolve();
 let tracingEnabled = false;
+let hooksActive = false;
+let activeSlug = "";
 
 function onPageMessage(event: MessageEvent): void {
   if (event.source !== window) return;
   if (event.origin !== location.origin) return;
-  if (!isPageTraceMessage(event.data)) return;
-  tracingEnabled = event.data.enabled;
+  if (!isPageControlMessage(event.data)) return;
+  if (event.data.type === "trace") {
+    tracingEnabled = event.data.enabled;
+    return;
+  }
+  setHooksActive(event.data.enabled);
 }
 
 window.addEventListener("message", onPageMessage);
@@ -67,18 +78,28 @@ function post(snapshot: Snapshot): void {
   window.postMessage({ channel: PAGE_CHANNEL, type: "snapshot", payload: snapshot }, location.origin);
 }
 
+function postClear(): void {
+  window.postMessage(pageClearMessage(), location.origin);
+}
+
 function beginGeneration(): number {
   generation += 1;
   return generation;
 }
 
-function publish(source: Snapshot["source"], override?: Partial<Snapshot>, walk = false): void {
+function publish(
+  source: Snapshot["source"],
+  override?: Partial<Snapshot>,
+  walk = false,
+  waitForReady = false,
+): void {
   const slug = slugOf();
   if (!slug) return;
 
   const gen = beginGeneration();
   const queued = flight.then(async () => {
     if (gen !== generation) return;
+    if (!hooksActive || activeSlug !== slug) return;
 
     const isCurrent = () => gen === generation;
     if (cache && cache.slug !== slug) cache = null;
@@ -87,7 +108,9 @@ function publish(source: Snapshot["source"], override?: Partial<Snapshot>, walk 
     let captureError: string | undefined;
 
     if (walk) {
-      const fromDom = await captureCasesFromTabs(adapter, isCurrent);
+      const fromDom = waitForReady
+        ? await captureCasesWhenReady(adapter, isCurrent)
+        : await captureCasesFromTabs(adapter, isCurrent);
       if (!isCurrent()) return;
       const liveSlug = slugOf();
       if (!liveSlug || liveSlug !== slug) return;
@@ -117,6 +140,8 @@ function publish(source: Snapshot["source"], override?: Partial<Snapshot>, walk 
         captureError = undefined;
       }
     }
+
+    if (source === "editor" && cases.length === 0 && !captureError) return;
 
     const snapshot: Snapshot = {
       cases,
@@ -157,13 +182,16 @@ function fromRunBody(body: unknown): Partial<Snapshot> | null {
 const RUN_URL = /\/interpret_solution\/?$|\/interpret_solution\//;
 const CHECK_URL = /\/submissions\/detail\/([^/?]+)\/check\/?/;
 const IN_FLIGHT = new Set(["PENDING", "STARTED"]);
+const MAX_PENDING_RUNS = 32;
 
 interface PendingRun {
   override?: Partial<Snapshot>;
-  id?: string;
+  sequence: number;
 }
 
-let pendingRun: PendingRun | null = null;
+let nextRunSequence = 0;
+const pendingRuns = new Map<number, PendingRun>();
+const pendingResults = new Map<string, PendingRun>();
 
 function requestUrl(input: RequestInfo | URL): string {
   if (typeof input === "string") return input;
@@ -196,28 +224,62 @@ function interpretIdOf(body: Record<string, unknown> | null): string | undefined
   return typeof id === "string" && id.length > 0 ? id : undefined;
 }
 
-function rememberRun(body: unknown): void {
-  pendingRun = { override: fromRunBody(body) ?? undefined };
+function dropOldestPending(): void {
+  let oldest: { map: Map<unknown, PendingRun>; key: unknown; sequence: number } | undefined;
+  for (const [key, pending] of pendingRuns) {
+    if (!oldest || pending.sequence < oldest.sequence) {
+      oldest = { map: pendingRuns, key, sequence: pending.sequence };
+    }
+  }
+  for (const [key, pending] of pendingResults) {
+    if (!oldest || pending.sequence < oldest.sequence) {
+      oldest = { map: pendingResults, key, sequence: pending.sequence };
+    }
+  }
+  if (oldest) oldest.map.delete(oldest.key);
 }
 
-function rememberInterpretId(body: Record<string, unknown> | null): void {
+function trimPending(): void {
+  while (pendingRuns.size + pendingResults.size > MAX_PENDING_RUNS) dropOldestPending();
+}
+
+function clearPending(): void {
+  pendingRuns.clear();
+  pendingResults.clear();
+}
+
+function rememberRun(body: unknown): number {
+  const sequence = nextRunSequence;
+  nextRunSequence += 1;
+  pendingRuns.set(sequence, { override: fromRunBody(body) ?? undefined, sequence });
+  trimPending();
+  return sequence;
+}
+
+function rememberInterpretId(body: Record<string, unknown> | null, sequence: number): void {
   const id = interpretIdOf(body);
-  if (id && pendingRun) pendingRun.id = id;
+  const pending = pendingRuns.get(sequence);
+  if (!pending) return;
+  pendingRuns.delete(sequence);
+  if (!id) return;
+  pendingResults.set(id, pending);
+  trimPending();
 }
 
 function maybeWalkResults(url: string, body: Record<string, unknown> | null): void {
-  if (!pendingRun) return;
   const state = body?.state;
   if (typeof state !== "string" || IN_FLIGHT.has(state)) return;
   const checkId = CHECK_URL.exec(url)?.[1];
-  if (pendingRun.id && checkId !== pendingRun.id) return;
+  if (!checkId) return;
+  const pending = pendingResults.get(checkId);
+  if (!pending) return;
 
-  const override: Partial<Snapshot> = { ...pendingRun.override };
+  const override: Partial<Snapshot> = { ...pending.override };
   const stdout = extractRunStdout(body);
   if (stdout !== undefined) override.stdout = stdout;
   const stdoutByCase = extractRunStdoutByCase(body);
   if (stdoutByCase !== undefined) override.stdoutByCase = stdoutByCase;
-  pendingRun = null;
+  pendingResults.delete(checkId);
   void publish("network", override, true);
 }
 
@@ -229,15 +291,24 @@ function outgoingRun(body: unknown): { remember: unknown; send: unknown } {
   };
 }
 
+let networkPatched = false;
+let nativeFetch: typeof window.fetch;
+let nativeOpen: typeof XMLHttpRequest.prototype.open;
+let nativeSend: typeof XMLHttpRequest.prototype.send;
+let xhrUrls = new WeakMap<XMLHttpRequest, string>();
+
 function patchNetwork(): void {
-  const nativeFetch = window.fetch;
+  if (networkPatched) return;
+  nativeFetch = window.fetch;
   window.fetch = function patched(this: typeof globalThis, input: RequestInfo | URL, init?: RequestInit) {
+    if (!hooksActive) return nativeFetch.call(this, input, init);
     const url = requestUrl(input);
     let nextInit = init;
+    let sequence: number | undefined;
     try {
       if (RUN_URL.test(url)) {
         const run = outgoingRun(init?.body);
-        rememberRun(run.remember);
+        sequence = rememberRun(run.remember);
         if (run.send !== init?.body && init) {
           nextInit = { ...init, body: run.send as BodyInit };
         }
@@ -250,7 +321,7 @@ function patchNetwork(): void {
     void request
       .then(async (response) => {
         if (RUN_URL.test(url)) {
-          rememberInterpretId(await readResponseJson(response));
+          if (sequence !== undefined) rememberInterpretId(await readResponseJson(response), sequence);
           return;
         }
         if (CHECK_URL.test(url)) maybeWalkResults(url, await readResponseJson(response));
@@ -259,22 +330,24 @@ function patchNetwork(): void {
     return request;
   };
 
-  const nativeOpen = XMLHttpRequest.prototype.open;
-  const nativeSend = XMLHttpRequest.prototype.send;
-  const urls = new WeakMap<XMLHttpRequest, string>();
+  nativeOpen = XMLHttpRequest.prototype.open;
+  nativeSend = XMLHttpRequest.prototype.send;
+  xhrUrls = new WeakMap<XMLHttpRequest, string>();
 
   XMLHttpRequest.prototype.open = function open(this: XMLHttpRequest, method: string, url: string | URL, ...rest: unknown[]) {
-    urls.set(this, String(url));
+    xhrUrls.set(this, String(url));
     return (nativeOpen as (...args: unknown[]) => void).call(this, method, url, ...rest);
   } as typeof XMLHttpRequest.prototype.open;
 
   XMLHttpRequest.prototype.send = function send(this: XMLHttpRequest, body?: Document | XMLHttpRequestBodyInit | null) {
-    const url = urls.get(this) ?? "";
+    if (!hooksActive) return nativeSend.call(this, body);
+    const url = xhrUrls.get(this) ?? "";
     let nextBody = body;
+    let sequence: number | undefined;
     try {
       if (RUN_URL.test(url)) {
         const run = outgoingRun(body);
-        rememberRun(run.remember);
+        sequence = rememberRun(run.remember);
         nextBody = run.send as typeof body;
       }
     } catch {
@@ -285,7 +358,7 @@ function patchNetwork(): void {
       this.addEventListener("load", () => {
         try {
           const parsed = parseObject(String(this.responseText ?? ""));
-          if (RUN_URL.test(url)) rememberInterpretId(parsed);
+          if (RUN_URL.test(url) && sequence !== undefined) rememberInterpretId(parsed, sequence);
           else maybeWalkResults(url, parsed);
         } catch {
           /* Same - instrumentation must never be fatal. */
@@ -294,6 +367,42 @@ function patchNetwork(): void {
     }
     return nativeSend.call(this, nextBody ?? null);
   };
+  networkPatched = true;
 }
 
-patchNetwork();
+function unpatchNetwork(): void {
+  if (!networkPatched) return;
+  window.fetch = nativeFetch;
+  XMLHttpRequest.prototype.open = nativeOpen;
+  XMLHttpRequest.prototype.send = nativeSend;
+  networkPatched = false;
+}
+
+function setHooksActive(enabled: boolean): void {
+  const slug = slugOf();
+  if (enabled) {
+    if (!slug) return;
+    if (hooksActive && activeSlug === slug) return;
+    const changedSlug = activeSlug !== "" && activeSlug !== slug;
+    hooksActive = true;
+    activeSlug = slug;
+    beginGeneration();
+    last = "";
+    cache = null;
+    clearPending();
+    patchNetwork();
+    if (changedSlug) postClear();
+    void publish("editor", undefined, true, true);
+    return;
+  }
+
+  if (!hooksActive && activeSlug === "") return;
+  hooksActive = false;
+  activeSlug = "";
+  beginGeneration();
+  last = "";
+  cache = null;
+  clearPending();
+  unpatchNetwork();
+  postClear();
+}

@@ -1,13 +1,18 @@
 import { afterEach, expect, test, vi } from "vitest";
 
-import { pageTraceMessage } from "../shared/protocol.js";
+import { pageClearMessage, pageHooksMessage, pageTraceMessage } from "../shared/protocol.js";
 
 interface PageHarness {
   snapshots: Array<{ payload: SnapshotPayload }>;
+  clearMessages(): number;
   sentBodies: string[];
   flushCapture(): Promise<void>;
   selectedIndex(): number;
   tabClicks(): number;
+  activate(): void;
+  deactivate(): void;
+  mountTestcases(): void;
+  nativeFetchCalls(): number;
   dispatchPageMessage(data: unknown): void;
   setCheckState(state: string): void;
   setCheckStdout(lines: string[] | undefined): void;
@@ -82,9 +87,10 @@ class FakeXhr {
 function installTabbedPage(
   cases: string[][],
   selected: number,
-  options: { code?: string } = {},
+  options: { code?: string; initiallyMounted?: boolean; interpretIds?: Record<string, string> } = {},
 ): PageHarness {
   const snapshots: Array<{ payload: SnapshotPayload }> = [];
+  let clearMessages = 0;
   const sentBodies: string[] = [];
   const listeners = new Map<string, Array<() => void>>();
   const timeouts = new Map<number, { fn: () => void; at: number }>();
@@ -93,6 +99,9 @@ function installTabbedPage(
   let checkStdout: string[] | undefined;
   let checkStdOutputList: string[] | undefined;
   const interpretId = "interp-1";
+  const interpretIds = options.interpretIds ?? {};
+  let mounted = options.initiallyMounted !== false;
+  let nativeFetchCalls = 0;
 
   let selectedIndex = selected;
   let tabClicks = 0;
@@ -117,11 +126,12 @@ function installTabbedPage(
     origin: "https://leetcode.com",
   };
   const tabs = cases.map((_, index) => makeTab(index));
-  const currentWrappers = (): HTMLElement[] => (cases[selectedIndex] ?? []).map(inputWrapper);
+  const currentWrappers = (): HTMLElement[] =>
+    mounted ? (cases[selectedIndex] ?? []).map(inputWrapper) : [];
 
   const fakeDocument = {
     querySelectorAll: (selector: string) => {
-      if (selector === '[data-e2e-locator="console-testcase-tag"]') return tabs;
+      if (selector === '[data-e2e-locator="console-testcase-tag"]') return mounted ? tabs : [];
       if (selector === '[data-e2e-locator="console-testcase-input"]') return currentWrappers();
       if (selector === ".cm-content") {
         return [
@@ -146,8 +156,12 @@ function installTabbedPage(
 
   const pageMessages: Array<(event: MessageEvent) => void> = [];
   const fakeWindow = {
-    postMessage: (message: { payload: SnapshotPayload }) => {
-      snapshots.push(message);
+    postMessage: (message: { payload?: SnapshotPayload; type?: string }) => {
+      if (message.type === "clear") {
+        clearMessages += 1;
+        return;
+      }
+      if (message.payload) snapshots.push({ payload: message.payload });
     },
     addEventListener: (type: string, listener: EventListenerOrEventListenerObject) => {
       if (type !== "message" || typeof listener !== "function") return;
@@ -155,14 +169,17 @@ function installTabbedPage(
     },
     setInterval: () => 0,
     fetch: (input: RequestInfo | URL, init?: RequestInit) => {
+      nativeFetchCalls += 1;
       const url =
         typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       if (url.includes("interpret_solution") && typeof init?.body === "string") {
         sentBodies.push(init.body);
       }
       if (url.includes("interpret_solution")) {
+        const requestBody = typeof init?.body === "string" ? JSON.parse(init.body) as { data_input?: string } : {};
+        const responseId = (requestBody.data_input && interpretIds[requestBody.data_input]) ?? interpretId;
         return Promise.resolve(
-          new Response(JSON.stringify({ interpret_id: interpretId }), {
+          new Response(JSON.stringify({ interpret_id: responseId }), {
             status: 200,
             headers: { "Content-Type": "application/json" },
           }),
@@ -254,10 +271,27 @@ function installTabbedPage(
 
   return {
     snapshots,
+    clearMessages: () => clearMessages,
     sentBodies,
     flushCapture,
     selectedIndex: () => selectedIndex,
     tabClicks: () => tabClicks,
+    activate: () => {
+      const message = pageHooksMessage(true);
+      for (const listener of pageMessages) {
+        listener({ data: message, origin: locationState.origin, source: fakeWindow } as unknown as MessageEvent);
+      }
+    },
+    deactivate: () => {
+      const message = pageHooksMessage(false);
+      for (const listener of pageMessages) {
+        listener({ data: message, origin: locationState.origin, source: fakeWindow } as unknown as MessageEvent);
+      }
+    },
+    mountTestcases: () => {
+      mounted = true;
+    },
+    nativeFetchCalls: () => nativeFetchCalls,
     dispatchPageMessage: (data) => {
       const event = {
         data,
@@ -293,15 +327,16 @@ async function finishRun(page: PageHarness, dataInput = "[1]"): Promise<void> {
 test("walks case tabs after Run results succeed, not on load or send", async () => {
   const page = installTabbedPage([["[1]"], ["[2]"], ["[3]"]], 1);
   await import("./inject.js");
+  page.activate();
   await page.flushCapture();
-  expect(page.tabClicks()).toBe(0);
+  expect(page.snapshots.at(-1)?.payload.cases).toEqual(["[1]", "[2]", "[3]"]);
 
   await window.fetch("https://leetcode.com/problems/example/interpret_solution/", {
     method: "POST",
     body: JSON.stringify({ data_input: "[1]", typed_code: "class Solution {};", lang: "cpp" }),
   });
   await page.flushCapture();
-  expect(page.snapshots).toEqual([]);
+  expect(page.snapshots).toHaveLength(1);
 
   await window.fetch(`https://leetcode.com/submissions/detail/${INTERPRET_ID}/check/`);
   await page.flushCapture();
@@ -312,6 +347,9 @@ test("walks case tabs after Run results succeed, not on load or send", async () 
 test("does not walk while a Run check is still in flight", async () => {
   const page = installTabbedPage([["[1]"], ["[2]"]], 0);
   await import("./inject.js");
+  page.activate();
+  await page.flushCapture();
+  page.snapshots.length = 0;
   page.setCheckState("PENDING");
   await finishRun(page);
   expect(page.snapshots).toEqual([]);
@@ -325,6 +363,8 @@ test("does not walk while a Run check is still in flight", async () => {
 test("publishes one atomic snapshot containing every visited Case tab", async () => {
   const page = installTabbedPage([["[1]"], ["[2]", "4"], ["[3]"]], 1);
   await import("./inject.js");
+  page.activate();
+  await page.flushCapture();
   await finishRun(page);
   expect(page.snapshots.at(-1)?.payload.cases).toEqual(["[1]", "[2]\n4", "[3]"]);
 });
@@ -334,6 +374,8 @@ test("forwards Run stdout and per-case stdout from the check response", async ()
   page.setCheckStdout(["#graphy current n0"]);
   page.setCheckStdOutputList(["#graphy current n0", "#graphy topology n0:n2,-"]);
   await import("./inject.js");
+  page.activate();
+  await page.flushCapture();
   await finishRun(page);
 
   expect(page.snapshots.at(-1)?.payload.stdout).toBe("#graphy current n0");
@@ -348,6 +390,8 @@ const PYTHON_TYPED = "class Solution:\n    def invertTree(self, root):\n        
 test("appends a Python tracer on Run only after tracing is enabled", async () => {
   const page = installTabbedPage([["[4,2,7]"]], 0, { code: PYTHON_TYPED });
   await import("./inject.js");
+  page.activate();
+  await page.flushCapture();
 
   await window.fetch("https://leetcode.com/problems/example/interpret_solution/", {
     method: "POST",
@@ -365,4 +409,99 @@ test("appends a Python tracer on Run only after tracing is enabled", async () =>
   await window.fetch(`https://leetcode.com/submissions/detail/${INTERPRET_ID}/check/`);
   await page.flushCapture();
   expect(page.snapshots.at(-1)?.payload.code).toBe(PYTHON_TYPED);
+});
+
+test("waits for testcase tabs before publishing the initial snapshot", async () => {
+  const page = installTabbedPage([["[1]"], ["[2]"]], 0, { initiallyMounted: false });
+  await import("./inject.js");
+  page.activate();
+  await Promise.resolve();
+  expect(page.snapshots).toEqual([]);
+
+  page.mountTestcases();
+  await page.flushCapture();
+  expect(page.snapshots.at(-1)?.payload.cases).toEqual(["[1]", "[2]"]);
+});
+
+test("does not patch or capture Run requests while hooks are inactive", async () => {
+  const page = installTabbedPage([["[1]"]], 0);
+  const pythonCode = "class Solution:\n    def solve(self, root):\n        return root\n";
+  await import("./inject.js");
+
+  await window.fetch("https://leetcode.com/problems/example/interpret_solution/", {
+    method: "POST",
+    body: JSON.stringify({ data_input: "[1]", typed_code: pythonCode, lang: "python3" }),
+  });
+  expect(page.nativeFetchCalls()).toBe(1);
+  expect(JSON.parse(page.sentBodies.at(-1) ?? "{}").typed_code).toBe(pythonCode);
+
+  page.activate();
+  page.dispatchPageMessage(pageTraceMessage(true));
+  await window.fetch("https://leetcode.com/problems/example/interpret_solution/", {
+    method: "POST",
+    body: JSON.stringify({ data_input: "[1]", typed_code: pythonCode, lang: "python3" }),
+  });
+  expect(JSON.parse(page.sentBodies.at(-1) ?? "{}").typed_code).toContain("GRAPHY_TRACE_V1");
+  page.deactivate();
+  await window.fetch("https://leetcode.com/problems/example/interpret_solution/", {
+    method: "POST",
+    body: JSON.stringify({ data_input: "[1]", typed_code: pythonCode, lang: "python3" }),
+  });
+  expect(JSON.parse(page.sentBodies.at(-1) ?? "{}").typed_code).toBe(pythonCode);
+  expect(page.nativeFetchCalls()).toBe(3);
+});
+
+test("keeps concurrent Run overrides paired with their result IDs", async () => {
+  const page = installTabbedPage([], 0, {
+    interpretIds: { "[1]": "interp-a", "[2]": "interp-b" },
+    initiallyMounted: false,
+  });
+  await import("./inject.js");
+  page.activate();
+  await page.flushCapture();
+
+  await Promise.all([
+    window.fetch("https://leetcode.com/problems/example/interpret_solution/", {
+      method: "POST",
+      body: JSON.stringify({ data_input: "[1]", typed_code: "class Solution {};", lang: "cpp" }),
+    }),
+    window.fetch("https://leetcode.com/problems/example/interpret_solution/", {
+      method: "POST",
+      body: JSON.stringify({ data_input: "[2]", typed_code: "class Solution {};", lang: "cpp" }),
+    }),
+  ]);
+  await window.fetch("https://leetcode.com/submissions/detail/interp-a/check/");
+  await page.flushCapture();
+  await window.fetch("https://leetcode.com/submissions/detail/interp-b/check/");
+  await page.flushCapture();
+
+  expect(page.snapshots.map(({ payload }) => payload.cases)).toEqual([["[1]"], ["[2]"]]);
+});
+
+test("does not retain more than the bounded number of pending Run correlations", async () => {
+  const page = installTabbedPage([["[1]"]], 0);
+  await import("./inject.js");
+  page.activate();
+  await page.flushCapture();
+  page.snapshots.length = 0;
+
+  for (let index = 0; index < 40; index += 1) {
+    await window.fetch("https://leetcode.com/problems/example/interpret_solution/", {
+      method: "POST",
+      body: JSON.stringify({ data_input: `[${index}]`, typed_code: "class Solution {};", lang: "cpp" }),
+    });
+  }
+  await window.fetch("https://leetcode.com/submissions/detail/interp-1/check/");
+  await page.flushCapture();
+  expect(page.snapshots.length).toBeLessThanOrEqual(1);
+});
+
+test("publishes a clear message when hooks deactivate", async () => {
+  const page = installTabbedPage([["[1]"]], 0);
+  await import("./inject.js");
+  page.activate();
+  await page.flushCapture();
+  page.deactivate();
+  expect(page.clearMessages()).toBe(1);
+  expect(pageClearMessage()).toEqual({ channel: "graphy:page", type: "clear" });
 });

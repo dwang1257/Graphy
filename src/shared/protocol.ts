@@ -23,16 +23,31 @@ export interface Snapshot {
   stdoutByCase?: string[];
 }
 
-export type PageMessage = { channel: typeof PAGE_CHANNEL; type: "snapshot"; payload: Snapshot };
+export type PageMessage =
+  | { channel: typeof PAGE_CHANNEL; type: "snapshot"; payload: Snapshot }
+  | { channel: typeof PAGE_CHANNEL; type: "clear" };
 
 export type PageTraceMessage = { channel: typeof PAGE_CHANNEL; type: "trace"; enabled: boolean };
+
+export type PageHooksMessage = { channel: typeof PAGE_CHANNEL; type: "hooks"; enabled: boolean };
+
+export type PageControlMessage = PageTraceMessage | PageHooksMessage;
 
 export function pageTraceMessage(enabled: boolean): PageTraceMessage {
   return { channel: PAGE_CHANNEL, type: "trace", enabled };
 }
 
+export function pageHooksMessage(enabled: boolean): PageHooksMessage {
+  return { channel: PAGE_CHANNEL, type: "hooks", enabled };
+}
+
+export function pageClearMessage(): Extract<PageMessage, { type: "clear" }> {
+  return { channel: PAGE_CHANNEL, type: "clear" };
+}
+
 export type ToPanel =
   | { channel: typeof PANEL_CHANNEL; type: "snapshot"; payload: Snapshot }
+  | { channel: typeof PANEL_CHANNEL; type: "clear" }
   | { channel: typeof PANEL_CHANNEL; type: "shrunk"; shrunk: boolean };
 
 export type FromPanel =
@@ -74,6 +89,7 @@ function isSnapshot(payload: unknown): payload is Snapshot {
 export function isPageMessage(data: unknown): data is PageMessage {
   if (!onChannel(data, PAGE_CHANNEL)) return false;
   const m = data as { type?: unknown; payload?: unknown };
+  if (m.type === "clear") return true;
   return m.type === "snapshot" && isSnapshot(m.payload);
 }
 
@@ -83,6 +99,12 @@ export function isPageTraceMessage(data: unknown): data is PageTraceMessage {
   return m.type === "trace" && typeof m.enabled === "boolean";
 }
 
+export function isPageControlMessage(data: unknown): data is PageControlMessage {
+  if (!onChannel(data, PAGE_CHANNEL)) return false;
+  const m = data as { type?: unknown; enabled?: unknown };
+  return (m.type === "trace" || m.type === "hooks") && typeof m.enabled === "boolean";
+}
+
 export function isPanelMessage(data: unknown): data is FromPanel {
   if (!onChannel(data, PANEL_CHANNEL)) return false;
   const m = data as Record<string, unknown>;
@@ -90,6 +112,7 @@ export function isPanelMessage(data: unknown): data is FromPanel {
     case "ready":
     case "close":
     case "persist":
+    case "clear":
       return true;
     case "setShrunk":
       return typeof m.shrunk === "boolean";
@@ -109,6 +132,7 @@ export function isToPanel(data: unknown): data is ToPanel {
   if (!onChannel(data, PANEL_CHANNEL)) return false;
   const m = data as Record<string, unknown>;
   if (m.type === "snapshot") return isSnapshot(m.payload);
+  if (m.type === "clear") return true;
   if (m.type === "shrunk") return typeof m.shrunk === "boolean";
   return false;
 }

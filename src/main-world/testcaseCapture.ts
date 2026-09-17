@@ -5,6 +5,15 @@ export interface DomCaseCapture {
   captureError?: string;
 }
 
+export async function captureCasesWhenReady(
+  adapter: TestcaseDomAdapter,
+  isCurrent?: () => boolean,
+): Promise<DomCaseCapture> {
+  const stillCurrent = isCurrent ?? (() => true);
+  if (!(await adapter.waitUntilReady(stillCurrent))) return { cases: [] };
+  return captureCasesFromTabs(adapter, stillCurrent);
+}
+
 export async function captureCasesFromTabs(
   adapter: TestcaseDomAdapter,
   isCurrent?: () => boolean,
