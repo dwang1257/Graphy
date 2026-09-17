@@ -258,7 +258,7 @@ export function createTestcaseDomAdapter(
           finish(false);
           return;
         }
-        if (tabs().length > 0 || readMountedParameters() !== null) {
+        if (tabs().length > 0) {
           finish(true);
           return;
         }

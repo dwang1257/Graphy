@@ -92,11 +92,12 @@ function publish(
   override?: Partial<Snapshot>,
   walk = false,
   waitForReady = false,
-): void {
+  preserveGeneration = false,
+): Promise<void> {
   const slug = slugOf();
-  if (!slug) return;
+  if (!slug) return Promise.resolve();
 
-  const gen = beginGeneration();
+  const gen = preserveGeneration ? generation : beginGeneration();
   const queued = flight.then(async () => {
     if (gen !== generation) return;
     if (!hooksActive || activeSlug !== slug) return;
@@ -161,6 +162,7 @@ function publish(
     post(snapshot);
   });
   flight = queued.then(() => undefined, () => undefined);
+  return flight;
 }
 
 /** Reads `data_input` out of a Run request - exactly what LeetCode will execute. */
@@ -280,7 +282,7 @@ function maybeWalkResults(url: string, body: Record<string, unknown> | null): vo
   const stdoutByCase = extractRunStdoutByCase(body);
   if (stdoutByCase !== undefined) override.stdoutByCase = stdoutByCase;
   pendingResults.delete(checkId);
-  void publish("network", override, true);
+  void publish("network", override, true, false, true);
 }
 
 function outgoingRun(body: unknown): { remember: unknown; send: unknown } {

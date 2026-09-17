@@ -67,6 +67,7 @@ function clearPanel(): void {
 
 window.addEventListener("message", (event) => {
   if (event.source !== window) return;
+  if (event.origin !== location.origin) return;
   const data: unknown = event.data;
   if (!isPageMessage(data)) return;
   if (data.type === "clear") {

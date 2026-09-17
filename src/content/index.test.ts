@@ -116,6 +116,18 @@ test("injects once on problem entry, toggles hooks across SPA navigation, and cl
   scripts[0]?.fireLoad();
   expect(hookMessages).toEqual([true]);
 
+  const clearCountBeforeForeignMessage = panelMessages.filter((message) => message.type === "clear").length;
+  for (const listener of listeners.get("message") ?? []) {
+    listener({
+      source: fakeWindow,
+      origin: "https://attacker.example",
+      data: { channel: "graphy:page", type: "clear" },
+    });
+  }
+  expect(panelMessages.filter((message) => message.type === "clear")).toHaveLength(
+    clearCountBeforeForeignMessage,
+  );
+
   history.pushState({}, "", "/problems/second");
   await Promise.resolve();
   expect(scripts).toHaveLength(1);

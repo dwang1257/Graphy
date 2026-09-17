@@ -13,6 +13,7 @@ interface PageHarness {
   deactivate(): void;
   mountTestcases(): void;
   nativeFetchCalls(): number;
+  xhrBodies(): unknown[];
   dispatchPageMessage(data: unknown): void;
   setCheckState(state: string): void;
   setCheckStdout(lines: string[] | undefined): void;
@@ -58,12 +59,14 @@ function inputWrapper(text: string): HTMLElement {
 }
 
 class FakeXhr {
+  static sentBodies: unknown[] = [];
   responseText = "";
   private readonly listeners: Array<{ type: string; fn: EventListener; once: boolean }> = [];
 
   open(_method?: string, _url?: string | URL): void {}
 
-  send(_body?: Document | XMLHttpRequestBodyInit | null): void {
+  send(body?: Document | XMLHttpRequestBodyInit | null): void {
+    FakeXhr.sentBodies.push(body);
     this.dispatchLoad();
   }
 
@@ -87,7 +90,12 @@ class FakeXhr {
 function installTabbedPage(
   cases: string[][],
   selected: number,
-  options: { code?: string; initiallyMounted?: boolean; interpretIds?: Record<string, string> } = {},
+  options: {
+    code?: string;
+    initiallyMounted?: boolean;
+    initiallyTabsMounted?: boolean;
+    interpretIds?: Record<string, string>;
+  } = {},
 ): PageHarness {
   const snapshots: Array<{ payload: SnapshotPayload }> = [];
   let clearMessages = 0;
@@ -101,7 +109,9 @@ function installTabbedPage(
   const interpretId = "interp-1";
   const interpretIds = options.interpretIds ?? {};
   let mounted = options.initiallyMounted !== false;
+  let tabsMounted = options.initiallyTabsMounted !== false && mounted;
   let nativeFetchCalls = 0;
+  FakeXhr.sentBodies = [];
 
   let selectedIndex = selected;
   let tabClicks = 0;
@@ -131,7 +141,7 @@ function installTabbedPage(
 
   const fakeDocument = {
     querySelectorAll: (selector: string) => {
-      if (selector === '[data-e2e-locator="console-testcase-tag"]') return mounted ? tabs : [];
+      if (selector === '[data-e2e-locator="console-testcase-tag"]') return tabsMounted ? tabs : [];
       if (selector === '[data-e2e-locator="console-testcase-input"]') return currentWrappers();
       if (selector === ".cm-content") {
         return [
@@ -216,7 +226,8 @@ function installTabbedPage(
   vi.stubGlobal("window", fakeWindow);
   vi.stubGlobal("location", locationState);
   vi.stubGlobal("localStorage", { getItem: () => JSON.stringify("cpp") });
-  vi.stubGlobal("XMLHttpRequest", FakeXhr);
+  class HarnessXhr extends FakeXhr {}
+  vi.stubGlobal("XMLHttpRequest", HarnessXhr);
 
   async function flushCapture(): Promise<void> {
     let consecutiveRafs = 0;
@@ -290,8 +301,10 @@ function installTabbedPage(
     },
     mountTestcases: () => {
       mounted = true;
+      tabsMounted = true;
     },
     nativeFetchCalls: () => nativeFetchCalls,
+    xhrBodies: () => FakeXhr.sentBodies,
     dispatchPageMessage: (data) => {
       const event = {
         data,
@@ -423,6 +436,36 @@ test("waits for testcase tabs before publishing the initial snapshot", async () 
   expect(page.snapshots.at(-1)?.payload.cases).toEqual(["[1]", "[2]"]);
 });
 
+test("does not publish from an input editor before the official testcase tabs mount", async () => {
+  const page = installTabbedPage([["[1]"], ["[2]"]], 0, { initiallyTabsMounted: false });
+  await import("./inject.js");
+  page.activate();
+  await Promise.resolve();
+  expect(page.snapshots).toEqual([]);
+
+  page.mountTestcases();
+  await page.flushCapture();
+  expect(page.snapshots.at(-1)?.payload.cases).toEqual(["[1]", "[2]"]);
+});
+
+test("publishes the initial testcase snapshot before a Run result can supersede it", async () => {
+  const page = installTabbedPage([["[1]"], ["[2]"]], 0, { initiallyMounted: false });
+  await import("./inject.js");
+  page.activate();
+  await Promise.resolve();
+
+  await window.fetch("https://leetcode.com/problems/example/interpret_solution/", {
+    method: "POST",
+    body: JSON.stringify({ data_input: "[run]", typed_code: "class Solution {};", lang: "cpp" }),
+  });
+  await window.fetch(`https://leetcode.com/submissions/detail/${INTERPRET_ID}/check/`);
+  page.mountTestcases();
+  await page.flushCapture();
+
+  expect(page.snapshots.map(({ payload }) => payload.source)).toEqual(["editor", "network"]);
+  expect(page.snapshots[0]?.payload.cases).toEqual(["[1]", "[2]"]);
+});
+
 test("does not patch or capture Run requests while hooks are inactive", async () => {
   const page = installTabbedPage([["[1]"]], 0);
   const pythonCode = "class Solution:\n    def solve(self, root):\n        return root\n";
@@ -449,6 +492,13 @@ test("does not patch or capture Run requests while hooks are inactive", async ()
   });
   expect(JSON.parse(page.sentBodies.at(-1) ?? "{}").typed_code).toBe(pythonCode);
   expect(page.nativeFetchCalls()).toBe(3);
+
+  const rawBody = JSON.stringify({ data_input: "[1]", typed_code: pythonCode, lang: "python3" });
+  expect(XMLHttpRequest.prototype.send).toBe(FakeXhr.prototype.send);
+  const xhr = new XMLHttpRequest();
+  xhr.open("POST", "https://leetcode.com/problems/example/interpret_solution/");
+  xhr.send(rawBody);
+  expect(page.xhrBodies().at(-1)).toBe(rawBody);
 });
 
 test("keeps concurrent Run overrides paired with their result IDs", async () => {
