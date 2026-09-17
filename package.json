@@ -9,8 +9,10 @@
     "pretest": "node ./scripts/ensure-local-node-modules.mjs --check && node ./scripts/patch-rxjs-node.mjs",
     "dev": "vite",
     "build": "vite build",
-    "test": "node --test scripts/rxjs-node-import.test.mjs && vitest run",
-    "typecheck": "tsc --noEmit"
+    "test": "node --test scripts/rxjs-node-import.test.mjs scripts/package-release.test.mjs && vitest run",
+    "typecheck": "tsc --noEmit",
+    "lint": "tsc --noEmit --pretty false && node ./scripts/lint.mjs",
+    "package": "npm run build && node ./scripts/package-release.mjs"
   },
   "repository": {
     "type": "git",

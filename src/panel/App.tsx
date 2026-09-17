@@ -17,9 +17,11 @@ import { DEFAULT_SETTINGS, type Settings } from "../settings/schema.js";
 import {
   loadOverrides,
   loadPanelState,
+  loadPrivacyNoticeDismissed,
   loadSettings,
   onSettingsChanged,
   saveOverrides,
+  savePrivacyNoticeDismissed,
   saveSettings,
   type Override,
 } from "../settings/storage.js";
@@ -28,6 +30,8 @@ import { PANEL_CHANNEL, isToPanel, type FromPanel, type Snapshot } from "../shar
 import { SETTINGS_DOT_DEBOUNCE_MS, dotStyleKey } from "./dotStyle.js";
 import { GraphView } from "./GraphView.js";
 import { SettingsDrawer } from "./SettingsDrawer.js";
+import { PrivacyNotice } from "./privacyNotice.js";
+import { CaseTabs } from "./CaseTabs.js";
 import { inkFromDataUrl } from "./imageInk.js";
 import { stageBackgroundStyle, stageInkVars } from "./stageBackground.js";
 import { TitleBar } from "./TitleBar.js";
@@ -74,6 +78,7 @@ export function App(): JSX.Element {
   const [tracePlaying, setTracePlaying] = useState(false);
   const [shrunk, setShrunk] = useState(false);
   const [stageImageInk, setStageImageInk] = useState<string | null>(null);
+  const [showPrivacyNotice, setShowPrivacyNotice] = useState(true);
   const prevTraceIndex = useRef(0);
 
   const liveUpdate = useRef(true);
@@ -91,6 +96,7 @@ export function App(): JSX.Element {
     void loadPanelState().then((state) => {
       if (!sawHostShrunk.current) setShrunk(state.shrunk);
     });
+    void loadPrivacyNoticeDismissed().then((dismissed) => setShowPrivacyNotice(!dismissed));
     const stop = onSettingsChanged((incoming) => {
       if (JSON.stringify(incoming) === lastSaved.current) return;
       setSettings(incoming);
@@ -378,6 +384,14 @@ export function App(): JSX.Element {
       />
 
       <div class="stage-wrap">
+        {showPrivacyNotice && (
+          <PrivacyNotice
+            onDismiss={() => {
+              setShowPrivacyNotice(false);
+              void savePrivacyNoticeDismissed();
+            }}
+          />
+        )}
         {showSettings && (
           <SettingsDrawer
             settings={settings}
@@ -386,7 +400,13 @@ export function App(): JSX.Element {
             onClose={() => setShowSettings(false)}
           />
         )}
-        <div class="stage-area" style={stageStyle}>
+        <div
+          class="stage-area"
+          id="graphy-case-panel"
+          role={cases.length > 1 ? "tabpanel" : undefined}
+          aria-labelledby={cases.length > 1 ? `graphy-case-tab-${caseIndex}` : undefined}
+          style={stageStyle}
+        >
           {displaySvg ? (
             <GraphView
               svg={displaySvg}
@@ -415,21 +435,7 @@ export function App(): JSX.Element {
       {(cases.length > 1 || traceFrames.length > 0) && (
         <div class="statusbar">
           {cases.length > 1 && (
-            <div class="case-switcher" role="tablist" aria-label="Test cases">
-              {cases.map((_, i) => (
-                <button
-                  class="case-pill"
-                  role="tab"
-                  key={i}
-                  type="button"
-                  aria-selected={i === caseIndex}
-                  aria-label={`Case ${i + 1}`}
-                  onClick={() => setActiveCase(i)}
-                >
-                  Case {i + 1}
-                </button>
-              ))}
-            </div>
+            <CaseTabs count={cases.length} activeIndex={caseIndex} onChange={setActiveCase} />
           )}
           <TracePlayback
             frames={traceFrames}

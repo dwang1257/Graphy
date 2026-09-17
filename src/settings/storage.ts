@@ -6,6 +6,7 @@ const SYNC_KEY = "graphy.settings";
 const LOCAL_KEY = "graphy.panel";
 /** Data URLs blow the sync quota, so photos stay on-device. */
 const IMAGES_KEY = "graphy.images";
+const PRIVACY_NOTICE_KEY = "graphy.privacyNoticeDismissed";
 
 export interface PanelState {
   x: number;
@@ -154,5 +155,21 @@ export async function saveOverrides(all: Record<string, Override>): Promise<void
     await chrome.storage.local.set({ [OVERRIDE_KEY]: compact });
   } catch {
     /* Same - not worth surfacing. */
+  }
+}
+
+export async function loadPrivacyNoticeDismissed(): Promise<boolean> {
+  try {
+    const bag = await chrome.storage.local.get(PRIVACY_NOTICE_KEY);
+    return bag[PRIVACY_NOTICE_KEY] === true;
+  } catch {
+    return false;
+  }
+}
+
+export async function savePrivacyNoticeDismissed(): Promise<void> {
+  try {
+    await chrome.storage.local.set({ [PRIVACY_NOTICE_KEY]: true });
+  } catch {
   }
 }

@@ -1,5 +1,5 @@
 import type { ComponentChildren, JSX } from "preact";
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import { CANVAS_PRESETS, NODE_FILL_PRESETS, normalizeCssHex, type CanvasPreset } from "../settings/cssColor.js";
 import {
   DEFAULT_LAYOUT,
@@ -25,6 +25,7 @@ import {
   SquareIcon,
 } from "./icons.js";
 import { styleEdgeStyles, styleNodeShapes } from "./styleOptions.js";
+import { readImageDataUrl } from "./imageUpload.js";
 
 interface Props {
   settings: Settings;
@@ -58,6 +59,19 @@ export function SettingsDrawer({ settings, activePalette, onChange, onClose }: P
   const layout = settings.layout;
   const palette = settings[activePalette];
   const defaults = activePalette === "light" ? LIGHT : DARK;
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const previousFocus = useRef<HTMLElement | null>(null);
+  const [uploadErrors, setUploadErrors] = useState<Record<"backgroundImage" | "nodeBackgroundImage", string | null>>({
+    backgroundImage: null,
+    nodeBackgroundImage: null,
+  });
+
+  useEffect(() => {
+    const active = document.activeElement;
+    previousFocus.current = active instanceof HTMLElement ? active : null;
+    closeButtonRef.current?.focus();
+    return () => previousFocus.current?.focus();
+  }, []);
 
   function setLayout<K extends keyof typeof layout>(key: K, value: (typeof layout)[K]): void {
     onChange({ ...settings, layout: { ...layout, [key]: value } });
@@ -67,13 +81,17 @@ export function SettingsDrawer({ settings, activePalette, onChange, onClose }: P
     onChange({ ...settings, [activePalette]: { ...palette, ...patch } });
   }
 
-  function onImageUpload(file: File | undefined, key: "backgroundImage" | "nodeBackgroundImage"): void {
+  async function onImageUpload(file: File | undefined, key: "backgroundImage" | "nodeBackgroundImage"): Promise<void> {
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === "string") setPalette({ [key]: reader.result });
-    };
-    reader.readAsDataURL(file);
+    setUploadErrors((current) => ({ ...current, [key]: null }));
+    try {
+      setPalette({ [key]: await readImageDataUrl(file) });
+    } catch (cause) {
+      setUploadErrors((current) => ({
+        ...current,
+        [key]: cause instanceof Error ? cause.message : "Graphy could not read that image. Try another image file.",
+      }));
+    }
   }
 
   function resetStyle(): void {
@@ -97,9 +115,18 @@ export function SettingsDrawer({ settings, activePalette, onChange, onClose }: P
   }
 
   return (
-    <aside class="style-rail" role="dialog" aria-label="Style your graph">
+    <aside
+      class="style-rail"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="style-rail-title"
+      onKeyDown={(event) => {
+        if (event.key === "Escape") onClose();
+      }}
+    >
       <header class="style-rail-header">
-        <button class="icon-btn" type="button" aria-label="Close style panel" onClick={onClose}>
+        <h2 id="style-rail-title">Style your graph</h2>
+        <button ref={closeButtonRef} class="icon-btn" type="button" aria-label="Close style panel" onClick={onClose}>
           <CloseIcon />
         </button>
       </header>
@@ -183,6 +210,7 @@ export function SettingsDrawer({ settings, activePalette, onChange, onClose }: P
             image={palette.backgroundImage}
             onUpload={(file) => onImageUpload(file, "backgroundImage")}
             onClear={() => setPalette({ backgroundImage: null })}
+            error={uploadErrors.backgroundImage}
           />
         </Section>
 
@@ -205,6 +233,7 @@ export function SettingsDrawer({ settings, activePalette, onChange, onClose }: P
             image={palette.nodeBackgroundImage}
             onUpload={(file) => onImageUpload(file, "nodeBackgroundImage")}
             onClear={() => setPalette({ nodeBackgroundImage: null })}
+            error={uploadErrors.nodeBackgroundImage}
           />
         </Section>
       </div>
@@ -291,6 +320,7 @@ function ImageRow(props: {
   image: string | null;
   onUpload: (file: File | undefined) => void;
   onClear: () => void;
+  error: string | null;
 }): JSX.Element {
   return (
     <div class="image-row">
@@ -303,6 +333,7 @@ function ImageRow(props: {
           Clear
         </button>
       ) : null}
+      {props.error ? <p class="upload-error" role="alert">{props.error}</p> : null}
     </div>
   );
 }

@@ -1,10 +1,13 @@
 # Privacy Policy for Graphy
 
-Last updated: September 8, 2026
+Last updated: September 17, 2026
 
 Graphy is a Chrome extension that draws LeetCode custom test cases as graphs. It is made by Dylan Wang (`dwang2022@gmail.com`).
 
 Graphy does not have its own servers and does not sell or share user data.
+
+Graphy shows a concise data-use notice in the panel the first time it loads.
+You can dismiss that notice, and the dismissal is stored locally in Chrome storage.
 
 ## Where Graphy runs
 
@@ -27,6 +30,8 @@ On those pages, Graphy reads the following in your browser so it can draw and up
 
 This information stays in the browser. Graphy does not upload it to a Graphy backend.
 
+Graphy does not send this information to a Graphy server because Graphy does not operate one.
+
 ## Python Run tracer
 
 When you click **Run** on a Python or Python3 solution, Graphy may append a local tracer to the request LeetCode’s judge receives. That tracer prints `#graphy` lines so the panel can animate the walk.
@@ -41,6 +46,7 @@ Graphy uses Chrome’s `storage` permission:
 
 - **Sync storage:** colors, layout, and similar preferences, so they can follow your Chrome profile across devices if you are signed in.
 - **Local storage:** panel position/size and optional background or node images you choose. Images stay on the device because they are too large for sync.
+- **Local storage:** the one-time dismissal of Graphy's in-panel privacy notice.
 
 Uninstalling Graphy removes this stored data.
 

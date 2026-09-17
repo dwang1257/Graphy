@@ -275,6 +275,49 @@ body {
   min-height: 0;
 }
 
+.privacy-notice {
+  position: absolute;
+  top: var(--space-sm);
+  left: var(--space-sm);
+  right: var(--space-sm);
+  z-index: 5;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  max-width: 42rem;
+  margin: 0 auto;
+  padding: var(--space-sm);
+  border: 1px solid var(--color-rule-strong);
+  border-radius: var(--radius-md);
+  background: color-mix(in oklch, var(--color-paper-2) 94%, transparent);
+  color: var(--color-ink-2);
+  box-shadow: var(--shadow-float);
+  font-size: var(--text-xs);
+}
+
+.privacy-notice p {
+  flex: 1 1 auto;
+  margin: 0;
+  text-transform: none;
+}
+
+.privacy-notice-dismiss {
+  flex: 0 0 auto;
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--color-accent);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  padding: 0;
+}
+
+.privacy-notice-dismiss:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
 .stage {
   position: relative;
   flex: 1 1 auto;
@@ -642,6 +685,16 @@ body {
   flex: 0 0 auto;
 }
 
+.style-rail-header h2 {
+  flex: 1 1 auto;
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--rail-text-lg);
+  font-weight: 700;
+  color: var(--color-ink);
+  text-transform: none;
+}
+
 .style-rail-body {
   flex: 1 1 auto;
   overflow-y: auto;
@@ -842,6 +895,14 @@ body {
   gap: var(--rail-space-xs);
   flex-wrap: wrap;
   align-items: stretch;
+}
+
+.upload-error {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--color-danger);
+  font-size: var(--rail-text-sm);
+  text-transform: none;
 }
 
 .style-rail .btn {

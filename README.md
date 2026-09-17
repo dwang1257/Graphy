@@ -104,6 +104,13 @@ Graphy is a Chrome extension. Install it from the [Chrome Web Store](https://chr
 
 Click the Graphy icon in the toolbar to show or hide the panel.
 
+### Privacy and data use
+
+Graphy reads the LeetCode editor, custom testcase inputs, and Run output locally in your browser to draw and trace graphs.
+Graphy stores visual settings in Chrome sync storage, and stores panel geometry, selected images, and the privacy-notice dismissal in local storage.
+Graphy does not send this data to a Graphy server.
+See [PRIVACY.md](PRIVACY.md) for the complete policy.
+
 <!-- ROADMAP -->
 ## Roadmap
 

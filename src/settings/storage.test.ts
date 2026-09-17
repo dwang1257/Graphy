@@ -1,7 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { DEFAULT_SETTINGS, type Settings } from "./schema.js";
-import { loadOverrides, loadSettings, saveSettings } from "./storage.js";
+import {
+  loadOverrides,
+  loadPrivacyNoticeDismissed,
+  loadSettings,
+  savePrivacyNoticeDismissed,
+  saveSettings,
+} from "./storage.js";
 
 const SYNC_KEY = "graphy.settings";
 const IMAGES_KEY = "graphy.images";
@@ -118,5 +124,16 @@ describe("loadOverrides", () => {
     await expect(loadOverrides()).resolves.toEqual({
       "two-sum": { kind: "matrix" },
     });
+  });
+});
+
+describe("privacy notice storage", () => {
+  it("defaults to visible and persists dismissal in local storage", async () => {
+    const { localStore } = installChromeMock();
+
+    await expect(loadPrivacyNoticeDismissed()).resolves.toBe(false);
+    await savePrivacyNoticeDismissed();
+    expect(localStore["graphy.privacyNoticeDismissed"]).toBe(true);
+    await expect(loadPrivacyNoticeDismissed()).resolves.toBe(true);
   });
 });
