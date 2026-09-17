@@ -66,7 +66,10 @@ function slugOf(): string {
 function langOf(): string {
   try {
     const raw = localStorage.getItem("global_lang");
-    if (raw) return JSON.parse(raw) as string;
+    if (raw) {
+      const parsed: unknown = JSON.parse(raw);
+      if (typeof parsed === "string") return parsed;
+    }
   } catch {
     /* Falls through to the DOM probe. */
   }

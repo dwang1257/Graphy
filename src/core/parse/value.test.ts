@@ -50,6 +50,13 @@ describe("parseInput", () => {
     });
   });
 
+  it("reports valid JSON objects as unsupported values", () => {
+    expect(parseInputResult('{"value": 1}')).toEqual({
+      values: [],
+      error: "Invalid structured value.",
+    });
+  });
+
   it("reports malformed arrays containing quoted values", () => {
     expect(parseInputResult('["hello", nope]')).toEqual({
       values: [],

@@ -23,6 +23,7 @@ interface PageHarness {
 interface SnapshotPayload {
   cases: string[];
   source: string;
+  lang: string;
   code?: string;
   stdout?: string;
   stdoutByCase?: string[];
@@ -95,6 +96,8 @@ function installTabbedPage(
     initiallyMounted?: boolean;
     initiallyTabsMounted?: boolean;
     interpretIds?: Record<string, string>;
+    storedLanguage?: string;
+    domLanguage?: string;
   } = {},
 ): PageHarness {
   const snapshots: Array<{ payload: SnapshotPayload }> = [];
@@ -154,7 +157,10 @@ function installTabbedPage(
       if (selector.includes("textarea")) return [];
       return [];
     },
-    querySelector: () => null,
+    querySelector: (selector: string) =>
+      selector.includes("headlessui-listbox-button") || selector === "button[data-state]"
+        ? ({ textContent: options.domLanguage ?? "" } as HTMLElement)
+        : null,
     addEventListener: (type: string, listener: EventListenerOrEventListenerObject) => {
       if (typeof listener !== "function") return;
       const bucket = listeners.get(type) ?? [];
@@ -225,7 +231,9 @@ function installTabbedPage(
   vi.stubGlobal("document", fakeDocument);
   vi.stubGlobal("window", fakeWindow);
   vi.stubGlobal("location", locationState);
-  vi.stubGlobal("localStorage", { getItem: () => JSON.stringify("cpp") });
+  vi.stubGlobal("localStorage", {
+    getItem: () => options.storedLanguage ?? JSON.stringify("cpp"),
+  });
   class HarnessXhr extends FakeXhr {}
   vi.stubGlobal("XMLHttpRequest", HarnessXhr);
 
@@ -355,6 +363,18 @@ test("walks case tabs after Run results succeed, not on load or send", async () 
   await page.flushCapture();
   expect(page.snapshots.at(-1)?.payload.cases).toEqual(["[1]", "[2]", "[3]"]);
   expect(page.selectedIndex()).toBe(1);
+});
+
+test("falls back to the DOM language when stored language is not a string", async () => {
+  const page = installTabbedPage([["[1]"]], 0, {
+    storedLanguage: JSON.stringify({ value: "python3" }),
+    domLanguage: "Python3",
+  });
+  await import("./inject.js");
+  page.activate();
+  await page.flushCapture();
+
+  expect(page.snapshots.at(-1)?.payload.lang).toBe("python3");
 });
 
 test("does not walk while a Run check is still in flight", async () => {

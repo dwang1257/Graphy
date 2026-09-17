@@ -37,6 +37,12 @@ function isWordBoundary(raw: string, start: number, length: number): boolean {
   return !word.test(before) && !word.test(after);
 }
 
+function isLCValue(value: unknown): value is LCValue {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return true;
+  if (typeof value === "number") return Number.isFinite(value);
+  return Array.isArray(value) && value.every(isLCValue);
+}
+
 function normalizeLiteral(raw: string): string {
   let result = "";
   let inString = false;
@@ -103,10 +109,12 @@ interface LenientError {
 
 function lenient(raw: string): LenientValue | LenientError {
   try {
-    return { value: JSON.parse(raw) as LCValue };
+    const value: unknown = JSON.parse(raw);
+    return isLCValue(value) ? { value } : { error: "Invalid structured value." };
   } catch {
     try {
-      return { value: JSON.parse(normalizeLiteral(raw)) as LCValue };
+      const value: unknown = JSON.parse(normalizeLiteral(raw));
+      return isLCValue(value) ? { value } : { error: "Invalid structured value." };
     } catch {
       return /^[\[{(]/.test(raw) ? { error: "Invalid structured value." } : { value: raw };
     }
