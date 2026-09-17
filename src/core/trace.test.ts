@@ -2,7 +2,13 @@ import { describe, expect, it } from "vitest";
 
 import { parseLinkedList } from "./parse/linkedList.js";
 import { emptyModel, type GraphModel } from "./types.js";
-import { framesFromStdout, parseTrace } from "./trace.js";
+import {
+  MAX_TRACE_EVENTS,
+  MAX_TRACE_FRAMES,
+  MAX_TRACE_STDOUT_LENGTH,
+  framesFromStdout,
+  parseTrace,
+} from "./trace.js";
 
 const grid: GraphModel = {
   ...emptyModel("matrix", "grid"),
@@ -52,6 +58,39 @@ describe("parseTrace", () => {
       { kind: "current", ref: "n2", line: 1 },
       { kind: "visit", ref: "n2", line: 1 },
     ]);
+  });
+
+  it("ignores trace stdout beyond the bounded payload size", () => {
+    expect(parseTrace("x".repeat(MAX_TRACE_STDOUT_LENGTH + 1))).toEqual([]);
+  });
+
+  it("caps trace events from a bounded stdout payload", () => {
+    const stdout = Array.from({ length: MAX_TRACE_EVENTS + 100 }, () => "#g c n0").join("\n");
+    expect(parseTrace(stdout).length).toBeLessThanOrEqual(MAX_TRACE_EVENTS);
+  });
+
+  it("does not overshoot the event cap when one command expands to multiple events", () => {
+    const stdout = Array.from({ length: MAX_TRACE_EVENTS }, () => "#g walk n0 n1 n2").join("\n");
+
+    expect(parseTrace(stdout).length).toBe(MAX_TRACE_EVENTS);
+  });
+
+  it("does not overshoot the event cap when a compact scalar expands at the boundary", () => {
+    const stdout = [
+      ...Array.from({ length: MAX_TRACE_EVENTS - 1 }, () => "#g c n0"),
+      "#g/[0]",
+    ].join("\n");
+
+    expect(parseTrace(stdout).length).toBeLessThanOrEqual(MAX_TRACE_EVENTS);
+  });
+
+  it("does not overshoot the event cap when a walk expands at the boundary", () => {
+    const stdout = [
+      ...Array.from({ length: MAX_TRACE_EVENTS - 1 }, () => "#g c n0"),
+      "#g walk n0",
+    ].join("\n");
+
+    expect(parseTrace(stdout).length).toBeLessThanOrEqual(MAX_TRACE_EVENTS);
   });
 });
 
@@ -106,5 +145,10 @@ describe("framesFromStdout", () => {
       { id: "n7", label: "7", role: "normal" },
     ]);
     expect(frames.at(-1)?.links.n6).toEqual({ left: "n7" });
+  });
+
+  it("caps accumulated frames", () => {
+    const stdout = Array.from({ length: MAX_TRACE_FRAMES + 100 }, () => "#g c n0").join("\n");
+    expect(framesFromStdout(stdout, tree).length).toBeLessThanOrEqual(MAX_TRACE_FRAMES);
   });
 });

@@ -1,5 +1,6 @@
 import { DEFAULT_SETTINGS, type Settings } from "./schema.js";
 import { extractImages, settingsFromStores, stripImages } from "./split.js";
+import { isStructureKind } from "../core/types.js";
 
 const SYNC_KEY = "graphy.settings";
 const LOCAL_KEY = "graphy.panel";
@@ -130,17 +131,25 @@ export interface Override {
 export async function loadOverrides(): Promise<Record<string, Override>> {
   try {
     const bag = await chrome.storage.local.get(OVERRIDE_KEY);
-    return (bag[OVERRIDE_KEY] as Record<string, Override>) ?? {};
+    return sanitizeOverrides(bag[OVERRIDE_KEY]);
   } catch {
     return {};
   }
 }
 
-export async function saveOverrides(all: Record<string, Override>): Promise<void> {
-  const compact: Record<string, Override> = {};
-  for (const [slug, override] of Object.entries(all)) {
-    if (override.kind !== undefined) compact[slug] = { kind: override.kind };
+export function sanitizeOverrides(stored: unknown): Record<string, Override> {
+  if (!stored || typeof stored !== "object" || Array.isArray(stored)) return {};
+  const out: Record<string, Override> = {};
+  for (const [slug, raw] of Object.entries(stored)) {
+    if (!slug || slug.length > 128 || !raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+    const kind = (raw as Record<string, unknown>).kind;
+    if (isStructureKind(kind)) out[slug] = { kind };
   }
+  return out;
+}
+
+export async function saveOverrides(all: Record<string, Override>): Promise<void> {
+  const compact = sanitizeOverrides(all);
   try {
     await chrome.storage.local.set({ [OVERRIDE_KEY]: compact });
   } catch {

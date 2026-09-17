@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { DEFAULT_SETTINGS, type Settings } from "./schema.js";
-import { loadSettings, saveSettings } from "./storage.js";
+import { loadOverrides, loadSettings, saveSettings } from "./storage.js";
 
 const SYNC_KEY = "graphy.settings";
 const IMAGES_KEY = "graphy.images";
@@ -102,5 +102,21 @@ describe("loadSettings", () => {
 
     const loaded = await loadSettings();
     expect(loaded.light.backgroundImage).toBe("data:image/png;base64,legacy");
+  });
+});
+
+describe("loadOverrides", () => {
+  it("keeps only valid problem overrides and never spreads malformed values", async () => {
+    const { localStore } = installChromeMock();
+    localStore["graphy.overrides"] = {
+      "two-sum": { kind: "matrix" },
+      "bad-kind": { kind: "not-a-kind" },
+      "bad-value": "binary-tree",
+      "empty": {},
+    };
+
+    await expect(loadOverrides()).resolves.toEqual({
+      "two-sum": { kind: "matrix" },
+    });
   });
 });

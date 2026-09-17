@@ -5,6 +5,17 @@ export interface Point {
 
 const MORPH_MS = 280;
 
+export function createMorphGeneration(): { next: () => number; isCurrent: (generation: number) => boolean } {
+  let current = 0;
+  return {
+    next: () => {
+      current += 1;
+      return current;
+    },
+    isCurrent: (generation) => generation === current,
+  };
+}
+
 /** Visible Graphy node positions from a Graphviz SVG root. */
 export function nodePositions(svgRoot: Element): Map<string, Point> {
   const out = new Map<string, Point>();

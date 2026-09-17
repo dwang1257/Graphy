@@ -224,6 +224,7 @@ export function App(): JSX.Element {
     caseInput,
     nodeCount: paneSize,
     hasFailure: result.failures.length > 0,
+    hasPane: !!pane,
   });
 
   const styleKey = useMemo(
@@ -262,8 +263,10 @@ export function App(): JSX.Element {
   useEffect(() => {
     if (!dot) {
       setSvg("");
+      setError(null);
       return;
     }
+    setError(null);
     let cancelled = false;
     const timer = window.setTimeout(() => {
       renderDot(dot)

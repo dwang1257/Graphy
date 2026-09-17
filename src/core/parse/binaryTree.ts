@@ -16,7 +16,13 @@ export function parseBinaryTree(value: LCValue, title?: string): GraphModel {
   if (!isArray(value)) {
     return emptyModel("binary-tree", title);
   }
-  if (value.length === 0 || value[0] === null) {
+  if (value.length === 0) {
+    return emptyModel("binary-tree", title);
+  }
+  if (value[0] === null) {
+    if (value.slice(1).some((raw) => raw !== null && raw !== undefined)) {
+      throw new Error("Binary-tree input contains an unreachable value.");
+    }
     return emptyModel("binary-tree", title);
   }
 
@@ -51,6 +57,10 @@ export function parseBinaryTree(value: LCValue, title?: string): GraphModel {
       parentLinks[side] = childId;
       queue.push(childId);
     }
+  }
+
+  if (value.slice(cursor).some((raw) => raw !== null && raw !== undefined)) {
+    throw new Error("Binary-tree input contains an unreachable value.");
   }
 
   return modelFromTree(nodes, links, title);

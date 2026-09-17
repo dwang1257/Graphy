@@ -3,6 +3,12 @@ import { deletedIds, parseTopologyTokens, type TreeLinks } from "./topology.js";
 
 export type { TreeLinks };
 
+export const MAX_TRACE_STDOUT_LENGTH = 256 * 1024;
+export const MAX_TRACE_EVENTS = 4_000;
+export const MAX_TRACE_FRAMES = 4_000;
+const MAX_TRACE_REFS = 100;
+const MAX_TRACE_TOKEN_LENGTH = 512;
+
 export type TraceEvent =
   | { kind: "current"; ref: string; line: number }
   | { kind: "visit"; ref: string; line: number }
@@ -102,6 +108,7 @@ function parseCompactArray(raw: string): ArrayItem[] {
   }
 
   while (i < inner.length) {
+    if (items.length >= Math.ceil(MAX_TRACE_EVENTS / 2)) break;
     skipSep();
     if (i >= inner.length) break;
     if (inner[i] !== "(") {
@@ -146,6 +153,7 @@ function topologyEntry(left: number | null, right?: number | null): { left?: str
 function parseArrayEvents(raw: string, line: number): TraceEvent[] {
   const events: TraceEvent[] = [];
   for (const item of parseCompactArray(raw)) {
+    if (events.length + 2 > MAX_TRACE_EVENTS) break;
     if (!Array.isArray(item)) {
       const ref = typeof item === "number" ? nodeRef(item) : item;
       events.push({ kind: "current", ref, line }, { kind: "visit", ref, line });
@@ -165,15 +173,17 @@ function parseArrayEvents(raw: string, line: number): TraceEvent[] {
 }
 
 export function parseTrace(stdout: string): TraceEvent[] {
+  if (stdout.length > MAX_TRACE_STDOUT_LENGTH) return [];
   const events: TraceEvent[] = [];
   const lines = stdout.split(/\r?\n/);
   for (let i = 0; i < lines.length; i += 1) {
+    if (events.length >= MAX_TRACE_EVENTS) break;
     const match = PREFIX.exec(lines[i] ?? "");
     if (!match) continue;
     const line = i + 1;
     const payload = (match[1] ?? "").trim();
     if (payload.startsWith("[")) {
-      events.push(...parseArrayEvents(payload, line));
+      events.push(...parseArrayEvents(payload, line).slice(0, MAX_TRACE_EVENTS - events.length));
       continue;
     }
     const tokens = payload.split(/\s+/).filter(Boolean);
@@ -191,7 +201,8 @@ export function parseTrace(stdout: string): TraceEvent[] {
       }
       const args: string[] = [];
       while (index < tokens.length && !verbOf(tokens[index] ?? "")) {
-        args.push(tokens[index] ?? "");
+        const token = tokens[index] ?? "";
+        if (token.length <= MAX_TRACE_TOKEN_LENGTH && args.length < MAX_TRACE_REFS) args.push(token);
         index += 1;
       }
       if (verb === "frontier") {
@@ -201,8 +212,10 @@ export function parseTrace(stdout: string): TraceEvent[] {
       } else {
         for (const ref of args) {
           if (verb === "walk") {
+            if (events.length + 2 > MAX_TRACE_EVENTS) break;
             events.push({ kind: "current", ref, line }, { kind: "visit", ref, line });
           } else {
+            if (events.length >= MAX_TRACE_EVENTS) break;
             events.push({ kind: verb, ref, line });
           }
         }
@@ -275,6 +288,7 @@ export function framesFromStdout(stdout: string, model: GraphModel): TraceFrame[
   }
 
   for (const event of events) {
+    if (frames.length >= MAX_TRACE_FRAMES) break;
     if (event.kind === "clear") {
       current = undefined;
       visited.length = 0;
@@ -288,7 +302,7 @@ export function framesFromStdout(stdout: string, model: GraphModel): TraceFrame[
     if (event.kind === "alloc") {
       if (!allocIds.has(event.ref) && !model.nodes.some((n) => n.id === event.ref)) {
         allocIds.add(event.ref);
-        allocs.push({ id: event.ref, label: event.label, role: "normal" });
+        if (allocs.length < MAX_TRACE_FRAMES) allocs.push({ id: event.ref, label: event.label, role: "normal" });
       }
       frames.push(frame(`alloc ${event.ref}`, event.line));
       continue;

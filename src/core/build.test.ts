@@ -51,3 +51,59 @@ test("draws up to three lists from a vector of ListNode chains", () => {
     "1", "4", "5", "1", "3", "4", "2", "6",
   ]);
 });
+
+test("surfaces scanner syntax failures instead of treating malformed input as a scalar", () => {
+  const result = buildPanes("[1, 2", null, { override: "binary-tree" });
+
+  expect(result.panes).toEqual([]);
+  expect(result.failures[0]?.reason).toContain("Unclosed delimiter");
+});
+
+test("rejects non-null unreachable binary-tree values", () => {
+  const result = buildPanes("[1, null, null, 2]", null, { override: "binary-tree" });
+
+  expect(result.panes).toEqual([]);
+  expect(result.failures[0]?.reason).toContain("unreachable");
+});
+
+test("rejects values after a null binary-tree root", () => {
+  const result = buildPanes("[null, 1]", null, { override: "binary-tree" });
+
+  expect(result.panes).toEqual([]);
+  expect(result.failures[0]?.reason).toContain("unreachable");
+});
+
+test("accepts trailing null slots in a binary tree", () => {
+  const result = buildPanes("[1, 2, null, null, null]", null, { override: "binary-tree" });
+
+  expect(result.failures).toEqual([]);
+  expect(result.panes[0]?.model.nodes.filter((node) => node.role === "normal")).toHaveLength(1);
+});
+
+test("renders a pane for a valid empty structure", () => {
+  const result = buildPanes("[]", null, { override: "binary-tree" });
+
+  expect(result.failures).toEqual([]);
+  expect(result.panes).toHaveLength(1);
+  expect(result.panes[0]?.model.nodes).toEqual([]);
+});
+
+test("returns a clean empty result for zero testcases", () => {
+  expect(buildPanes("", null)).toEqual({ panes: [], failures: [] });
+});
+
+test("reports when no parameter is visualizable", () => {
+  const result = buildPanes("7", null);
+
+  expect(result.panes).toEqual([]);
+  expect(result.failures[0]?.reason).toContain("No visualizable parameter");
+});
+
+test("rejects a structure beyond the node limit before building its model", () => {
+  const result = buildPanes(`[${Array.from({ length: 101 }, (_, i) => i).join(",")}]`, null, {
+    override: "linked-list",
+  });
+
+  expect(result.panes).toEqual([]);
+  expect(result.failures[0]?.reason).toContain("node limit");
+});

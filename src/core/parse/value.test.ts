@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { parseInput, scanInputValues, splitInputValues } from "./value.js";
+import {
+  MAX_INPUT_LENGTH,
+  MAX_INPUT_VALUES,
+  MAX_VALUE_DEPTH,
+  parseInput,
+  scanInputValues,
+  splitInputValues,
+} from "./value.js";
 
 describe("splitInputValues", () => {
   it("keeps a pretty-printed nested array as one value", () => {
@@ -35,5 +42,37 @@ describe("scanInputValues", () => {
       values: ["[1, 2"],
       error: "Unclosed delimiter '['.",
     });
+  });
+
+  it("reports mismatched closing delimiters", () => {
+    expect(scanInputValues("[1, 2}")).toEqual({
+      values: ["[1, 2}"],
+      error: "Mismatched delimiter '}'.",
+    });
+  });
+
+  it("reports an unterminated string", () => {
+    expect(scanInputValues('"unterminated')).toEqual({
+      values: ["\"unterminated"],
+      error: "Unclosed string.",
+    });
+  });
+
+  it("rejects input before scanning when the buffer is oversized", () => {
+    const result = scanInputValues("x".repeat(MAX_INPUT_LENGTH + 1));
+    expect(result.values).toEqual([]);
+    expect(result.error).toContain("Input is too large");
+  });
+
+  it("rejects too many top-level values", () => {
+    const result = scanInputValues(Array.from({ length: MAX_INPUT_VALUES + 1 }, () => "1").join("\n"));
+    expect(result.values).toHaveLength(MAX_INPUT_VALUES);
+    expect(result.error).toContain("too many values");
+  });
+
+  it("rejects deeply nested values before parsing", () => {
+    const result = scanInputValues("[".repeat(MAX_VALUE_DEPTH + 1) + "0" + "]".repeat(MAX_VALUE_DEPTH + 1));
+    expect(result.values).toEqual([]);
+    expect(result.error).toContain("nested");
   });
 });

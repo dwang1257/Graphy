@@ -135,6 +135,20 @@ function num(v: unknown, fallback: number, min: number, max: number): number {
   return typeof v === "number" && Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : fallback;
 }
 
+function record(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function enumValue<T extends string>(value: unknown, allowed: readonly T[], fallback: T): T {
+  return typeof value === "string" && allowed.includes(value as T) ? value as T : fallback;
+}
+
+function bool(value: unknown, fallback: boolean): boolean {
+  return typeof value === "boolean" ? value : fallback;
+}
+
 /** Accepts a non-empty string (typically a data URL), otherwise the fallback. */
 function imageUrl(v: unknown, fallback: string | null): string | null {
   if (v === null) return null;
@@ -147,8 +161,16 @@ function imageUrl(v: unknown, fallback: string | null): string | null {
  * addition or a bad stored value never breaks load.
  */
 export function withDefaults(stored: unknown): Settings {
-  const s = (stored ?? {}) as Partial<Settings>;
-  const layout = { ...DEFAULT_LAYOUT, ...(s.layout ?? {}) };
+  const s = record(stored);
+  const layout = { ...DEFAULT_LAYOUT, ...record(s.layout) };
+  layout.nodeShape = enumValue(layout.nodeShape, NODE_SHAPES, DEFAULT_LAYOUT.nodeShape);
+  layout.edgeStyle = enumValue(layout.edgeStyle, EDGE_STYLES, DEFAULT_LAYOUT.edgeStyle);
+  layout.splines = enumValue(layout.splines, SPLINES, DEFAULT_LAYOUT.splines);
+  layout.rankdir = enumValue(layout.rankdir, RANK_DIRS, DEFAULT_LAYOUT.rankdir);
+  layout.showNullChildren = bool(layout.showNullChildren, DEFAULT_LAYOUT.showNullChildren);
+  layout.showListTerminal = bool(layout.showListTerminal, DEFAULT_LAYOUT.showListTerminal);
+  layout.showMatrixIndices = bool(layout.showMatrixIndices, DEFAULT_LAYOUT.showMatrixIndices);
+  layout.showArrowheads = bool(layout.showArrowheads, DEFAULT_LAYOUT.showArrowheads);
   layout.fontSize = num(layout.fontSize, DEFAULT_LAYOUT.fontSize, 8, 24);
   // Lift the previous 13pt default so stored settings pick up the larger labels.
   if (layout.fontSize === 13) layout.fontSize = DEFAULT_LAYOUT.fontSize;
@@ -157,8 +179,8 @@ export function withDefaults(stored: unknown): Settings {
   layout.rankSep = num(layout.rankSep, DEFAULT_LAYOUT.rankSep, 0.1, 2);
   layout.nodeSize = num(layout.nodeSize, DEFAULT_LAYOUT.nodeSize, 0.6, 1.8);
   layout.fontFamily = DEFAULT_LAYOUT.fontFamily;
-  const light = { ...LIGHT, ...(s.light ?? {}) };
-  const dark = { ...DARK, ...(s.dark ?? {}) };
+  const light = { ...LIGHT, ...record(s.light) };
+  const dark = { ...DARK, ...record(s.dark) };
   light.background = normalizeCssHex(light.background) ?? LIGHT.background;
   dark.background = normalizeCssHex(dark.background) ?? DARK.background;
   if (light.nodeText === "#1e1b4b") light.nodeText = LIGHT.nodeText;
@@ -167,13 +189,14 @@ export function withDefaults(stored: unknown): Settings {
   dark.backgroundImage = imageUrl(dark.backgroundImage, DARK.backgroundImage);
   light.nodeBackgroundImage = imageUrl(light.nodeBackgroundImage, LIGHT.nodeBackgroundImage);
   dark.nodeBackgroundImage = imageUrl(dark.nodeBackgroundImage, DARK.nodeBackgroundImage);
-  const mode: ThemeMode = s.mode === "light" || s.mode === "dark" ? s.mode : "dark";
+  const mode: ThemeMode = enumValue(s.mode, THEME_MODES, DEFAULT_SETTINGS.mode);
   return {
     ...DEFAULT_SETTINGS,
-    ...s,
     mode,
     light,
     dark,
     layout,
+    autoOpen: bool(s.autoOpen, DEFAULT_SETTINGS.autoOpen),
+    liveUpdate: bool(s.liveUpdate, DEFAULT_SETTINGS.liveUpdate),
   };
 }

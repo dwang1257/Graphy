@@ -35,9 +35,10 @@ export function modelFromTree(
   const rootId = nodes.find((n) => n.role === "root")?.id ?? nodes[0]!.id;
   addVisible(rootId, 0);
   const queue = [rootId];
+  let head = 0;
 
-  while (queue.length > 0) {
-    const parentId = queue.shift()!;
+  while (head < queue.length) {
+    const parentId = queue[head++]!;
     const parent = slots.get(parentId);
     if (!parent) continue;
     const kids = links[parentId] ?? {};

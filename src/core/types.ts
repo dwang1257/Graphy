@@ -5,6 +5,12 @@ export type StructureKind =
   | "linked-list"
   | "matrix";
 
+export const STRUCTURE_KINDS: readonly StructureKind[] = ["binary-tree", "linked-list", "matrix"];
+
+export function isStructureKind(value: unknown): value is StructureKind {
+  return typeof value === "string" && STRUCTURE_KINDS.includes(value as StructureKind);
+}
+
 export type NodeRole = "normal" | "null" | "spine" | "root" | "terminal";
 
 export interface GNode {

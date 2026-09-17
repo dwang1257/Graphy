@@ -2,6 +2,18 @@ import { KIND_LABELS, type StructureKind } from "../core/types.js";
 
 export const UNSELECTED_KIND_LABEL = "Choose an Option:";
 
+export interface PendingStructureKind {
+  slug: string;
+  kind: StructureKind;
+}
+
+export function pendingKindForSlug(
+  pending: PendingStructureKind | undefined,
+  slug: string,
+): StructureKind | undefined {
+  return pending?.slug === slug ? pending.kind : undefined;
+}
+
 export function resolveStructureKind(value: string | undefined): StructureKind | undefined {
   if (value && value in KIND_LABELS) return value as StructureKind;
   return undefined;

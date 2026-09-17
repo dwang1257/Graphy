@@ -2,6 +2,12 @@
 
 export type LCValue = string | number | boolean | null | LCValue[];
 
+export const MAX_INPUT_LENGTH = 256 * 1024;
+export const MAX_INPUT_VALUES = 64;
+export const MAX_VALUE_LENGTH = 64 * 1024;
+export const MAX_VALUE_DEPTH = 128;
+export const MAX_VALUE_ITEMS = 10_000;
+
 const TRAILING_CLOSE = /[\]}]/;
 
 const OPEN_DELIMITERS: Record<string, string> = {
@@ -104,17 +110,28 @@ function lenient(raw: string): LCValue {
  * delimiter nesting and quoted regions.
  */
 export function scanInputValues(input: string): { values: string[]; error?: string } {
+  if (input.length > MAX_INPUT_LENGTH) {
+    return { values: [], error: `Input is too large. Maximum is ${MAX_INPUT_LENGTH} characters.` };
+  }
   const normalized = input.replace(/\r\n?/g, "\n");
   const values: string[] = [];
   let current = "";
   let inString = false;
   let quote = "";
   const stack: string[] = [];
+  let error: string | undefined;
 
-  const push = (): void => {
+  const push = (): boolean => {
     const trimmed = current.trim();
-    if (trimmed) values.push(trimmed);
+    if (trimmed) {
+      if (values.length >= MAX_INPUT_VALUES) {
+        error = `Input has too many values. Maximum is ${MAX_INPUT_VALUES}.`;
+        return false;
+      }
+      values.push(trimmed);
+    }
     current = "";
+    return true;
   };
 
   for (let i = 0; i < normalized.length; i += 1) {
@@ -122,6 +139,10 @@ export function scanInputValues(input: string): { values: string[]; error?: stri
 
     if (inString) {
       current += c;
+      if (current.length > MAX_VALUE_LENGTH) {
+        error = `Input value is too large. Maximum is ${MAX_VALUE_LENGTH} characters.`;
+        return { values, error };
+      }
       if (c === quote && !isEscapedQuote(normalized, i)) {
         inString = false;
         quote = "";
@@ -133,10 +154,17 @@ export function scanInputValues(input: string): { values: string[]; error?: stri
       inString = true;
       quote = c;
       current += c;
+      if (current.length > MAX_VALUE_LENGTH) {
+        error = `Input value is too large. Maximum is ${MAX_VALUE_LENGTH} characters.`;
+        return { values, error };
+      }
       continue;
     }
 
     if (c in OPEN_DELIMITERS) {
+      if (stack.length >= MAX_VALUE_DEPTH) {
+        return { values, error: `Input is too deeply nested. Maximum depth is ${MAX_VALUE_DEPTH}.` };
+      }
       stack.push(c);
       current += c;
       continue;
@@ -146,30 +174,39 @@ export function scanInputValues(input: string): { values: string[]; error?: stri
       const expected = CLOSE_DELIMITERS[c]!;
       if (stack.length > 0 && stack[stack.length - 1] === expected) {
         stack.pop();
+      } else if (!error) {
+        error = `Mismatched delimiter '${c}'.`;
       }
       current += c;
       continue;
     }
 
     if (c === "\n" && stack.length === 0) {
-      push();
+      if (!push()) return { values, error };
       continue;
     }
 
     current += c;
+    if (current.length > MAX_VALUE_LENGTH) {
+      return {
+        values,
+        error: `Input value is too large. Maximum is ${MAX_VALUE_LENGTH} characters.`,
+      };
+    }
   }
 
-  push();
+  if (!push()) return { values, error };
 
-  if (stack.length > 0) {
+  if (!error && inString) {
+    error = "Unclosed string.";
+  }
+
+  if (!error && stack.length > 0) {
     const unclosed = stack[stack.length - 1]!;
-    return {
-      values,
-      error: `Unclosed delimiter '${unclosed}'.`,
-    };
+    error = `Unclosed delimiter '${unclosed}'.`;
   }
 
-  return { values };
+  return error ? { values, error } : { values };
 }
 
 /**
@@ -182,7 +219,36 @@ export function splitInputValues(input: string): string[] {
 
 /** Splits a custom-testcase blob into one parsed value per parameter. */
 export function parseInput(input: string): LCValue[] {
-  return splitInputValues(input).map((value) => lenient(value));
+  return parseInputResult(input).values;
+}
+
+export interface ParsedInput {
+  values: LCValue[];
+  error?: string;
+}
+
+export function parseInputResult(input: string): ParsedInput {
+  const scanned = scanInputValues(input);
+  if (scanned.error) return { values: [], error: scanned.error };
+  const values = scanned.values.map((value) => lenient(value));
+  for (let i = 0; i < values.length; i += 1) {
+    const error = valueLimitError(values[i]!);
+    if (error) return { values: [], error: `Value ${i + 1}: ${error}` };
+  }
+  return { values };
+}
+
+function valueLimitError(value: LCValue): string | undefined {
+  const pending: LCValue[] = [value];
+  let items = 0;
+  while (pending.length > 0) {
+    const current = pending.pop()!;
+    items += 1;
+    if (items > MAX_VALUE_ITEMS) return `too many items. Maximum is ${MAX_VALUE_ITEMS}.`;
+    if (!isArray(current)) continue;
+    for (let i = current.length - 1; i >= 0; i -= 1) pending.push(current[i]!);
+  }
+  return undefined;
 }
 
 export function isArray(v: LCValue): v is LCValue[] {

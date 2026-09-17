@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useState } from "preact/hooks";
+import { useCallback, useState } from "preact/hooks";
 
 import type { StructureKind } from "../core/types.js";
-import { displayedStructureKind } from "./structureKind.js";
+import { displayedStructureKind, pendingKindForSlug, type PendingStructureKind } from "./structureKind.js";
 
 export function useStructureKind(
   slug: string,
@@ -11,20 +11,16 @@ export function useStructureKind(
   selectedKind: StructureKind | undefined;
   setKind: (kind: StructureKind) => void;
 } {
-  const [pendingKind, setPendingKind] = useState<StructureKind | undefined>();
-  const selectedKind = displayedStructureKind(savedKind, pendingKind);
+  const [pendingKind, setPendingKind] = useState<PendingStructureKind>();
+  const selectedKind = displayedStructureKind(savedKind, pendingKindForSlug(pendingKind, slug));
 
   const setKind = useCallback(
     (kind: StructureKind) => {
-      setPendingKind(kind);
-      persist(kind);
+      setPendingKind({ slug, kind });
+      if (slug) persist(kind);
     },
-    [persist],
+    [persist, slug],
   );
-
-  useEffect(() => {
-    if (slug && pendingKind) persist(pendingKind);
-  }, [pendingKind, persist, slug]);
 
   return { selectedKind, setKind };
 }

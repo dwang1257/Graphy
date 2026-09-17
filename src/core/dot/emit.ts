@@ -49,6 +49,15 @@ export function emitDot(model: GraphModel, options: EmitOptions): string {
   if (model.matrix) {
     lines.push(`  m [${attrs({ shape: "plaintext", style: "", label: html(matrixTable(model.matrix, options)) })}];`);
   } else {
+    if (model.nodes.length === 0) {
+      lines.push(`  empty [${attrs({
+        shape: "plaintext",
+        style: "",
+        label: "∅",
+        fontcolor: palette.terminalText,
+        fontsize: (layout.fontSize + 2) * s,
+      })}];`);
+    }
     for (const node of model.nodes) lines.push(`  ${nodeLine(node, options)}`);
     for (const edge of model.edges) lines.push(`  ${edgeLine(edge, model.directed, options)}`);
     for (const group of model.ranks) {

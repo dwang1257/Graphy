@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { JSX } from "preact";
 import type { TraceFrame } from "../core/trace.js";
-import { animateGraphMorph } from "./graphMorph.js";
+import { animateGraphMorph, createMorphGeneration } from "./graphMorph.js";
 import { inkFromDataUrl } from "./imageInk.js";
 import { applyNodeBackgroundImage } from "./nodeBackground.js";
 import { applyTraceOverlay, clearTraceOverlay } from "./traceOverlay.js";
@@ -74,7 +74,7 @@ export function GraphView({
   const viewport = useRef<HTMLDivElement>(null);
   const view = useRef<View>({ x: 0, y: 0, scale: 1 });
   const paintFrame = useRef<number | null>(null);
-  const morphing = useRef(false);
+  const morphGeneration = useRef(createMorphGeneration());
   const [panning, setPanning] = useState(false);
   const [nodeInk, setNodeInk] = useState<string | undefined>(undefined);
 
@@ -164,23 +164,21 @@ export function GraphView({
   }, [fitKey]);
 
   useLayoutEffect(() => {
+    const generation = morphGeneration.current.next();
     const root = viewport.current?.querySelector("svg");
-    if (!root) return;
-
-    if (morphing.current) return;
+    if (!root) return () => { morphGeneration.current.next(); };
 
     if (morph && sanitizedFrom) {
       const fromDoc = new DOMParser().parseFromString(sanitizedFrom, "image/svg+xml");
       const fromRoot = fromDoc.documentElement;
       if (!fromDoc.querySelector("parsererror")) {
-        morphing.current = true;
         const frame = traceFrame;
         void animateGraphMorph({
           fromRoot,
           toRoot: root,
           deletedIds: frame?.deleted ?? [],
         }).finally(() => {
-          morphing.current = false;
+          if (!morphGeneration.current.isCurrent(generation)) return;
           const live = viewport.current?.querySelector("svg");
           if (!live) return;
           if (frame) applyTraceOverlay(live, frame);
@@ -195,6 +193,10 @@ export function GraphView({
       return;
     }
     applyTraceOverlay(root, traceFrame);
+
+    return () => {
+      morphGeneration.current.next();
+    };
   }, [sanitizedSvg, sanitizedFrom, morph, traceFrame]);
 
   useEffect(() => {

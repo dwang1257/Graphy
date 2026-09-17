@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  MAX_CAPTURE_ERROR_LENGTH,
+  MAX_CODE_LENGTH,
+  MAX_LANG_LENGTH,
+  MAX_SLUG_LENGTH,
+  MAX_SNAPSHOT_CASES,
+  MAX_SNAPSHOT_CASE_LENGTH,
+  MAX_STDOUT_CASES,
+  MAX_STDOUT_LENGTH,
   PAGE_CHANNEL,
   isPageControlMessage,
   isPageMessage,
@@ -54,6 +62,42 @@ describe("snapshot validation", () => {
         },
       }),
     ).toBe(false);
+  });
+
+  it.each([
+    ["case count", { cases: Array.from({ length: MAX_SNAPSHOT_CASES + 1 }, () => "1") }],
+    ["case length", { cases: ["x".repeat(MAX_SNAPSHOT_CASE_LENGTH + 1)] }],
+    ["code length", { code: "x".repeat(MAX_CODE_LENGTH + 1) }],
+    ["language length", { lang: "x".repeat(MAX_LANG_LENGTH + 1) }],
+    ["slug length", { slug: "x".repeat(MAX_SLUG_LENGTH + 1) }],
+    ["capture error length", { captureError: "x".repeat(MAX_CAPTURE_ERROR_LENGTH + 1) }],
+    ["stdout length", { stdout: "x".repeat(MAX_STDOUT_LENGTH + 1) }],
+    ["stdout case count", { stdoutByCase: Array.from({ length: MAX_STDOUT_CASES + 1 }, () => "") }],
+    ["stdout case length", { stdoutByCase: ["x".repeat(MAX_STDOUT_LENGTH + 1)] }],
+  ])("rejects oversized snapshot %s", (_label, patch) => {
+    expect(isPageMessage({
+      channel: PAGE_CHANNEL,
+      type: "snapshot",
+      payload: { ...validSnapshot, ...patch },
+    })).toBe(false);
+    expect(isToPanel({
+      channel: "graphy:panel",
+      type: "snapshot",
+      payload: { ...validSnapshot, ...patch },
+    })).toBe(false);
+  });
+
+  it("rejects malformed optional snapshot fields", () => {
+    expect(isPageMessage({
+      channel: PAGE_CHANNEL,
+      type: "snapshot",
+      payload: { ...validSnapshot, captureError: 1 },
+    })).toBe(false);
+    expect(isPageMessage({
+      channel: PAGE_CHANNEL,
+      type: "snapshot",
+      payload: { ...validSnapshot, stdoutByCase: ["ok", 1] },
+    })).toBe(false);
   });
 });
 

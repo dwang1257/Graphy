@@ -2,6 +2,14 @@
 
 export const PAGE_CHANNEL = "graphy:page";
 export const PANEL_CHANNEL = "graphy:panel";
+export const MAX_SNAPSHOT_CASES = 64;
+export const MAX_SNAPSHOT_CASE_LENGTH = 64 * 1024;
+export const MAX_CODE_LENGTH = 256 * 1024;
+export const MAX_LANG_LENGTH = 32;
+export const MAX_SLUG_LENGTH = 128;
+export const MAX_CAPTURE_ERROR_LENGTH = 2 * 1024;
+export const MAX_STDOUT_LENGTH = 256 * 1024;
+export const MAX_STDOUT_CASES = 64;
 
 /** Captured state of the LeetCode editor at one moment. */
 export interface Snapshot {
@@ -61,27 +69,31 @@ function onChannel(data: unknown, channel: string): data is { channel: string; t
   return typeof data === "object" && data !== null && (data as { channel?: unknown }).channel === channel;
 }
 
-function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every((entry) => typeof entry === "string");
+function isBoundedString(value: unknown, max: number, nonEmpty = false): value is string {
+  return typeof value === "string" && value.length <= max && (!nonEmpty || value.length > 0);
+}
+
+function isStringArray(value: unknown, maxItems: number, maxLength: number): value is string[] {
+  return Array.isArray(value) && value.length <= maxItems && value.every((entry) => isBoundedString(entry, maxLength));
 }
 
 function isSnapshot(payload: unknown): payload is Snapshot {
   if (typeof payload !== "object" || payload === null) return false;
   const p = payload as Record<string, unknown>;
   if (
-    !isStringArray(p.cases) ||
-    typeof p.code !== "string" ||
-    typeof p.lang !== "string" ||
-    typeof p.slug !== "string" ||
+    !isStringArray(p.cases, MAX_SNAPSHOT_CASES, MAX_SNAPSHOT_CASE_LENGTH) ||
+    !isBoundedString(p.code, MAX_CODE_LENGTH) ||
+    !isBoundedString(p.lang, MAX_LANG_LENGTH, true) ||
+    !isBoundedString(p.slug, MAX_SLUG_LENGTH, true) ||
     (p.source !== "editor" && p.source !== "network") ||
     typeof p.at !== "number" ||
     !Number.isFinite(p.at)
   ) {
     return false;
   }
-  if (p.captureError !== undefined && typeof p.captureError !== "string") return false;
-  if (p.stdout !== undefined && typeof p.stdout !== "string") return false;
-  if (p.stdoutByCase !== undefined && !isStringArray(p.stdoutByCase)) return false;
+  if (p.captureError !== undefined && !isBoundedString(p.captureError, MAX_CAPTURE_ERROR_LENGTH)) return false;
+  if (p.stdout !== undefined && !isBoundedString(p.stdout, MAX_STDOUT_LENGTH)) return false;
+  if (p.stdoutByCase !== undefined && !isStringArray(p.stdoutByCase, MAX_STDOUT_CASES, MAX_STDOUT_LENGTH)) return false;
   return true;
 }
 

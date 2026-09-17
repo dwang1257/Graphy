@@ -2,7 +2,8 @@ import { detectRole, type Role } from "./detect.js";
 import { parseBinaryTree } from "./parse/binaryTree.js";
 import { MAX_LINKED_LISTS, parseLinkedLists } from "./parse/linkedList.js";
 import { parseMatrix } from "./parse/matrix.js";
-import { isArray, isNestedArray, parseInput, type LCValue } from "./parse/value.js";
+import { isArray, isNestedArray, parseInputResult, type LCValue } from "./parse/value.js";
+import { NODE_LIMIT } from "../settings/schema.js";
 import type { Signature } from "./signature.js";
 import type { Pane, ParseResult, StructureKind } from "./types.js";
 
@@ -30,8 +31,13 @@ export function buildPanes(
   signature: Signature | null,
   options: BuildOptions = {},
 ): ParseResult {
-  const values = parseInput(input);
+  const parsed = parseInputResult(input);
   const result: ParseResult = { panes: [], failures: [] };
+  if (parsed.error) {
+    result.failures.push({ paramName: "input", reason: parsed.error });
+    return result;
+  }
+  const values = parsed.values;
   if (values.length === 0) return result;
 
   const entries: Entry[] = values.map((value, i) => {
@@ -63,6 +69,7 @@ export function buildPanes(
     const kind = options.override ?? (entry.role.kind as StructureKind);
     const title = paramTitle(entry);
     try {
+      assertNodeLimit(kind, entry.value);
       result.panes.push(...buildFor(kind, entry.value, title, `p${entry.index}`, ctx));
     } catch (error) {
       result.failures.push({ paramName: title, reason: String(error) });
@@ -70,6 +77,29 @@ export function buildPanes(
   }
 
   return withFallback(result);
+}
+
+function assertNodeLimit(kind: StructureKind, value: LCValue): void {
+  const count = kind === "binary-tree"
+    ? isArray(value) ? value.filter((entry) => entry !== null && entry !== undefined).length : 0
+    : kind === "linked-list"
+      ? isNestedArray(value)
+        ? value.reduce((total, list) => total + list.length, 0)
+        : isArray(value) ? value.length : 0
+      : matrixItemCount(value);
+  if (count > NODE_LIMIT) {
+    throw new Error(`Input exceeds the ${NODE_LIMIT}-node limit.`);
+  }
+}
+
+function matrixItemCount(value: LCValue): number {
+  if (!isArray(value)) return 0;
+  if (isNestedArray(value)) return value.reduce((total, row) => total + row.length, 0);
+  if (value.every((entry): entry is string => typeof entry === "string")) {
+    const first = value[0];
+    if (first && value.every((entry) => entry.length === first.length)) return value.reduce((total, row) => total + row.length, 0);
+  }
+  return value.length;
 }
 
 function paramTitle(entry: { index: number; param?: { name: string } }): string {
@@ -104,6 +134,8 @@ function buildLinkedListPanes(
   const result: ParseResult = { panes: [], failures: [] };
   if (lists.length === 0) return result;
   try {
+    const count = lists.reduce((total, list) => total + (isArray(list.value) ? list.value.length : 0), 0);
+    if (count > NODE_LIMIT) throw new Error(`Input exceeds the ${NODE_LIMIT}-node limit.`);
     result.panes.push({
       id: "p0",
       title: lists.map((list) => list.title).join(" · "),

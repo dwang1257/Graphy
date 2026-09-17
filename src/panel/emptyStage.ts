@@ -15,7 +15,8 @@ export function isEmptyStage(input: {
   caseInput: string;
   nodeCount: number;
   hasFailure: boolean;
+  hasPane: boolean;
 }): boolean {
   if (!input.caseInput.trim()) return true;
-  return input.nodeCount === 0 && !input.hasFailure;
+  return input.nodeCount === 0 && !input.hasFailure && !input.hasPane;
 }
