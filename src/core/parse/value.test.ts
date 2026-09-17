@@ -5,6 +5,7 @@ import {
   MAX_INPUT_VALUES,
   MAX_VALUE_DEPTH,
   parseInput,
+  parseInputResult,
   scanInputValues,
   splitInputValues,
 } from "./value.js";
@@ -33,6 +34,33 @@ describe("parseInput", () => {
     expect(parseInput('["None", None, "True", True]')).toEqual([
       ["None", null, "True", true],
     ]);
+  });
+
+  it("reports malformed arrays instead of returning their raw text", () => {
+    expect(parseInputResult("[1, nope]")).toEqual({
+      values: [],
+      error: "Invalid structured value.",
+    });
+  });
+
+  it("reports malformed objects instead of returning their raw text", () => {
+    expect(parseInputResult('{"value": nope}')).toEqual({
+      values: [],
+      error: "Invalid structured value.",
+    });
+  });
+
+  it("reports malformed arrays containing quoted values", () => {
+    expect(parseInputResult('["hello", nope]')).toEqual({
+      values: [],
+      error: "Invalid structured value.",
+    });
+  });
+
+  it("preserves quoted and unquoted scalar strings", () => {
+    expect(parseInputResult('"hello"\nhello')).toEqual({
+      values: ["hello", "hello"],
+    });
   });
 });
 

@@ -59,6 +59,13 @@ test("surfaces scanner syntax failures instead of treating malformed input as a 
   expect(result.failures[0]?.reason).toContain("Unclosed delimiter");
 });
 
+test("surfaces malformed structured values as input failures", () => {
+  const result = buildPanes("[1, nope]", null, { override: "binary-tree" });
+
+  expect(result.panes).toEqual([]);
+  expect(result.failures[0]?.reason).toBe("Invalid structured value.");
+});
+
 test("rejects non-null unreachable binary-tree values", () => {
   const result = buildPanes("[1, null, null, 2]", null, { override: "binary-tree" });
 

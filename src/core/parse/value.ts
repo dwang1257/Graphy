@@ -93,14 +93,22 @@ function normalizeLiteral(raw: string): string {
   return result;
 }
 
-function lenient(raw: string): LCValue {
+interface LenientValue {
+  value: LCValue;
+}
+
+interface LenientError {
+  error: string;
+}
+
+function lenient(raw: string): LenientValue | LenientError {
   try {
-    return JSON.parse(raw) as LCValue;
+    return { value: JSON.parse(raw) as LCValue };
   } catch {
     try {
-      return JSON.parse(normalizeLiteral(raw)) as LCValue;
+      return { value: JSON.parse(normalizeLiteral(raw)) as LCValue };
     } catch {
-      return raw;
+      return /^[\[{(]/.test(raw) ? { error: "Invalid structured value." } : { value: raw };
     }
   }
 }
@@ -230,7 +238,12 @@ export interface ParsedInput {
 export function parseInputResult(input: string): ParsedInput {
   const scanned = scanInputValues(input);
   if (scanned.error) return { values: [], error: scanned.error };
-  const values = scanned.values.map((value) => lenient(value));
+  const values: LCValue[] = [];
+  for (const raw of scanned.values) {
+    const parsed = lenient(raw);
+    if ("error" in parsed) return { values: [], error: parsed.error };
+    values.push(parsed.value);
+  }
   for (let i = 0; i < values.length; i += 1) {
     const error = valueLimitError(values[i]!);
     if (error) return { values: [], error: `Value ${i + 1}: ${error}` };
