@@ -55,6 +55,16 @@ const MODES: Array<{ value: ThemeMode; label: string }> = [
   { value: "dark", label: "Dark" },
 ];
 
+function visibleControls(dialog: HTMLElement): HTMLElement[] {
+  return Array.from(dialog.querySelectorAll<HTMLElement>("button, input, select, textarea, a[href], [tabindex]"))
+    .filter((element) => {
+      const disabled = "disabled" in element && Boolean(element.disabled);
+      const hidden = element.hidden || element.closest("[hidden], [aria-hidden='true']") !== null;
+      const styles = window.getComputedStyle(element);
+      return !disabled && !hidden && styles.display !== "none" && styles.visibility !== "hidden" && element.tabIndex >= 0;
+    });
+}
+
 export function SettingsDrawer({ settings, activePalette, onChange, onClose }: Props): JSX.Element {
   const layout = settings.layout;
   const palette = settings[activePalette];
@@ -122,6 +132,20 @@ export function SettingsDrawer({ settings, activePalette, onChange, onClose }: P
       aria-labelledby="style-rail-title"
       onKeyDown={(event) => {
         if (event.key === "Escape") onClose();
+        if (event.key !== "Tab") return;
+        const controls = visibleControls(event.currentTarget);
+        if (controls.length === 0) return;
+        const first = controls.at(0);
+        const last = controls.at(-1);
+        if (!first || !last) return;
+        const active = document.activeElement;
+        if (event.shiftKey && active === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && active === last) {
+          event.preventDefault();
+          first.focus();
+        }
       }}
     >
       <header class="style-rail-header">

@@ -62,7 +62,7 @@ Graphy does not:
 ## Third-party services
 
 - **LeetCode** receives your code and Run requests as it normally would. Graphy’s Python tracer, when used, is part of that same Run request.
-- **Google Fonts** may load Outfit for the panel UI (`fonts.googleapis.com` / `fonts.gstatic.com`). That is a font request from the extension page, not Graphy sending your solutions to Google.
+- **Google Fonts** may load Inter Tight for the panel UI and its page-world host (`fonts.googleapis.com` / `fonts.gstatic.com`). That is a font request from Graphy’s extension surface, not Graphy sending your solutions to Google.
 
 Google’s handling of Chrome sync data is covered by [Google’s Privacy Policy](https://policies.google.com/privacy).
 

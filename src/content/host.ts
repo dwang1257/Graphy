@@ -35,7 +35,7 @@ const STYLE = `
   --color-accent-ink: oklch(98% 0.012 305);
   --color-rule: oklch(84% 0.012 250);
   --color-focus: oklch(48% 0.2 305);
-  --font-body: "Outfit", ui-sans-serif, system-ui, sans-serif;
+  --font-body: "Inter Tight", ui-sans-serif, system-ui, sans-serif;
 }
 .shell {
   position: fixed;
@@ -191,7 +191,7 @@ export class PanelHost {
 
     const fonts = document.createElement("link");
     fonts.rel = "stylesheet";
-    fonts.href = "https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600&display=swap";
+    fonts.href = "https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;700;800&display=swap";
 
     this.root.append(fonts, style, this.shell, this.shrinkHit, ...RESIZE_CORNERS.map((c) => this.resizeHits[c]), this.launcher);
     window.addEventListener("message", this.onMessage);

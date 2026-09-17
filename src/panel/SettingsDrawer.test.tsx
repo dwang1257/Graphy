@@ -74,4 +74,32 @@ describe("SettingsDrawer", () => {
     });
     expect(document.activeElement).toBe(trigger);
   });
+
+  it("wraps Tab focus between visible enabled controls", async () => {
+    await act(async () => {
+      render(<SettingsDrawer {...props(vi.fn())} />, container);
+    });
+    const dialog = container.querySelector<HTMLElement>("[role=dialog]");
+    const close = container.querySelector<HTMLButtonElement>("button[aria-label='Close style panel']");
+    const reset = container.querySelector<HTMLButtonElement>("button.btn:not(.icon-btn)");
+    const hidden = document.createElement("button");
+    hidden.type = "button";
+    hidden.hidden = true;
+    const disabled = document.createElement("button");
+    disabled.type = "button";
+    disabled.disabled = true;
+    dialog?.append(hidden, disabled);
+
+    reset?.focus();
+    await act(async () => {
+      dialog?.dispatchEvent(new dom.KeyboardEvent("keydown", { key: "Tab", bubbles: true }) as unknown as Event);
+    });
+    expect(document.activeElement).toBe(close);
+
+    close?.focus();
+    await act(async () => {
+      dialog?.dispatchEvent(new dom.KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true }) as unknown as Event);
+    });
+    expect(document.activeElement).toBe(reset);
+  });
 });
