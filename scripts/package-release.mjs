@@ -1,4 +1,4 @@
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { deflateRawSync } from "node:zlib";
 
@@ -42,6 +42,9 @@ export function collectReleaseFiles(distDirectory) {
     selected.add(filePath);
     const source = readFileSync(join(distDirectory, filePath), "utf8");
     for (const reference of runtimeReferences(source, filePath)) {
+      if (!reference.includes("*") && selectReleaseFiles([reference]).length > 0 && !existsSync(join(distDirectory, reference))) {
+        throw new Error(`Missing local runtime file "${reference}" referenced by ${filePath}`);
+      }
       if (candidates.has(reference) && !selected.has(reference)) pending.push(reference);
     }
   }

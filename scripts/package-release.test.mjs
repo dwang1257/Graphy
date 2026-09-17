@@ -69,3 +69,39 @@ test("collectReleaseFiles follows runtime references and excludes stale assets",
     "src/panel/index.html",
   ]);
 });
+
+test("collectReleaseFiles rejects missing local references from manifest HTML and JavaScript", () => {
+  const cases = [
+    {
+      manifest: { content_scripts: [{ js: ["assets/missing.js"] }] },
+      files: [],
+      source: "manifest.json",
+    },
+    {
+      manifest: { web_accessible_resources: [{ resources: ["src/panel/index.html"] }] },
+      files: [["src/panel/index.html", "<script src=\"/assets/missing.js\"></script>"]],
+      source: "src/panel/index.html",
+    },
+    {
+      manifest: { background: { service_worker: "service-worker-loader.js" } },
+      files: [["service-worker-loader.js", "import './assets/missing.js';"]],
+      source: "service-worker-loader.js",
+    },
+  ];
+
+  for (const testCase of cases) {
+    const distDirectory = mkdtempSync(join(tmpdir(), "graphy-release-"));
+    mkdirSync(join(distDirectory, "assets"));
+    mkdirSync(join(distDirectory, "src", "panel"), { recursive: true });
+    writeFileSync(join(distDirectory, "manifest.json"), JSON.stringify(testCase.manifest));
+    for (const [filePath, source] of testCase.files) {
+      mkdirSync(join(distDirectory, filePath, ".."), { recursive: true });
+      writeFileSync(join(distDirectory, filePath), source);
+    }
+
+    assert.throws(
+      () => collectReleaseFiles(distDirectory),
+      new RegExp(`missing local runtime file.*assets/missing\\.js.*${testCase.source}`, "i"),
+    );
+  }
+});
