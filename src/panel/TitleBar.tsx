@@ -1,14 +1,15 @@
 import { useState } from "preact/hooks";
 import type { JSX } from "preact";
 import { CloseIcon, ExpandIcon, FitIcon, ShrinkIcon } from "./icons.js";
-import { KIND_LABELS, type StructureKind } from "../core/types.js";
-import { UNSELECTED_KIND_LABEL, structureKindLabel, structureKindOptions } from "./structureKind.js";
+import { isStructureKind, type StructureKind } from "../core/types.js";
+import { autoKindLabel, structureKindLabel, structureKindOptions } from "./structureKind.js";
 import { pointerDragHandler } from "./usePointerDrag.js";
 
 interface Props {
   showSettings: boolean;
   selectedKind: StructureKind | undefined;
-  onKindChange: (kind: StructureKind) => void;
+  detectedKinds: ReadonlyArray<StructureKind | undefined>;
+  onKindChange: (kind: StructureKind | undefined) => void;
   onFit: () => void;
   onToggleSettings: () => void;
   onClose: () => void;
@@ -31,24 +32,26 @@ export function TitleBar(props: Props): JSX.Element {
     },
   });
 
+  const kindLabel = structureKindLabel(props.selectedKind, props.detectedKinds);
+
   return (
     <div class={`titlebar${dragging ? " dragging" : ""}`} onPointerDown={onPointerDown}>
       <label class="kind-field">
         <span class="kind-value" aria-hidden="true">
-          {structureKindLabel(props.selectedKind)}
+          {kindLabel}
         </span>
         <select
           class="kind-select"
           value={props.selectedKind ?? ""}
           title="Structure to draw"
-          aria-label={structureKindLabel(props.selectedKind)}
+          aria-label={`Structure to draw: ${kindLabel}`}
           onChange={(e) => {
             const value = e.currentTarget.value;
-            if (value in KIND_LABELS) props.onKindChange(value as StructureKind);
+            props.onKindChange(isStructureKind(value) ? value : undefined);
             e.currentTarget.blur();
           }}
         >
-          <option value="">{UNSELECTED_KIND_LABEL}</option>
+          <option value="">{autoKindLabel(props.detectedKinds)}</option>
           {structureKindOptions().map(([value, label]) => (
             <option value={value} key={value}>
               {label}

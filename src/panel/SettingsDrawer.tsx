@@ -95,7 +95,7 @@ export function SettingsDrawer({ settings, activePalette, onChange, onClose }: P
     if (!file) return;
     setUploadErrors((current) => ({ ...current, [key]: null }));
     try {
-      setPalette({ [key]: await readImageDataUrl(file) });
+      setPalette({ [key]: await readImageDataUrl(file, key) });
     } catch (cause) {
       setUploadErrors((current) => ({
         ...current,

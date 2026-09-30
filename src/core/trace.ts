@@ -1,46 +1,111 @@
-import type { GNode, GraphModel } from "./types.js";
-import { deletedIds, parseTopologyTokens, type TreeLinks } from "./topology.js";
+import { cellId, childrenOf, initialTopology, layoutKeyOf, visibleIds, type NodeKind, type SceneNode, type SceneTopology } from "./scene.js";
+import { TRACE_SENTINEL, traceLines } from "./traceWire.js";
+import type { Links, Pane } from "./types.js";
 
-export type { TreeLinks };
-
-export const MAX_TRACE_STDOUT_LENGTH = 256 * 1024;
-export const MAX_TRACE_EVENTS = 4_000;
+export const MAX_TRACE_TEXT = 256 * 1024;
 export const MAX_TRACE_FRAMES = 4_000;
-const MAX_TRACE_REFS = 100;
-const MAX_TRACE_TOKEN_LENGTH = 512;
-
-export type TraceEvent =
-  | { kind: "current"; ref: string; line: number }
-  | { kind: "visit"; ref: string; line: number }
-  | { kind: "enqueue"; ref: string; line: number }
-  | { kind: "dequeue"; ref: string; line: number }
-  | { kind: "frontier"; refs: string[]; line: number }
-  | { kind: "topology"; links: TreeLinks; line: number; patch?: boolean }
-  | { kind: "alloc"; ref: string; label: string; line: number }
-  | { kind: "clear"; line: number };
+const MAX_MANUAL_REFS = 100;
+const MAX_LABEL = 12;
 
 export interface TraceFrame {
+  topology: SceneTopology;
+  layoutKey: string;
+  labels: Readonly<Record<string, string>>;
   current?: string;
-  visited: string[];
-  frontier: string[];
-  line: number;
-  label: string;
-  links: TreeLinks;
-  deleted: string[];
-  allocs: GNode[];
+  pointers: Readonly<Record<string, string>>;
+  visited: readonly string[];
+  frontier: readonly string[];
+  dimmed: readonly string[];
 }
 
-const PREFIX = /^\s*#?(?:graphy|g)(?:\s+|\/)(.*)$/i;
+export interface Trace {
+  frames: TraceFrame[];
+  truncated: boolean;
+}
 
-type Verb =
-  | "current"
-  | "visit"
-  | "enqueue"
-  | "dequeue"
-  | "frontier"
-  | "clear"
-  | "walk"
-  | "topology";
+export const EMPTY_TRACE: Trace = { frames: [], truncated: false };
+
+type Ref = string | null;
+
+export type TraceOp =
+  | { t: "visit"; ref: string }
+  | { t: "value"; ref: string; label: string }
+  | { t: "link"; ref: string; side: "<" | ">"; to: Ref }
+  | { t: "alloc"; kind: NodeKind; ref: string; label: string }
+  | { t: "pointer"; name: string | null; to: Ref }
+  | { t: "front"; add: boolean; ref: string }
+  | { t: "frontier"; refs: string[] }
+  | { t: "del"; ref: string }
+  | { t: "result"; ref: Ref }
+  | { t: "clear" };
+
+export type TraceStep = TraceOp[] | "~";
+
+function nodeRef(raw: string): string | undefined {
+  const [, pane = "", index] = /^([b-z]?)(\d+)$/.exec(raw) ?? [];
+  return index === undefined ? undefined : `${pane || "a"}${index}`;
+}
+
+function anyRef(raw: string): Ref | undefined {
+  if (raw === "-") return null;
+  const [, pane = "", row, col] = /^([b-y]?)(\d+)\.(\d+)$/.exec(raw) ?? [];
+  if (row !== undefined && col !== undefined) return `${pane || "a"}${row}.${col}`;
+  return nodeRef(raw);
+}
+
+export function parseAutoLine(line: string): TraceStep[] {
+  const steps: TraceStep[] = [];
+  for (const token of line.replace(TRACE_SENTINEL, "").trimEnd().split(" ").slice(1)) {
+    if (token === "") continue;
+    if (token === "~") {
+      steps.push("~");
+      break;
+    }
+    steps.push(token.split(",").flatMap((raw) => parseOp(raw) ?? []));
+  }
+  return steps;
+}
+
+function parseOp(raw: string): TraceOp | undefined {
+  const rest = raw.slice(1);
+  switch (raw.charAt(0)) {
+    case "+": {
+      const [, kind, ref, label = ""] = /^([tl])(z\d+)=(.*)$/.exec(rest) ?? [];
+      return kind && ref ? { t: "alloc", kind: kind === "t" ? "tree" : "list", ref, label: label.slice(0, MAX_LABEL) } : undefined;
+    }
+    case "@": {
+      const [, name = "", target = ""] = /^([A-Za-z_]\w*)?=(.*)$/.exec(rest) ?? [];
+      const to = anyRef(target);
+      return to === undefined ? undefined : { t: "pointer", name: name || null, to };
+    }
+    case "&": {
+      const [, sign, target = ""] = /^([+-])(.+)$/.exec(rest) ?? [];
+      const ref = nodeRef(target);
+      return sign && ref ? { t: "front", add: sign === "+", ref } : undefined;
+    }
+    case "!": {
+      const ref = nodeRef(rest);
+      return ref ? { t: "del", ref } : undefined;
+    }
+    case "^": {
+      const ref = rest === "-" ? null : nodeRef(rest);
+      return ref === undefined ? undefined : { t: "result", ref };
+    }
+  }
+  const [, owner = "", op, value = ""] = /^([b-z]?\d+)([=<>])(.*)$/.exec(raw) ?? [];
+  const ref = nodeRef(owner);
+  if (ref && op === "=") return { t: "value", ref, label: value.slice(0, MAX_LABEL) };
+  if (ref && (op === "<" || op === ">")) {
+    const to = value === "-" ? null : nodeRef(value);
+    return to === undefined ? undefined : { t: "link", ref, side: op, to };
+  }
+  const visit = anyRef(raw);
+  return visit ? { t: "visit", ref: visit } : undefined;
+}
+
+const MANUAL = /^\s*#?graphy\s+(.*)$/i;
+
+type Verb = "current" | "visit" | "walk" | "enqueue" | "dequeue" | "frontier" | "clear";
 
 const VERBS: Record<string, Verb> = {
   current: "current",
@@ -48,300 +113,333 @@ const VERBS: Record<string, Verb> = {
   c: "current",
   visit: "visit",
   v: "visit",
+  walk: "walk",
   enqueue: "enqueue",
   dequeue: "dequeue",
   frontier: "frontier",
   clear: "clear",
-  "/": "clear",
-  walk: "walk",
-  topology: "topology",
-  t: "topology",
 };
 
 function verbOf(token: string): Verb | undefined {
   return VERBS[token.toLowerCase()];
 }
 
-function nodeRef(index: number): string {
-  return `n${index}`;
-}
-
-function childFromAtom(value: number | null): string | undefined {
-  return value === null ? undefined : nodeRef(value);
-}
-
-type ArrayItem = number | string | Array<number | null>;
-
-function parseCompactArray(raw: string): ArrayItem[] {
-  const s = raw.trim();
-  if (!s.startsWith("[") || !s.endsWith("]")) return [];
-  const inner = s.slice(1, -1);
-  const items: ArrayItem[] = [];
-  let i = 0;
-
-  function skipSep(): void {
-    while (i < inner.length && /[\s,]/.test(inner[i] ?? "")) i += 1;
-  }
-
-  function skipWs(): void {
-    while (i < inner.length && /\s/.test(inner[i] ?? "")) i += 1;
-  }
-
-  function parseAtom(): number | null {
-    skipSep();
-    if (inner.startsWith("None", i)) {
-      i += 4;
-      return null;
-    }
-    const next = inner[i + 1] ?? "";
-    if (inner[i] === "-" && (next === "," || next === ")" || next === "" || /\s/.test(next))) {
-      i += 1;
-      return null;
-    }
-    const match = /^-?\d+/.exec(inner.slice(i));
-    if (!match) {
-      if (i < inner.length) i += 1;
-      return null;
-    }
-    i += match[0].length;
-    return Number(match[0]);
-  }
-
-  while (i < inner.length) {
-    if (items.length >= Math.ceil(MAX_TRACE_EVENTS / 2)) break;
-    skipSep();
-    if (i >= inner.length) break;
-    if (inner[i] !== "(") {
-      const value = parseAtom();
-      if (value !== null) items.push(value);
-      continue;
-    }
-    i += 1;
-    const atoms: Array<number | null> = [];
-    for (;;) {
-      atoms.push(parseAtom());
-      skipWs();
-      if (inner[i] === "," && atoms.length < 4) {
-        i += 1;
-        continue;
-      }
-      break;
-    }
-    if (inner[i] === ")") i += 1;
-    const first = atoms[0];
-    if (first === null || first === undefined) continue;
-    if (atoms.length >= 4) items.push([first, atoms[1] ?? null, atoms[2] ?? null, atoms[3] ?? null]);
-    else if (atoms.length >= 3) items.push([first, atoms[1] ?? null, atoms[2] ?? null]);
-    else if (atoms.length >= 2 && atoms[1] !== null && atoms[1] !== undefined) {
-      items.push(`${first},${atoms[1]}`);
-    }
-  }
-  return items;
-}
-
-function topologyEntry(left: number | null, right?: number | null): { left?: string; right?: string } {
-  const entry: { left?: string; right?: string } = {};
-  const lid = childFromAtom(left);
-  if (lid) entry.left = lid;
-  if (right !== undefined) {
-    const rid = childFromAtom(right);
-    if (rid) entry.right = rid;
-  }
-  return entry;
-}
-
-function parseArrayEvents(raw: string, line: number): TraceEvent[] {
-  const events: TraceEvent[] = [];
-  for (const item of parseCompactArray(raw)) {
-    if (events.length + 2 > MAX_TRACE_EVENTS) break;
-    if (!Array.isArray(item)) {
-      const ref = typeof item === "number" ? nodeRef(item) : item;
-      events.push({ kind: "current", ref, line }, { kind: "visit", ref, line });
-      continue;
-    }
-    const [id, left, right, val] = item;
-    const ref = nodeRef(id!);
-    if (item.length >= 4) {
-      events.push({ kind: "alloc", ref, label: String(val ?? 0), line });
-    }
-    const kids = item.length >= 4
-      ? topologyEntry(left ?? null)
-      : topologyEntry(left ?? null, right ?? null);
-    events.push({ kind: "topology", links: { [ref]: kids }, line, patch: true });
-  }
-  return events;
-}
-
-export function parseTrace(stdout: string): TraceEvent[] {
-  if (stdout.length > MAX_TRACE_STDOUT_LENGTH) return [];
-  const events: TraceEvent[] = [];
-  const lines = stdout.split(/\r?\n/);
-  for (let i = 0; i < lines.length; i += 1) {
-    if (events.length >= MAX_TRACE_EVENTS) break;
-    const match = PREFIX.exec(lines[i] ?? "");
+export function parseManualText(text: string): Array<{ verb: Verb; refs: string[] }> {
+  const out: Array<{ verb: Verb; refs: string[] }> = [];
+  for (const line of text.split(/\r?\n/)) {
+    const match = MANUAL.exec(line);
     if (!match) continue;
-    const line = i + 1;
-    const payload = (match[1] ?? "").trim();
-    if (payload.startsWith("[")) {
-      events.push(...parseArrayEvents(payload, line).slice(0, MAX_TRACE_EVENTS - events.length));
-      continue;
-    }
-    const tokens = payload.split(/\s+/).filter(Boolean);
+    const tokens = (match[1] ?? "").trim().split(/\s+/).filter(Boolean);
     let index = 0;
     while (index < tokens.length) {
       const verb = verbOf(tokens[index] ?? "");
-      if (!verb) {
-        index += 1;
-        continue;
-      }
       index += 1;
-      if (verb === "clear") {
-        events.push({ kind: "clear", line });
-        continue;
-      }
-      const args: string[] = [];
+      if (!verb) continue;
+      const refs: string[] = [];
       while (index < tokens.length && !verbOf(tokens[index] ?? "")) {
-        const token = tokens[index] ?? "";
-        if (token.length <= MAX_TRACE_TOKEN_LENGTH && args.length < MAX_TRACE_REFS) args.push(token);
+        if (refs.length < MAX_MANUAL_REFS) refs.push(tokens[index] ?? "");
         index += 1;
       }
-      if (verb === "frontier") {
-        if (args.length > 0) events.push({ kind: "frontier", refs: args, line });
-      } else if (verb === "topology") {
-        events.push({ kind: "topology", links: parseTopologyTokens(args.join(" ")), line });
-      } else {
-        for (const ref of args) {
-          if (verb === "walk") {
-            if (events.length + 2 > MAX_TRACE_EVENTS) break;
-            events.push({ kind: "current", ref, line }, { kind: "visit", ref, line });
-          } else {
-            if (events.length >= MAX_TRACE_EVENTS) break;
-            events.push({ kind: verb, ref, line });
-          }
-        }
-      }
+      out.push({ verb, refs });
     }
   }
-  return events;
+  return out;
 }
 
-export function resolveRef(ref: string, model: GraphModel, extra: GNode[] = []): string | undefined {
-  if (model.matrix) {
-    const cell = parseCellRef(ref);
-    if (!cell) return undefined;
-    const row = model.matrix.rows[cell.r];
-    if (!row || !row[cell.c]) return undefined;
-    return `cell:${cell.r},${cell.c}`;
+function resolveManual(raw: string, panes: readonly Pane[], topology: SceneTopology): string | undefined {
+  const [, row, col] = /^@?(\d+)\s*,\s*(\d+)$/.exec(raw) ?? [];
+  if (row !== undefined && col !== undefined) {
+    const grid = panes.find((pane) => pane.model.kind === "matrix");
+    return grid ? cellId(grid.id, Number(row), Number(col)) : undefined;
+  }
+  const [, legacy] = /^(?:n|@)(\d+)$/i.exec(raw) ?? [];
+  if (legacy !== undefined) return `a${legacy}`;
+  if (/^[a-y]\d+$/.test(raw) && topology.nodes[raw]) return raw;
+  return visibleIds(topology).find((id) => topology.nodes[id]?.label === raw);
+}
+
+function manualSteps(text: string, panes: readonly Pane[], topology: SceneTopology): TraceStep[] {
+  const steps: TraceStep[] = [];
+  const resolve = (raw: string): string | undefined => resolveManual(raw, panes, topology);
+  for (const { verb, refs } of parseManualText(text)) {
+    if (verb === "clear") {
+      steps.push([{ t: "clear" }]);
+      continue;
+    }
+    if (verb === "frontier") {
+      steps.push([{ t: "frontier", refs: refs.flatMap((raw) => resolve(raw) ?? []) }]);
+      continue;
+    }
+    for (const raw of refs) {
+      const ref = resolve(raw);
+      if (!ref) continue;
+      if (verb === "current") steps.push([{ t: "pointer", name: null, to: ref }]);
+      else if (verb === "visit") steps.push([{ t: "visit", ref }]);
+      else if (verb === "walk") steps.push([{ t: "pointer", name: null, to: ref }, { t: "visit", ref }]);
+      else steps.push([{ t: "front", add: verb === "enqueue", ref }]);
+    }
+  }
+  return steps;
+}
+
+function cellValid(ref: string, panes: readonly Pane[]): boolean {
+  const [, id, r, c] = /^([a-y])(\d+)\.(\d+)$/.exec(ref) ?? [];
+  const pane = panes.find((entry) => entry.id === id);
+  const row = pane?.model.kind === "matrix" ? pane.model.matrix?.rows[Number(r)] : undefined;
+  return row?.[Number(c)] !== undefined;
+}
+
+interface WorkTopology {
+  order: string[];
+  nodes: Record<string, SceneNode>;
+  links: Links;
+  deleted: Set<string>;
+}
+
+class Player {
+  private topology: SceneTopology;
+  private layoutKey: string;
+  private labels: Record<string, string> = {};
+  private current: string | undefined;
+  private pointers: Record<string, string> = {};
+  private visited: string[] = [];
+  private visitedSet = new Set<string>();
+  private frontier: string[] = [];
+  private dimmed: string[] = [];
+  private work: WorkTopology | null = null;
+  private owned = { labels: false, pointers: false, visited: false };
+  private layoutDirty = false;
+  private changed = false;
+
+  constructor(private readonly panes: readonly Pane[], initial: SceneTopology) {
+    this.topology = initial;
+    this.layoutKey = layoutKeyOf(initial);
   }
 
-  const nodes = extra.length > 0 ? [...model.nodes, ...extra] : model.nodes;
-  let byId: string | undefined;
-  if (/^n\d+$/i.test(ref)) byId = ref.toLowerCase();
-  else if (/^@\d+$/.test(ref)) byId = `n${ref.slice(1)}`;
-  if (byId) return nodes.some((n) => n.id === byId) ? byId : undefined;
-
-  for (const node of nodes) {
-    if (node.role === "spine" || node.role === "null") continue;
-    if (node.label === ref) return node.id;
-  }
-  return undefined;
-}
-
-function parseCellRef(ref: string): { r: number; c: number } | null {
-  const match = /^@?(\d+)\s*,\s*(\d+)$/.exec(ref);
-  if (!match) return null;
-  return { r: Number(match[1]), c: Number(match[2]) };
-}
-
-function pushUnique(ids: string[], seen: Set<string>, id: string): void {
-  if (seen.has(id)) return;
-  seen.add(id);
-  ids.push(id);
-}
-
-export function framesFromStdout(stdout: string, model: GraphModel): TraceFrame[] {
-  const events = parseTrace(stdout);
-  const frames: TraceFrame[] = [];
-  let current: string | undefined;
-  const visited: string[] = [];
-  const frontier: string[] = [];
-  const visitedSet = new Set<string>();
-  const frontierSet = new Set<string>();
-  let links: TreeLinks = model.links ? structuredClone(model.links) : {};
-  const baseIds = model.nodes
-    .filter((n) => n.role !== "spine" && n.role !== "null")
-    .map((n) => n.id);
-  const allocs: GNode[] = [];
-  const allocIds = new Set<string>();
-
-  function frame(label: string, line: number): TraceFrame {
-    return {
-      current,
-      visited: [...visited],
-      frontier: [...frontier],
-      line,
-      label,
-      links: { ...links },
-      deleted: model.kind === "linked-list" ? [] : deletedIds(baseIds, links),
-      allocs: [...allocs],
+  frame(): TraceFrame {
+    if (this.layoutDirty) {
+      this.layoutKey = layoutKeyOf(this.topology);
+      this.layoutDirty = false;
+    }
+    this.owned = { labels: false, pointers: false, visited: false };
+    this.work = null;
+    this.changed = false;
+    const frame: TraceFrame = {
+      topology: this.topology,
+      layoutKey: this.layoutKey,
+      labels: this.labels,
+      pointers: this.pointers,
+      visited: this.visited,
+      frontier: this.frontier,
+      dimmed: this.dimmed,
     };
+    if (this.current !== undefined) frame.current = this.current;
+    return frame;
   }
 
-  for (const event of events) {
-    if (frames.length >= MAX_TRACE_FRAMES) break;
-    if (event.kind === "clear") {
-      current = undefined;
-      visited.length = 0;
-      frontier.length = 0;
-      visitedSet.clear();
-      frontierSet.clear();
-      frames.push(frame("clear", event.line));
-      continue;
-    }
-
-    if (event.kind === "alloc") {
-      if (!allocIds.has(event.ref) && !model.nodes.some((n) => n.id === event.ref)) {
-        allocIds.add(event.ref);
-        if (allocs.length < MAX_TRACE_FRAMES) allocs.push({ id: event.ref, label: event.label, role: "normal" });
-      }
-      frames.push(frame(`alloc ${event.ref}`, event.line));
-      continue;
-    }
-
-    if (event.kind === "topology") {
-      links = event.patch ? { ...links, ...event.links } : event.links;
-      frames.push(frame("topology", event.line));
-      continue;
-    }
-
-    if (event.kind === "frontier") {
-      frontier.length = 0;
-      frontierSet.clear();
-      for (const raw of event.refs) {
-        const id = resolveRef(raw, model, allocs);
-        if (id) pushUnique(frontier, frontierSet, id);
-      }
-      frames.push(frame(`frontier ${event.refs.join(" ")}`, event.line));
-      continue;
-    }
-
-    const id = resolveRef(event.ref, model, allocs);
-    if (!id) continue;
-
-    if (event.kind === "current") {
-      current = id;
-    } else if (event.kind === "visit") {
-      pushUnique(visited, visitedSet, id);
-    } else if (event.kind === "enqueue") {
-      pushUnique(frontier, frontierSet, id);
-    } else if (event.kind === "dequeue" && frontierSet.has(id)) {
-      frontierSet.delete(id);
-      const index = frontier.indexOf(id);
-      if (index >= 0) frontier.splice(index, 1);
-    }
-
-    frames.push(frame(`${event.kind} ${event.ref}`, event.line));
+  get dirty(): boolean {
+    return this.changed;
   }
 
-  return frames;
+  private known(ref: string): boolean {
+    return this.topology.nodes[ref] !== undefined || (ref.includes(".") && cellValid(ref, this.panes));
+  }
+
+  private isNode(ref: string): boolean {
+    return this.topology.nodes[ref] !== undefined;
+  }
+
+  private mutable(): WorkTopology {
+    this.layoutDirty = true;
+    this.changed = true;
+    if (this.work) return this.work;
+    const work: WorkTopology = {
+      order: [...this.topology.order],
+      nodes: { ...this.topology.nodes },
+      links: { ...this.topology.links },
+      deleted: new Set(this.topology.deleted),
+    };
+    this.work = work;
+    this.topology = work;
+    return work;
+  }
+
+  private revive(ref: string): void {
+    if (this.topology.deleted.has(ref)) this.mutable().deleted.delete(ref);
+  }
+
+  private setCurrent(ref: string | undefined): void {
+    if (this.current === ref) return;
+    this.current = ref;
+    this.changed = true;
+  }
+
+  private addVisit(ref: string): void {
+    if (this.visitedSet.has(ref)) return;
+    if (!this.owned.visited) {
+      this.visited = [...this.visited];
+      this.owned.visited = true;
+    }
+    this.visited.push(ref);
+    this.visitedSet.add(ref);
+    this.changed = true;
+  }
+
+  private editFrontier(edit: (list: string[]) => string[]): void {
+    const next = edit(this.frontier);
+    if (next.length === this.frontier.length && next.every((id, i) => id === this.frontier[i])) return;
+    this.frontier = next;
+    this.changed = true;
+  }
+
+  private editPointers(name: string, to: string | null): void {
+    if (to === null ? !(name in this.pointers) : this.pointers[name] === to) return;
+    if (!this.owned.pointers) {
+      this.pointers = { ...this.pointers };
+      this.owned.pointers = true;
+    }
+    if (to === null) delete this.pointers[name];
+    else this.pointers[name] = to;
+    this.changed = true;
+  }
+
+  private setLabel(ref: string, label: string): void {
+    const now = this.labels[ref] ?? this.topology.nodes[ref]?.label;
+    if (now === label) return;
+    if (!this.owned.labels) {
+      this.labels = { ...this.labels };
+      this.owned.labels = true;
+    }
+    this.labels[ref] = label;
+    this.changed = true;
+  }
+
+  apply(op: TraceOp): void {
+    switch (op.t) {
+      case "visit":
+        if (!this.known(op.ref)) return;
+        if (this.isNode(op.ref)) this.revive(op.ref);
+        this.addVisit(op.ref);
+        return;
+      case "value":
+        if (!this.isNode(op.ref)) return;
+        this.revive(op.ref);
+        this.setLabel(op.ref, op.label);
+        return;
+      case "link":
+        this.link(op.ref, op.side, op.to);
+        return;
+      case "alloc": {
+        if (this.topology.nodes[op.ref]) return;
+        const topology = this.mutable();
+        topology.order.push(op.ref);
+        topology.nodes[op.ref] = { id: op.ref, kind: op.kind, label: op.label, root: false };
+        topology.links[op.ref] = {};
+        return;
+      }
+      case "pointer":
+        if (op.to !== null && !this.known(op.to)) return;
+        if (op.to !== null && this.isNode(op.to)) this.revive(op.to);
+        if (op.name === null) {
+          if (op.to !== null) this.setCurrent(op.to);
+          return;
+        }
+        this.editPointers(op.name, op.to);
+        if (op.to !== null) this.setCurrent(op.to);
+        return;
+      case "front":
+        if (!this.isNode(op.ref)) return;
+        this.editFrontier((list) => {
+          if (op.add) return list.includes(op.ref) ? list : [...list, op.ref];
+          return list.filter((id) => id !== op.ref);
+        });
+        return;
+      case "frontier":
+        this.editFrontier(() => [...new Set(op.refs.filter((ref) => this.known(ref)))]);
+        return;
+      case "del":
+        if (!this.isNode(op.ref) || this.topology.deleted.has(op.ref)) return;
+        this.mutable().deleted.add(op.ref);
+        return;
+      case "result":
+        this.result(op.ref);
+        return;
+      case "clear":
+        this.setCurrent(undefined);
+        if (this.visited.length > 0) {
+          this.visited = [];
+          this.visitedSet = new Set();
+          this.changed = true;
+        }
+        this.editFrontier(() => []);
+        for (const name of Object.keys(this.pointers)) this.editPointers(name, null);
+        return;
+    }
+  }
+
+  private link(ref: string, side: "<" | ">", to: Ref): void {
+    const node = this.topology.nodes[ref];
+    if (!node) return;
+    if (to !== null && !this.isNode(to)) return;
+    const field = node.kind === "list" ? (side === ">" ? "next" : undefined) : side === "<" ? "left" : "right";
+    if (!field) return;
+    this.revive(ref);
+    if (to !== null) this.revive(to);
+    const current = this.topology.links[ref]?.[field];
+    if ((current ?? null) === to) return;
+    const topology = this.mutable();
+    const entry = { ...(topology.links[ref] ?? {}) };
+    if (to === null) delete entry[field];
+    else entry[field] = to;
+    topology.links[ref] = entry;
+  }
+
+  private result(ref: Ref): void {
+    const topology = this.topology;
+    const visible = visibleIds(topology);
+    const reached = new Set<string>();
+    if (ref !== null && topology.nodes[ref] && !topology.deleted.has(ref)) {
+      const stack = [ref];
+      for (let id = stack.pop(); id !== undefined; id = stack.pop()) {
+        if (reached.has(id) || topology.deleted.has(id)) continue;
+        const node = topology.nodes[id];
+        if (!node) continue;
+        reached.add(id);
+        stack.push(...childrenOf(node.kind, topology.links[id]));
+      }
+      this.setCurrent(ref);
+    }
+    const dimmed = visible.filter((id) => !reached.has(id));
+    if (dimmed.length !== this.dimmed.length || dimmed.some((id, i) => id !== this.dimmed[i])) {
+      this.dimmed = dimmed;
+      this.changed = true;
+    }
+  }
+}
+
+export function buildTrace(text: string, panes: readonly Pane[]): Trace {
+  if (!text || text.length > MAX_TRACE_TEXT) return EMPTY_TRACE;
+  const initial = initialTopology(panes);
+  const auto = traceLines(text)[0];
+  const steps = auto !== undefined ? parseAutoLine(auto) : manualSteps(text, panes, initial);
+  if (steps.length === 0) return EMPTY_TRACE;
+
+  const player = new Player(panes, initial);
+  const frames: TraceFrame[] = [player.frame()];
+  let truncated = false;
+  for (const step of steps) {
+    if (step === "~") {
+      truncated = true;
+      break;
+    }
+    for (const op of step) player.apply(op);
+    if (!player.dirty) continue;
+    if (frames.length >= MAX_TRACE_FRAMES) {
+      truncated = true;
+      break;
+    }
+    frames.push(player.frame());
+  }
+  if (frames.length === 1 && !truncated) return EMPTY_TRACE;
+  return { frames, truncated };
 }

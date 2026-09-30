@@ -8,28 +8,29 @@ import { applyTraceOverlay, clearTraceOverlay } from "./traceOverlay.js";
 import { pointerDragHandler } from "./usePointerDrag.js";
 import { normalizeWheelDelta, zoomAtPoint } from "./zoom.js";
 import type { View } from "./zoom.js";
+import "./trace.css";
 
 interface Props {
   svg: string;
-  /** Changing this resets the view - a new pane should start fitted. */
   fitKey: string;
-  /** Data URL painted onto node shapes after Graphviz layout, or null. */
   nodeBackgroundImage?: string | null;
-  /** Current playback frame to highlight, or null to clear. */
   traceFrame?: TraceFrame | null;
-  /** Previous topology SVG for FLIP morph (sequential steps only). */
   morphFromSvg?: string | null;
-  /** When true, animate from morphFromSvg into svg. */
   morph?: boolean;
+}
+
+interface PreparedSvg {
+  html: string;
+  root: Element | null;
 }
 
 function prepareSvg(
   svg: string,
   nodeBackgroundImage: string | null | undefined,
   ink?: string,
-): string {
+): PreparedSvg {
   const document = new DOMParser().parseFromString(svg, "image/svg+xml");
-  if (document.querySelector("parsererror")) return "";
+  if (document.querySelector("parsererror")) return { html: "", root: null };
 
   for (const script of document.querySelectorAll("script")) script.remove();
   for (const element of document.querySelectorAll("*")) {
@@ -40,7 +41,6 @@ function prepareSvg(
     }
   }
 
-  // Keep cell addresses for overlays; drop live hrefs so clicks cannot navigate.
   for (const anchor of document.querySelectorAll("a")) {
     const href =
       anchor.getAttribute("href") ||
@@ -58,10 +58,12 @@ function prepareSvg(
     applyNodeBackgroundImage(document.documentElement, nodeBackgroundImage, ink);
   }
 
-  return new XMLSerializer().serializeToString(document.documentElement);
+  return {
+    html: new XMLSerializer().serializeToString(document.documentElement),
+    root: document.documentElement,
+  };
 }
 
-/** Zoom/pan surface for the rendered SVG. */
 export function GraphView({
   svg,
   fitKey,
@@ -97,18 +99,20 @@ export function GraphView({
     };
   }, [nodeBackgroundImage]);
 
-  const sanitizedSvg = useMemo(
+  const preparedSvg = useMemo(
     () => prepareSvg(svg, nodeBackgroundImage, nodeInk),
     [svg, nodeBackgroundImage, nodeInk],
   );
+  const sanitizedSvg = preparedSvg.html;
 
-  const sanitizedFrom = useMemo(
+  const preparedFrom = useMemo(
     () =>
       morph && morphFromSvg
         ? prepareSvg(morphFromSvg, nodeBackgroundImage, nodeInk)
-        : "",
+        : { html: "", root: null },
     [morph, morphFromSvg, nodeBackgroundImage, nodeInk],
   );
+  const fromRoot = preparedFrom.root;
 
   const paintView = (): void => {
     const { x, y, scale } = view.current;
@@ -131,21 +135,26 @@ export function GraphView({
   };
 
   const fit = (): void => {
-    const box = stage.current?.getBoundingClientRect();
+    const el = stage.current;
     const graph = viewport.current?.firstElementChild as SVGSVGElement | null;
-    if (!box || !graph || box.width <= 24 || box.height <= 24) return;
+    if (!el || !graph) return;
+    const box = el.getBoundingClientRect();
+    const style = getComputedStyle(el);
+    const top = parseFloat(style.paddingTop) || 0;
+    const bottom = parseFloat(style.paddingBottom) || 0;
+    const boxHeight = box.height - top - bottom;
+    if (box.width <= 24 || boxHeight <= 24) return;
     const width = graph.width.baseVal.value || graph.getBBox().width;
     const height = graph.height.baseVal.value || graph.getBBox().height;
     if (!width || !height) return;
-    const scale = Math.min((box.width - 24) / width, (box.height - 24) / height, 1.6);
+    const scale = Math.min((box.width - 24) / width, (boxHeight - 24) / height, 1.6);
     setView({
       scale,
       x: (box.width - width * scale) / 2,
-      y: (box.height - height * scale) / 2,
+      y: top + (boxHeight - height * scale) / 2,
     });
   };
 
-  // Fit when the case/pane/user-fit key changes, and once when SVG first arrives for that key.
   const fittedFor = useRef("");
   useLayoutEffect(() => {
     if (!sanitizedSvg) return;
@@ -168,36 +177,34 @@ export function GraphView({
     const root = viewport.current?.querySelector("svg");
     if (!root) return () => { morphGeneration.current.next(); };
 
-    if (morph && sanitizedFrom) {
-      const fromDoc = new DOMParser().parseFromString(sanitizedFrom, "image/svg+xml");
-      const fromRoot = fromDoc.documentElement;
-      if (!fromDoc.querySelector("parsererror")) {
-        const frame = traceFrame;
-        void animateGraphMorph({
-          fromRoot,
-          toRoot: root,
-          deletedIds: frame?.deleted ?? [],
-        }).finally(() => {
-          if (!morphGeneration.current.isCurrent(generation)) return;
-          const live = viewport.current?.querySelector("svg");
-          if (!live) return;
-          if (frame) applyTraceOverlay(live, frame);
-          else clearTraceOverlay(live);
-        });
-        return;
-      }
+    if (morph && fromRoot) {
+      const frame = traceFrame;
+      const handle = animateGraphMorph({ fromRoot, toRoot: root });
+      void handle.done.finally(() => {
+        if (!morphGeneration.current.isCurrent(generation)) return;
+        const live = viewport.current?.querySelector("svg");
+        if (!live) return;
+        if (frame) applyTraceOverlay(live, frame);
+        else clearTraceOverlay(live);
+      });
+      return () => {
+        handle.cancel();
+        morphGeneration.current.next();
+      };
     }
 
     if (!traceFrame) {
       clearTraceOverlay(root);
-      return;
+      return () => {
+        morphGeneration.current.next();
+      };
     }
     applyTraceOverlay(root, traceFrame);
 
     return () => {
       morphGeneration.current.next();
     };
-  }, [sanitizedSvg, sanitizedFrom, morph, traceFrame]);
+  }, [sanitizedSvg, fromRoot, morph, traceFrame]);
 
   useEffect(() => {
     const el = stage.current;

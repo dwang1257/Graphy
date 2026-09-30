@@ -1,300 +1,603 @@
-"use strict";(()=>{var w="graphy:page";function Y(e,t){return typeof e=="object"&&e!==null&&e.channel===t}function C(e){if(!Y(e,w))return!1;let t=e;return t.type==="trace"&&typeof t.enabled=="boolean"}var N="GRAPHY_TRACE_V1",K=new Set(["python","python3"]),W=`
-# ${N}
-def __graphy_install():
+"use strict";(()=>{var h="graphy:page";function G(){return{channel:h,type:"clear"}}function ke(e,t){return typeof e=="object"&&e!==null&&e.channel===t}function F(e){if(!ke(e,h))return!1;let t=e;return(t.type==="trace"||t.type==="hooks")&&typeof t.enabled=="boolean"}var j="\\ue000",Se=/\u{E000}[^\n]*\n?/gu;function y(e){return e.includes("\uE000")?e.replace(Se,""):e}function U(e,t){return e.flatMap(n=>typeof n!="string"?[n]:t&&n.startsWith("\uE000")&&y(n)===""?[]:[y(n)])}function m(e){let t={...e},n=e.code_output;return typeof n=="string"?t.code_output=y(n):Array.isArray(n)&&(t.code_output=U(n,!0)),Array.isArray(e.std_output_list)&&(t.std_output_list=U(e.std_output_list,!1)),typeof e.std_output=="string"&&(t.std_output=y(e.std_output)),JSON.stringify(t)===JSON.stringify(e)?null:t}var R=100;var L="GRAPHY_TRACE_V2",Ne=4e3,we=1e5,Te=`
+# ${L}
+def __graphy_install(G):
     import sys
+    import builtins
+    import functools
     from collections import deque
 
-    ids = {}
-    buf = []
-    tagged = []
-    st = {
-        "last": None,
-        "last_topo": None,
-        "root_obj": None,
-        "mode": None,
-        "depth": 0,
-        "grid": None,
-        "last_cell": None,
-        "cursor": 0,
-        "busy": False,
-    }
-    PREFERRED = ("node", "curr", "prev", "root", "head", "dummy", "p", "q", "l1", "l2", "l3")
-    GRID_KEYS = ("grid", "board", "matrix", "mat")
-    CELL_PAIRS = (("r", "c"), ("i", "j"), ("row", "col"), ("x", "y"))
+    S = "${j}"
+    LET = "abcdefghijklmnopqrstuvwxy"
+    MAX_INPUT = ${R}
+    MAX_ALLOC = ${R*2}
+    MAX_OPS = ${Ne}
+    MAX_LINES = ${we}
+    MAX_SCAN = 1024
+    WATCH = frozenset(("val", "left", "right", "next"))
+    LINKS = ("left", "right", "next")
+    TREE = {"left": "<", "right": ">"}
+    PAIRS = (("r", "c"), ("i", "j"), ("row", "col"), ("x", "y"))
+    TR = {9: 95, 10: 95, 11: 95, 12: 95, 13: 95, 32: 95, 44: 95}
+    MISSING = object()
+    FN = type(__graphy_install)
+    HOME = __graphy_install.__code__
+    FILE = HOME.co_filename
+    FIRST = HOME.co_firstlineno
+    SKIP = set()
+    raw = object.__getattribute__
 
-    def nn(v):
-        return "None" if v is None else v
+    class State(object):
+        pass
 
-    def fmt(item):
-        if not isinstance(item, tuple):
-            return str(item)
-        n = len(item)
-        if n == 2:
-            return "(%s,%s)" % item
-        if n == 4:
-            a, b, c, d = item
-            return "(%s,%s,%s,%s)" % (a, nn(b), nn(c), d)
-        a, b, c = item
-        return "(%s,%s,%s)" % (a, nn(b), nn(c))
+    st = State()
+    st.on = False
+    st.busy = False
+    st.depth = 0
+    st.calls = 0
+    st.patched = []
+    st.saved = None
+
+    def reset(args):
+        st.ids = {}
+        st.keep = []
+        st.kinds = {}
+        st.visited = set()
+        st.pending = []
+        st.steps = []
+        st.nops = 0
+        st.lines = 0
+        st.alloc = 0
+        st.dead = set()
+        st.shown = {}
+        st.front = set()
+        st.fframe = None
+        st.lastf = None
+        st.linked = False
+        st.mutated = False
+        st.grid = None
+        st.gpane = ""
+        st.gsnap = None
+        st.cell = None
+        st.closing = False
+        st.top = None
+        st.args = args
+        st.inputs = set(id(a) for a in args)
+        st.me = args[0] if args else None
+
+    reset(())
+
+    def dict_of(o):
+        try:
+            d = raw(o, "__dict__")
+        except Exception:
+            return None
+        return d if type(d) is dict else None
+
+    def shape(o):
+        d = dict_of(o)
+        if d is None or "val" not in d:
+            return None
+        if "left" in d or "right" in d:
+            return "t"
+        if "next" in d:
+            return "l"
+        return None
+
+    def learn(cls, k):
+        if cls not in st.kinds and isinstance(cls, type) and cls.__module__ != "builtins":
+            st.kinds[cls] = k
+
+    def label(v):
+        if v is MISSING:
+            return ""
+        try:
+            s = v if type(v) is str else str(v)
+        except Exception:
+            s = "?"
+        return s[:12].translate(TR)
+
+    def emit(op):
+        if st.on or st.closing:
+            st.pending.append(op)
 
     def flush():
-        print("#graphy/[" + ",".join(fmt(item) for item in buf) + "]")
-        del buf[:]
+        if st.pending:
+            st.nops += len(st.pending)
+            st.steps.append(",".join(st.pending))
+            st.pending = []
+            if st.on and st.nops > MAX_OPS:
+                halt()
 
-    def nid_int(nid):
-        return int(nid[1:]) if nid and nid[0] == "n" else None
+    def tag(o, r, k):
+        st.ids[id(o)] = r
+        st.keep.append(o)
+        learn(type(o), k)
 
-    def child_nid(node, attr):
-        child = getattr(node, attr, None)
-        return ids.get(id(child)) if child is not None else None
-
-    def node_val(node):
-        v = getattr(node, "val", 0)
-        return v if isinstance(v, int) and not isinstance(v, bool) else 0
-
-    def is_tree(obj):
-        return obj is not None and hasattr(obj, "left") and hasattr(obj, "right") and hasattr(obj, "val")
-
-    def is_list(obj):
-        return obj is not None and hasattr(obj, "val") and hasattr(obj, "next") and not is_tree(obj)
-
-    def is_grid(obj):
-        if not isinstance(obj, (list, tuple)) or not obj:
-            return False
-        first = obj[0]
-        if isinstance(first, str):
-            n = len(first)
-            return n > 0 and all(isinstance(row, str) and len(row) == n for row in obj)
-        if isinstance(first, (list, tuple)):
-            return all(isinstance(row, (list, tuple)) for row in obj)
-        return False
-
-    def is_index(v):
-        return isinstance(v, int) and not isinstance(v, bool)
-
-    def grid_shape(obj):
-        return (len(obj), len(obj[0])) if obj is not None and is_grid(obj) else None
-
-    def first_match(pred, *seqs):
-        for seq in seqs:
-            for item in seq:
-                if pred(item):
-                    return item
-        return None
-
-    def tag(root):
-        ids.clear()
-        del tagged[:]
-        st["root_obj"] = root
-        st["mode"] = "tree"
-        if root is None:
-            return
-        q = deque([root])
-        ids[id(root)] = "n0"
+    def tag_tree(root, p):
+        tag(root, p + "0", "t")
+        n = 1
         cursor = 1
+        q = deque([root])
         while q:
-            node = q.popleft()
-            for child in (getattr(node, "left", None), getattr(node, "right", None)):
-                cid = "n" + str(cursor)
+            d = dict_of(q.popleft()) or {}
+            for f in ("left", "right"):
+                c = d.get(f)
+                slot = cursor
                 cursor += 1
-                if child is not None:
-                    ids[id(child)] = cid
-                    q.append(child)
+                if c is None or id(c) in st.ids or shape(c) is None:
+                    continue
+                tag(c, p + str(slot), "t")
+                q.append(c)
+                n += 1
+                if n > MAX_INPUT:
+                    return n
+        return n
 
-    def claim(node):
-        nid = "n" + str(st["cursor"])
-        ids[id(node)] = nid
-        tagged.append(node)
-        st["cursor"] += 1
-        return nid
+    def tag_chain(o, p, k):
+        n = 0
+        while o is not None and id(o) not in st.ids and shape(o) == "l":
+            tag(o, p + str(k), "l")
+            k += 1
+            n += 1
+            if n > MAX_INPUT:
+                break
+            o = (dict_of(o) or {}).get("next")
+        return k, n
 
-    def tag_list(head, reset=True):
-        if reset:
-            ids.clear()
-            del tagged[:]
-            st["cursor"] = 0
-        st["root_obj"] = head if reset or st["root_obj"] is None else st["root_obj"]
-        st["mode"] = "list"
-        node = head
-        while node is not None and id(node) not in ids:
-            claim(node)
-            node = getattr(node, "next", None)
+    def is_grid(a):
+        if type(a) is not list or not a:
+            return False
+        first = a[0]
+        if type(first) is str:
+            w = len(first)
+            return w > 0 and all(type(r) is str and len(r) == w for r in a)
+        return type(first) is list and all(type(r) is list for r in a)
 
-    def tag_new_chain(head):
-        node = head
-        while node is not None and id(node) not in ids:
-            nid = claim(node)
-            buf.append((nid_int(nid), nid_int(child_nid(node, "next")), None, node_val(node)))
-            node = getattr(node, "next", None)
+    def tag_args(args):
+        total = 0
+        for i in range(1, min(len(args), len(LET) + 1)):
+            a = args[i]
+            p = LET[i - 1] if i > 1 else ""
+            k = shape(a)
+            if k == "t":
+                if id(a) not in st.ids:
+                    total += tag_tree(a, p)
+            elif k == "l":
+                total += tag_chain(a, p, 0)[1]
+            elif type(a) is list and a and len(a) <= MAX_INPUT and all(e is None or shape(e) == "l" for e in a):
+                k = 0
+                for e in a:
+                    if e is not None:
+                        k, n = tag_chain(e, p, k)
+                        total += n
+            elif st.grid is None and is_grid(a) and sum(len(r) for r in a) <= MAX_INPUT:
+                st.grid = a
+                st.gpane = p
+                st.gsnap = [r[:] if type(r) is list else r for r in a]
+            if total > MAX_INPUT:
+                return False
+        return True
 
-    def dump_map():
-        root_obj = st["root_obj"]
-        if root_obj is None:
-            return {}
-        out = {}
-        q = deque([root_obj])
-        seen = set()
-        while q:
-            node = q.popleft()
-            nid = ids.get(id(node))
-            if not nid or nid in seen:
-                continue
-            seen.add(nid)
-            left = getattr(node, "left", None)
-            right = getattr(node, "right", None)
-            lid = ids.get(id(left)) if left is not None else None
-            rid = ids.get(id(right)) if right is not None else None
-            out[nid] = (lid, rid)
-            if left is not None and lid:
-                q.append(left)
-            if right is not None and rid:
-                q.append(right)
-        return out
-
-    def dump_list_map():
-        out = {}
-        for node in tagged:
-            nid = ids.get(id(node))
-            if nid:
-                out[nid] = child_nid(node, "next")
-        return out
-
-    def emit_topo_if_changed():
-        mode = st["mode"]
-        if mode == "tree":
-            curr = dump_map()
-        elif mode == "list":
-            curr = dump_list_map()
-        else:
-            return
-        if curr == st["last_topo"]:
-            return
-        prev = st["last_topo"] or {}
-        st["last_topo"] = curr
-        for nid, kids in curr.items():
-            if prev.get(nid) == kids:
-                continue
-            if mode == "tree":
-                lid, rid = kids
-                buf.append((nid_int(nid), nid_int(lid), nid_int(rid)))
-            else:
-                buf.append((nid_int(nid), nid_int(kids), None))
-
-    def pick_cell(loc):
-        shape = grid_shape(st["grid"])
-        if shape is None:
-            for key in GRID_KEYS:
-                shape = grid_shape(loc.get(key))
-                if shape:
-                    break
-        if shape is None:
-            return None
-        rows, cols = shape
-        for a, b in CELL_PAIRS:
-            r, c = loc.get(a), loc.get(b)
-            if is_index(r) and is_index(c) and 0 <= r < rows and 0 <= c < cols:
-                return (r, c)
-        return None
-
-    def nid_of(val):
-        return ids.get(id(val)) if val is not None else None
-
-    def pick_current(loc):
-        for key in PREFERRED:
-            nid = nid_of(loc.get(key))
-            if nid:
-                return nid
-        for val in loc.values():
-            nid = nid_of(val)
-            if nid:
-                return nid
-        return None
-
-    def discover_lists(loc):
-        if st["mode"] != "list":
-            return
-        before = st["cursor"]
-        for val in list(loc.values()):
-            if is_list(val) and id(val) not in ids:
-                tag_new_chain(val)
-        for node in list(tagged):
-            nxt = getattr(node, "next", None)
-            if is_list(nxt) and id(nxt) not in ids:
-                tag_new_chain(nxt)
-        if st["cursor"] != before and st["last_topo"] is not None:
-            prev = dict(st["last_topo"])
-            for nid, kid in dump_list_map().items():
-                prev.setdefault(nid, kid)
-            st["last_topo"] = prev
-
-    def tracer(frame, event, arg):
-        if event != "line" or st["busy"] or frame.f_code.co_name.startswith("__graphy"):
-            return tracer
-        st["busy"] = True
+    def names_node(fn):
         try:
-            loc = frame.f_locals
-            if st["mode"] == "list":
-                discover_lists(loc)
-            emit_topo_if_changed()
-            current = pick_current(loc)
-            if current and current != st["last"]:
-                st["last"] = current
-                buf.append(nid_int(current))
-            cell = pick_cell(loc)
-            if cell and cell != st["last_cell"]:
-                st["last_cell"] = cell
-                buf.append(cell)
+            ann = str(fn.__annotations__.get("return"))
+        except Exception:
+            return False
+        return "TreeNode" in ann or "ListNode" in ann
+
+    def alloc(o, k, v):
+        if st.alloc >= MAX_ALLOC:
+            halt()
+            return None
+        r = "z" + str(st.alloc)
+        st.alloc += 1
+        st.ids[id(o)] = r
+        st.keep.append(o)
+        st.mutated = True
+        emit("+" + k + r + "=" + label(v))
+        return r
+
+    def arrow(k, f):
+        if k == "t":
+            return TREE.get(f)
+        return ">" if f == "next" else None
+
+    def ensure(o):
+        r = st.ids.get(id(o))
+        if r is not None:
+            return r
+        k = st.kinds.get(type(o))
+        d = dict_of(o)
+        if k is None or d is None:
+            return None
+        r = alloc(o, k, d.get("val", MISSING))
+        todo = [(o, r, k)] if r is not None else []
+        while todo:
+            x, xr, xk = todo.pop()
+            xd = dict_of(x) or {}
+            for f in LINKS:
+                ch = arrow(xk, f)
+                c = xd.get(f)
+                if ch is None or c is None:
+                    continue
+                cr = st.ids.get(id(c))
+                if cr is None:
+                    ck = st.kinds.get(type(c))
+                    cd = dict_of(c)
+                    if ck is None or cd is None:
+                        continue
+                    cr = alloc(c, ck, cd.get("val", MISSING))
+                    if cr is None:
+                        return r
+                    todo.append((c, cr, ck))
+                emit(xr + ch + cr)
+        return r
+
+    def wrote(o, k, name, value, first):
+        r = st.ids.get(id(o))
+        if r is None:
+            d = dict_of(o) or {}
+            r = alloc(o, k, value if name == "val" else d.get("val", MISSING))
+            if r is None or name == "val":
+                return
+        elif name == "val":
+            emit(r + "=" + label(value))
+            return
+        ch = arrow(k, name)
+        if ch is None:
+            return
+        if value is None:
+            if not first:
+                emit(r + ch + "-")
+                st.linked = True
+            return
+        c = ensure(value)
+        if c is not None:
+            emit(r + ch + c)
+            st.linked = True
+            st.mutated = True
+
+    def hooks(k, osa, fallback):
+        def graphy_get(self):
+            try:
+                v = raw(self, "__dict__")["val"]
+            except KeyError:
+                if fallback is MISSING:
+                    raise AttributeError("val")
+                v = fallback
+            if st.on and not st.busy:
+                r = st.ids.get(id(self))
+                if r is not None and r not in st.visited:
+                    st.visited.add(r)
+                    st.pending.append(r)
+            return v
+
+        def graphy_put(self, v):
+            raw(self, "__dict__")["val"] = v
+
+        def graphy_drop(self):
+            del raw(self, "__dict__")["val"]
+
+        def graphy_set(self, name, value):
+            if not st.on or st.busy or name not in WATCH:
+                osa(self, name, value)
+                return
+            st.busy = True
+            try:
+                d = dict_of(self)
+                old = MISSING if d is None else d.get(name, MISSING)
+                osa(self, name, value)
+                if old is not value:
+                    try:
+                        wrote(self, k, name, value, old is MISSING)
+                    except Exception:
+                        halt()
+            finally:
+                st.busy = False
+
+        return property(graphy_get, graphy_put, graphy_drop), graphy_set
+
+    def patch():
+        for cls, k in list(st.kinds.items()):
+            d = cls.__dict__
+            if "__slots__" in d:
+                continue
+            for v in d.values():
+                if type(v) is FN:
+                    SKIP.add(id(v.__code__))
+            saved_val = d.get("val", MISSING)
+            saved_set = d.get("__setattr__", MISSING)
+            prop, setter = hooks(k, cls.__setattr__, saved_val)
+            try:
+                setattr(cls, "val", prop)
+                setattr(cls, "__setattr__", setter)
+            except Exception:
+                restore(cls, saved_val, saved_set)
+                continue
+            st.patched.append((cls, saved_val, saved_set))
+
+    def restore(cls, saved_val, saved_set):
+        for name, saved in (("val", saved_val), ("__setattr__", saved_set)):
+            try:
+                if saved is MISSING:
+                    if name in cls.__dict__:
+                        delattr(cls, name)
+                else:
+                    setattr(cls, name, saved)
+            except Exception:
+                pass
+
+    def unpatch():
+        while st.patched:
+            restore(*st.patched.pop())
+
+    def stop():
+        if st.on:
+            st.on = False
+            sys.settrace(st.saved)
+        st.saved = None
+        unpatch()
+
+    def halt():
+        if st.on:
+            flush()
+            st.steps.append("~")
+            stop()
+
+    def gather(v, out, deep):
+        t = type(v)
+        if t in st.kinds:
+            out.append(v)
+        elif deep and (t is list or t is tuple or t is set or t is frozenset or t is deque):
+            if len(v) <= MAX_SCAN:
+                for e in v:
+                    gather(e, out, deep - 1)
+        elif deep and t is dict:
+            if len(v) <= MAX_SCAN:
+                for kk, e in v.items():
+                    gather(kk, out, deep - 1)
+                    gather(e, out, deep - 1)
+
+    def reach(roots):
+        seen = set()
+        kinds = st.kinds
+        while roots:
+            o = roots.pop()
+            i = id(o)
+            if i in seen:
+                continue
+            seen.add(i)
+            d = dict_of(o)
+            if d is None:
+                continue
+            for f in LINKS:
+                c = d.get(f)
+                if c is not None and type(c) in kinds:
+                    roots.append(c)
+        return seen
+
+    def liveness(f, ret):
+        roots = []
+        for a in st.args[1:]:
+            gather(a, roots, 2)
+        me = dict_of(st.me)
+        if me:
+            for v in me.values():
+                gather(v, roots, 2)
+        g = f
+        while g is not None and g is not st.top:
+            for v in g.f_locals.values():
+                gather(v, roots, 2)
+            g = g.f_back
+        if ret is not None:
+            roots.append(ret)
+        seen = reach(roots)
+        dead = st.dead
+        for i, r in st.ids.items():
+            if i in seen:
+                dead.discard(r)
+            elif r not in dead and (f is not None or r[0] != "z"):
+                dead.add(r)
+                emit("!" + r)
+
+    def contents(v):
+        n = len(v)
+        if n == 0 or n > MAX_SCAN:
+            return None
+        kinds = st.kinds
+        first = next(iter(v))
+        if type(first) not in kinds and not (type(first) is tuple and any(type(x) in kinds for x in first)):
+            return None
+        ids = st.ids
+        found = set()
+        for e in v:
+            r = ids.get(id(e))
+            if r is not None:
+                found.add(r)
+            elif type(e) is tuple and len(e) <= 4:
+                for x in e:
+                    r = ids.get(id(x))
+                    if r is not None:
+                        found.add(r)
+        return found
+
+    def on_line(f):
+        st.lines += 1
+        if st.lines > MAX_LINES:
+            halt()
+            return
+        loc = f.f_locals
+        ids = st.ids
+        M = {}
+        fr = set()
+        for k, v in loc.items():
+            r = ids.get(id(v))
+            if r is not None:
+                if k != "self" and k.isascii() and k.isidentifier():
+                    M[k] = r
+                continue
+            t = type(v)
+            if (t is list or t is deque or t is set or t is tuple) and id(v) not in st.inputs:
+                found = contents(v)
+                if found:
+                    fr |= found
+        lost = False
+        shown = st.shown
+        if M != shown:
+            added = [k for k in M if shown.get(k) != M[k]]
+            if added:
+                for k in shown:
+                    if k not in M:
+                        emit("@" + k + "=-")
+                for k in added:
+                    emit("@" + k + "=" + M[k])
+                news = set(M.values())
+                lost = any(r not in news for r in shown.values())
+                st.shown = M
+        if st.grid is not None:
+            grid(loc)
+        if fr or f is st.fframe:
+            front = st.front
+            if fr != front:
+                for r in sorted(front - fr):
+                    emit("&-" + r)
+                for r in sorted(fr - front):
+                    emit("&+" + r)
+                st.front = fr
+            st.fframe = f
+        switched = f is not st.lastf
+        st.lastf = f
+        if st.linked or (st.mutated and (lost or switched)):
+            st.linked = False
+            liveness(f, None)
+        flush()
+
+    def grid(loc):
+        g = st.grid
+        snap = st.gsnap
+        p = st.gpane
+        for ri in range(min(len(g), len(snap))):
+            row = g[ri]
+            old = snap[ri]
+            if row == old:
+                continue
+            for ci in range(min(len(row), len(old))):
+                if row[ci] != old[ci]:
+                    cid = p + str(ri) + "." + str(ci)
+                    if cid not in st.visited:
+                        st.visited.add(cid)
+                        emit(cid)
+            snap[ri] = row[:] if type(row) is list else row
+        for a, b in PAIRS:
+            rv = loc.get(a)
+            cv = loc.get(b)
+            if type(rv) is int and type(cv) is int and 0 <= rv < len(snap) and 0 <= cv < len(snap[rv]):
+                if st.cell != (rv, cv):
+                    st.cell = (rv, cv)
+                    emit("@=" + p + str(rv) + "." + str(cv))
+                return
+
+    def ltrace(frame, event, arg):
+        if not st.on:
+            return None
+        if st.busy:
+            return ltrace
+        if event == "line":
+            st.busy = True
+            try:
+                on_line(frame)
+            except Exception:
+                halt()
+            finally:
+                st.busy = False
+        elif event == "return":
+            flush()
+        return ltrace
+
+    def rtrace(frame, event, arg):
+        if not st.on:
+            return None
+        if event == "return" and not st.busy:
+            flush()
+        return rtrace
+
+    def gtrace(frame, event, arg):
+        c = frame.f_code
+        if c.co_filename != FILE or c.co_firstlineno >= FIRST:
+            return None
+        return rtrace if id(c) in SKIP else ltrace
+
+    def begin(fn, args, frame):
+        reset(args)
+        for name, k in (("TreeNode", "t"), ("ListNode", "l")):
+            learn(G.get(name), k)
+        if not tag_args(args):
+            return
+        if not st.kinds and st.grid is None:
+            return
+        if not st.ids and st.grid is None and not names_node(fn):
+            return
+        patch()
+        st.top = frame
+        st.saved = sys.gettrace()
+        st.on = True
+        sys.settrace(gtrace)
+
+    def finish(fn, ret, ok):
+        st.closing = st.on and ok
+        stop()
+        try:
+            if st.closing:
+                if ret is not None and type(ret) in st.kinds:
+                    r = ensure(ret)
+                    if r is not None:
+                        liveness(None, ret)
+                        emit("^" + r)
+                elif ret is None and names_node(fn):
+                    liveness(None, None)
+                    emit("^-")
+            flush()
+            if any(s != "~" for s in st.steps):
+                builtins.print(S + str(st.calls) + " " + " ".join(st.steps))
+        except Exception:
+            pass
         finally:
-            st["busy"] = False
-        return tracer
+            st.calls += 1
+            reset(())
 
     def wrap(fn):
         def __graphy_wrapped(*args, **kwargs):
-            if st["depth"] == 0:
-                st.update(last=None, last_topo=None, mode=None, grid=None, last_cell=None, cursor=0)
-                del buf[:]
-                del tagged[:]
-                tree = first_match(is_tree, args)
-                if tree is not None:
-                    tag(tree)
-                else:
-                    n = 0
-                    for seq in (args, kwargs.values()):
-                        for item in seq:
-                            if is_list(item):
-                                tag_list(item, reset=(n == 0))
-                                n += 1
-                                if n >= 3:
-                                    break
-                        if n:
-                            break
-                st["grid"] = first_match(is_grid, args, kwargs.values())
-                dump = {"tree": dump_map, "list": dump_list_map}.get(st["mode"])
-                if dump:
-                    st["last_topo"] = dump()
-                sys.settrace(tracer)
-            st["depth"] += 1
-            try:
+            if st.depth:
                 return fn(*args, **kwargs)
+            st.depth = 1
+            ok = False
+            ret = None
+            try:
+                try:
+                    begin(fn, args, sys._getframe())
+                except Exception:
+                    stop()
+                ret = fn(*args, **kwargs)
+                ok = True
+                return ret
             finally:
-                st["depth"] -= 1
-                if st["depth"] == 0:
-                    sys.settrace(None)
-                    emit_topo_if_changed()
-                    flush()
+                st.depth = 0
+                finish(fn, ret, ok)
+        try:
+            functools.update_wrapper(__graphy_wrapped, fn)
+        except Exception:
+            pass
         return __graphy_wrapped
 
-    try:
-        sol = Solution
-    except NameError:
+    sol = G.get("Solution")
+    if not isinstance(sol, type):
         return
     for name, attr in list(vars(sol).items()):
-        if not name.startswith("_") and callable(attr):
+        if not name.startswith("_") and type(attr) is FN:
             setattr(sol, name, wrap(attr))
 
-__graphy_install()
-`;function z(e){return e.includes(N)?e:`${e.replace(/\s+$/,"")}
-${W}`}function L(e){if(typeof e!="string")return null;try{let t=JSON.parse(e),n=t.typed_code,r=t.lang;return typeof n!="string"||typeof r!="string"||!K.has(r)||n.includes(N)?null:(t.typed_code=z(n),{body:JSON.stringify(t),originalCode:n})}catch{return null}}function S(e){if(!e)return;let t=x(e.code_output);if(t!==void 0)return t;let n=x(e.std_output_list);if(n!==void 0)return n;if(typeof e.std_output=="string"&&e.std_output.length>0)return e.std_output}function k(e){if(!e)return;let t=e.std_output_list;if(!(!Array.isArray(t)||t.length===0)&&t.every(n=>typeof n=="string"))return t}function x(e){if(typeof e=="string"&&e.length>0)return e;if(Array.isArray(e)){let t=e.filter(n=>typeof n=="string");return t.length===0?void 0:t.join(`
-`)}}async function v(e,t){let n=t??(()=>!0),r=e.tabs(),l=e.selectedIndex(r);try{if(r.length===0){if(!n())return{cases:[],captureError:"Testcase capture was cancelled"};let a=e.readMountedParameters();return a===null?{cases:[]}:{cases:[a.join(`
-`)]}}let o=[];for(let a of r){if(!n())return{cases:[],captureError:"Testcase capture was cancelled"};e.select(a);try{let s=await e.waitUntilSettled(a,n);o.push(s.join(`
-`))}catch(s){if(!n())return{cases:[],captureError:"Testcase capture was cancelled"};let i=s instanceof Error?s.message:String(s);return{cases:[],captureError:`Case ${a.index+1}: ${i}`}}}return{cases:o}}finally{await Q(e,r,l,n)}}async function Q(e,t,n,r){if(n<0)return;let l=t.find(o=>o.index===n);if(l&&e.selectedIndex(t)!==n)try{e.select(l),await e.waitUntilSettled(l,r)}catch{}}var Z='[data-e2e-locator="console-testcase-tag"]',ee='[data-e2e-locator="console-testcase-input"]',te='[data-e2e-locator="console-result"]',ne=/^Case\s+\d+$/i,re=/^(Input|输入)$/;function R(e){return e.replace(/\s+/g," ").trim()}function A(e){return e.getAttribute("aria-selected")==="true"||e.getAttribute("aria-current")==="true"||e.getAttribute("data-state")==="active"}function P(e){return String(e.className).includes("bg-fill-3")}function se(e){return e.matches("textarea")?e.value:e.querySelector("textarea")?.value??null}function oe(e){let n=e.querySelector(".cm-content")?.cmView?.rootView?.view?.state?.doc?.toString();if(typeof n=="string")return n;let r=se(e);return r!==null?r:typeof e.textContent=="string"?e.textContent:null}function ie(e,t){return e.querySelector?.(t)??e.querySelectorAll?.(t)[0]??null}function ae(e){return ne.test(R(e.textContent??""))}function M(e){let t=Array.from(e.querySelectorAll("div,button")).filter(ae),n=t.filter(l=>{let o=String(l.className);return l.tagName==="BUTTON"||o.includes("cursor-pointer")}),r=n.length>0?n:t;return r.filter(l=>!r.some(o=>o!==l&&o.contains?.(l)))}function H(e){let t=ie(e,te);if(!t)return null;let n=t;for(let r=0;r<10&&n;r+=1){if(M(n).length>0)return n;n=n.parentElement}return t.parentElement}function le(e){let t=Array.from(e.querySelectorAll("div")).find(r=>String(r.className).includes("font-menlo"));if(t)return(t.textContent??"").trim();let n=(e.textContent??"").trim();return n&&n.replace(/^[^\n=]*=\s*/,"").trim()||null}function ue(e){let t=H(e);if(!t)return null;let r=Array.from(t.querySelectorAll("div")).find(o=>re.test(R(o.textContent??""))&&o.children.length===0)?.nextElementSibling;if(!r)return null;let l=Array.from(r.children,o=>le(o));return l.length>0&&l.every(o=>o!==null)?l:null}function de(e){let t=Array.from(e.querySelectorAll(ee));if(t.length===0)return null;let n=t.map(oe);return n.every(r=>r!==null)?n:null}function ce(e,t){if(e.length!==t.length)return!1;for(let n=0;n<e.length;n+=1)if(e[n]!==t[n])return!1;return!0}function fe(e,t){if(t){if(t===e.element)return!0;if(typeof t.isConnected!="boolean"||t.isConnected)return!1}return A(e.element)||P(e.element)}function q(e,t){let n=null,r=()=>{let s=Array.from(e.querySelectorAll(Z),(u,d)=>({element:u,index:d}));if(s.length>0)return s;let i=H(e);return i?M(i).map((u,d)=>({element:u,index:d})):[]},l=s=>{if(n){let i=s.find(u=>u.element===n);if(i)return i.index}return s.find(i=>A(i.element)||P(i.element))?.index??-1},o=()=>de(e)??ue(e);return{tabs:r,selectedIndex:l,select:s=>{n=s.element,s.element.click()},readMountedParameters:o,waitUntilSettled:(s,i)=>new Promise((u,d)=>{let f=null,p=!1,m=!1,b=h=>{p||(p=!0,t.clearTimeout(X),h())},X=t.setTimeout(()=>{b(()=>d(new Error("Timed out waiting for testcase inputs to settle")))},2e3),J=()=>{if(p)return;if(!i()){b(()=>d(new Error("Testcase capture was superseded")));return}let h=fe(s,n)?o():null;if(h!==null){if(f!==null&&ce(f,h)){b(()=>u(h));return}f=h}else f=null;T()},T=()=>{p||m||(m=!0,t.requestAnimationFrame(()=>{m=!1,J()}))};T()})}}var pe=/class\s+Solution|def\s+\w+\s*\(|func\s+\w+|impl\s+Solution|var\s+\w+\s*=\s*function|public\s+class|^\s*(?:int|char|void|double|bool|struct)\b[^=\n]*\(/m,ge=q(document,window),j="",_=0,c=null,I=Promise.resolve(),G=!1;function me(e){e.source===window&&e.origin===location.origin&&C(e.data)&&(G=e.data.enabled)}window.addEventListener("message",me);function he(e){let n=e.cmView?.rootView?.view?.state?.doc?.toString();return typeof n=="string"?n:null}function ye(){for(let e of document.querySelectorAll(".cm-content")){let t=he(e);if(t!==null&&pe.test(t))return t}return""}function D(){return location.pathname.match(/\/problems\/([^/]+)/)?.[1]??""}function _e(){try{let t=localStorage.getItem("global_lang");if(t)return JSON.parse(t)}catch{}return(document.querySelector("[id^='headlessui-listbox-button'], button[data-state]")?.textContent??"").trim().toLowerCase().replace(/[^a-z0-9+#]/g,"")||"cpp"}function be(e){window.postMessage({channel:w,type:"snapshot",payload:e},location.origin)}function we(){return _+=1,_}function Ne(e,t,n=!1){let r=D();if(!r)return;let l=we();I=I.then(async()=>{if(l!==_)return;let a=()=>l===_;c&&c.slug!==r&&(c=null);let s=c?.cases??[],i;if(n){let f=await v(ge,a);if(!a())return;let p=D();if(!p||p!==r)return;c&&c.slug!==p&&(c=null),s=f.cases,i=f.captureError;let m=c&&c.cases.length>0?c:null;i||s.length===0?m?(s=m.cases,i=void 0):i&&(s=[]):c={slug:p,cases:s}}if(e==="network"){let f=t?.cases;(!c||c.cases.length===0)&&!i&&f&&f.length>0?s=f:c&&c.cases.length>0&&(s=c.cases,i=void 0)}let u={cases:s,code:t?.code??ye(),lang:t?.lang??_e(),slug:r,source:e,at:Date.now()};i&&(u.captureError=i),t?.stdout!==void 0&&(u.stdout=t.stdout),t?.stdoutByCase!==void 0&&(u.stdoutByCase=t.stdoutByCase);let d=`${u.cases.join("")}${u.code}${u.lang}${u.captureError??""}`;e==="editor"&&d===j||(j=d,be(u))}).then(()=>{},()=>{})}function Ee(e){if(typeof e!="string")return null;try{let t=JSON.parse(e);return typeof t.data_input!="string"?null:{cases:[t.data_input],code:typeof t.typed_code=="string"?t.typed_code:void 0,lang:typeof t.lang=="string"?t.lang:void 0}}catch{return null}}var y=/\/interpret_solution\/?$|\/interpret_solution\//,E=/\/submissions\/detail\/([^/?]+)\/check\/?/,Te=new Set(["PENDING","STARTED"]),g=null;function Ce(e){return typeof e=="string"?e:e instanceof URL?e.href:e.url}function $(e){return typeof e=="object"&&e!==null?e:null}function Le(e){try{return $(JSON.parse(e))}catch{return null}}async function O(e){try{return $(await e.clone().json())}catch{return null}}function xe(e){let t=e?.interpret_id;return typeof t=="string"&&t.length>0?t:void 0}function U(e){g={override:Ee(e)??void 0}}function B(e){let t=xe(e);t&&g&&(g.id=t)}function F(e,t){if(!g)return;let n=t?.state;if(typeof n!="string"||Te.has(n))return;let r=E.exec(e)?.[1];if(g.id&&r!==g.id)return;let l={...g.override},o=S(t);o!==void 0&&(l.stdout=o);let a=k(t);a!==void 0&&(l.stdoutByCase=a),g=null,Ne("network",l,!0)}function V(e){let t=G?L(e):null;return{remember:e,send:t?t.body:e}}function Se(){let e=window.fetch;window.fetch=function(o,a){let s=Ce(o),i=a;try{if(y.test(s)){let d=V(a?.body);U(d.remember),d.send!==a?.body&&a&&(i={...a,body:d.send})}}catch{}let u=e.call(this,o,i);return u.then(async d=>{if(y.test(s)){B(await O(d));return}E.test(s)&&F(s,await O(d))}).catch(()=>{}),u};let t=XMLHttpRequest.prototype.open,n=XMLHttpRequest.prototype.send,r=new WeakMap;XMLHttpRequest.prototype.open=function(o,a,...s){return r.set(this,String(a)),t.call(this,o,a,...s)},XMLHttpRequest.prototype.send=function(o){let a=r.get(this)??"",s=o;try{if(y.test(a)){let i=V(o);U(i.remember),s=i.send}}catch{}return(y.test(a)||E.test(a))&&this.addEventListener("load",()=>{try{let i=Le(String(this.responseText??""));y.test(a)?B(i):F(a,i)}catch{}},{once:!0}),n.call(this,s??null)}}Se();})();
+__graphy_install(globals())
+`;function be(e){return e.includes(L)?e:`${e.replace(/\s+$/,"")}
+${Te}`}function B(e){if(typeof e!="string")return null;try{let t=JSON.parse(e);if(typeof t!="object"||t===null)return null;let n={...t},r=n.typed_code;return typeof r!="string"||n.lang!=="python3"||r.includes(L)?null:JSON.stringify({...n,typed_code:be(r)})}catch{return null}}var Ee="QD_TESTCASE_CACHE_",$="query($titleSlug: String!) { question(titleSlug: $titleSlug) { exampleTestcaseList metaData } }";function a(e){return typeof e=="object"&&e!==null&&!Array.isArray(e)?e:null}function Q(e){if(typeof e=="string")try{return JSON.parse(e)}catch{return}}function v(e){return e.map(t=>t.trim()).join(`
+`)}function K(e){return v(e.trim().split(/\r?\n/))}function xe(e){let t=a(e);return typeof t?.name=="string"&&t.name.length>0&&t.name.length<=128&&typeof t.type=="string"&&t.type.length>0&&t.type.length<=128}function Re(e){let t=a(Q(e));if(!t)return null;if(t.systemdesign===!0)return{lineCount:2};let n=t.params;return!Array.isArray(n)||n.length===0||n.length>32||!n.every(xe)?null:{lineCount:n.length,params:n.map(({name:r,type:s})=>({name:r,type:s}))}}function Le(e){return Array.isArray(e)?e.filter(t=>typeof t=="string").map(K).slice(0,64):[]}function W(e){let t=Re(e.metaData),n={cases:Le(e.exampleTestcaseList),lineCount:t?.lineCount??null};return t?.params&&(n.params=t.params),n}function J(e,t){let n=a(a(a(a(e)?.props)?.pageProps)?.dehydratedState)?.queries;if(!Array.isArray(n))return null;for(let r of n){let s=a(r),o=s?.queryKey;if(!Array.isArray(o)||o[0]!=="questionDetail"||a(o[1])?.titleSlug!==t)continue;let i=a(a(a(s?.state)?.data)?.question);if(i)return{exampleTestcaseList:i.exampleTestcaseList,metaData:i.metaData}}return null}function Y(e){let t=a(a(a(e)?.data)?.question);return t?{exampleTestcaseList:t.exampleTestcaseList,metaData:t.metaData}:null}function V(e){return Ee+e}function Z(e,t){if(e===null)return null;let n=Q(e);if(!Array.isArray(n)||n.length===0||n.length>64)return null;let r=[];for(let s of n){if(!Array.isArray(s)||s.length===0||!s.every(o=>typeof o=="string")||t!==null&&s.length!==t||s.some(o=>/[\r\n]/.test(o)))return null;r.push(v(s))}return r}function Me(e,t){if(e.length===0||e.length%t!==0)return null;let n=[];for(let r=0;r<e.length;r+=t)n.push(v(e.slice(r,r+t)));return n}function ee(e,t){if(e.trim()==="")return null;let n=e.split(/\r?\n/);for(;n.at(-1)?.trim()==="";)n.pop();return((t!==null&&t>0?Me(n,t):null)??[K(e)]).slice(0,64)}function re(e){if(!e)return;let t=te(e.code_output);if(t!==void 0)return t;let n=te(e.std_output_list);if(n!==void 0)return n;if(typeof e.std_output=="string"&&e.std_output.length>0&&e.std_output.length<=262144)return e.std_output}function se(e){if(!e)return;let t=e.std_output_list;if(!(!Array.isArray(t)||t.length===0||t.length>64)&&t.every(n=>typeof n=="string"&&n.length<=262144))return t}function te(e){if(typeof e=="string"&&e.length>0&&e.length<=262144)return e;if(Array.isArray(e)){if(e.length>64)return;let t=0,n=[];for(let r of e){if(typeof r!="string"||(t+=r.length,t+Math.max(0,n.length-1)>262144))return;n.push(r)}return n.length===0?void 0:n.join(`
+`)}}var He=/class\s+Solution|def\s+\w+\s*\(|func\s+\w+|impl\s+Solution|var\s+\w+\s*=\s*function|public\s+class|^\s*(?:int|char|void|double|bool|struct)\b[^=\n]*\(/m,qe="Couldn't load this problem's testcases. Press Run to capture them.",Oe="This testcase is too large to draw.",Xe="cpp",De=1e4,k=/\/interpret_solution\/?$|\/interpret_solution\//,S=/\/submissions\/detail\/([^/?]+)\/check\/?/,Ge=new Set(["PENDING","STARTED"]),Fe=32,u=null,ae=!1,l=!1,oe=0,c=new Map,f=new Map;function Ue(e){if(e.source===window&&e.origin===location.origin&&F(e.data)){if(e.data.type==="trace"){ae=e.data.enabled;return}e.data.enabled?yt():mt()}}window.addEventListener("message",Ue);function je(e){let n=e.cmView?.rootView?.view?.state?.doc?.toString();return typeof n=="string"?n:null}function H(){for(let e of document.querySelectorAll(".cm-content")){let t=je(e);if(t!==null&&He.test(t))return t}return""}function ue(){let e=location.pathname.match(/\/problems\/([^/]+)/)?.[1]??"";return e.length<=128?e:""}function P(e){return typeof e=="string"&&e.length>0&&e.length<=32}function Be(){try{let e=localStorage.getItem("global_lang");return e?JSON.parse(e):void 0}catch{return}}function ze(){return(document.querySelector("[id^='headlessui-listbox-button'], button[data-state]")?.textContent??"").trim().toLowerCase().replace(/[^a-z0-9+#]/g,"")}function q(e){if(P(e))return e;let t=Be();if(P(t))return t;let n=ze();return P(n)?n:Xe}function $e(e){window.postMessage({channel:h,type:"snapshot",payload:e},location.origin)}function le(){window.postMessage(G(),location.origin)}function b(e,t){e.queue=e.queue.then(()=>u===e?t():void 0).catch(()=>{})}function de(e){!l||u!==e||!e.snapshot||e.posted===e.snapshot||(e.posted=e.snapshot,$e(e.snapshot))}function A(e,t){e.snapshot=t,de(e)}function O(e,t,n,r,s){let o=n.every(p=>p.length<=65536),i={cases:o?n:[],code:r.length<=262144?r:"",lang:s,slug:e.slug,source:t,at:Date.now()};return e.params&&(i.params=e.params),o||(i.captureError=Oe),i}function Qe(e,t){return e.length===t.length&&e.every((n,r)=>n===t[r])}function Ke(){let e=window.__NEXT_DATA__;if(e!==void 0)return e;try{let t=document.getElementById("__NEXT_DATA__")?.textContent;return t?JSON.parse(t):void 0}catch{return}}function We(){return g?d:window.fetch}async function Je(e){let t=new AbortController,n=setTimeout(()=>t.abort(),De);try{let r=await We().call(window,"/graphql",{method:"POST",credentials:"same-origin",headers:{"content-type":"application/json"},body:JSON.stringify({query:$,variables:{titleSlug:e}}),signal:t.signal});return r.ok?Y(await r.json()):null}catch{return null}finally{clearTimeout(n)}}async function Ye(e){return J(Ke(),e)??await Je(e)}function ce(e,t){try{return Z(sessionStorage.getItem(V(e)),t)}catch{return null}}function Ve(e){e.loading=!0,b(e,async()=>{let t=await Ye(e.slug);if(u!==e)return;e.loading=!1;let n=t?W(t):null;if(e.loaded=n!==null,e.lineCount=n?.lineCount??null,n?.params?e.params=n.params:delete e.params,e.snapshot?.source==="network")return;let r=ce(e.slug,e.lineCount)??n?.cases??[],s=O(e,"editor",r,H(),q());r.length===0&&(s.captureError=qe),A(e,s)})}function fe(e){return u?.slug===e||(u&&le(),he(),u={slug:e,lineCount:null,loaded:!1,loading:!1,queue:Promise.resolve(),snapshot:null,posted:null,latestRun:-1}),u}function pe(e){!e.loaded&&!e.loading&&Ve(e)}function Ze(e){if(!e.loaded||!e.snapshot)return;let t=ce(e.slug,e.lineCount);if(!t)return;let n=O(e,"editor",t,H(),q());Qe(n.cases,e.snapshot.cases)||A(e,n)}function et(e){if(typeof e!="string")return null;let t=x(e);if(!t||typeof t.data_input!="string")return null;let n={dataInput:t.data_input};return typeof t.typed_code=="string"&&(n.code=t.typed_code),typeof t.lang=="string"&&(n.lang=t.lang),n}function X(e){let t=et(e),n=ue();if(!t||!n)return;let r=fe(n);pe(r);let s=oe;oe+=1;let o={sequence:s,state:r,snapshot:null};return c.set(s,o),ge(),b(r,()=>{let i=ee(t.dataInput,r.lineCount)??r.snapshot?.cases??[];o.snapshot=O(r,"network",i,t.code??H(),q(t.lang)),r.latestRun=s,A(r,o.snapshot)}),s}function tt(e){return typeof e=="string"?e:e instanceof URL?e.href:e.url}function E(e){return typeof e=="object"&&e!==null?{...e}:null}function x(e){try{return E(JSON.parse(e))}catch{return null}}async function nt(e){try{return E(await e.clone().json())}catch{return null}}function rt(e){let t=e?.interpret_id;return typeof t=="string"&&t.length>0?t:void 0}function st(){let e;for(let[t,n]of c)(!e||n.sequence<e.sequence)&&(e={map:c,key:t,sequence:n.sequence});for(let[t,n]of f)(!e||n.sequence<e.sequence)&&(e={map:f,key:t,sequence:n.sequence});e&&e.map.delete(e.key)}function ge(){for(;c.size+f.size>Fe;)st()}function he(){c.clear(),f.clear()}function ye(e,t){let n=c.get(t);if(!n)return;c.delete(t);let r=rt(e);r&&(f.set(r,n),ge())}function me(e,t){let n=t?.state;if(typeof n!="string"||Ge.has(n))return;let r=S.exec(e)?.[1];if(!r)return;let s=f.get(r);if(!s)return;f.delete(r);let o=re(t),i=se(t);b(s.state,()=>{if(!s.snapshot||s.sequence!==s.state.latestRun)return;let p={...s.snapshot,at:Date.now()};o!==void 0&&(p.stdout=o),i!==void 0&&(p.stdoutByCase=i),A(s.state,p)})}function D(e){let t=ae?B(e):null;return t===null?e:(T=!0,t)}function ot(e){try{let t=X(e?.body),n=D(e?.body);return{sequence:t,init:n!==e?.body&&e?{...e,body:n}:e}}catch{return{sequence:void 0,init:e}}}function _e(e,t){t!==void 0&&e.then(async n=>ye(await nt(n),t)).catch(()=>{})}async function it(e,t,n){let r;try{r=await t.clone().text()}catch{r=void 0}let s,o=r;try{s=X(r),o=D(r)}catch{o=r}let i;if(typeof o=="string"&&o!==r)try{i=d.call(e,new Request(t,{body:o}),n)}catch{i=void 0}return i??=d.call(e,t,n),_e(i,s),i}function at(e,t,n){if(t instanceof Request&&n?.body===void 0)return it(e,t,n);let r=ot(n),s=d.call(e,t,r.init);return _e(s,r.sequence),s}function ut(e,t){let n=new Headers(e.headers);n.delete("content-length"),n.delete("content-encoding");let r=new Response(JSON.stringify(t),{status:e.status,statusText:e.statusText,headers:n});return Object.defineProperty(r,"url",{value:e.url,configurable:!0}),Object.defineProperty(r,"redirected",{value:e.redirected,configurable:!0}),r}async function lt(e,t,n,r){let s=await d.call(e,n,r),o;try{o=x(await s.clone().text())}catch{return s}try{me(t,o)}catch{return s}let i=o?m(o):null;return i?ut(s,i):s}function dt(e,t){for(let n=Object.getPrototypeOf(e);n;n=Object.getPrototypeOf(n)){let r=Object.getOwnPropertyDescriptor(n,t);if(r)return r.get}}function w(e,t){let n=dt(e,t);return n?n.call(e):e[t]}function ct(e){let t=x(e),n=t?m(t):null;return n?JSON.stringify(n):e}function ie(e){let t;return n=>(t&&t.raw===n||(t={raw:n,clean:e(n)}),t.clean)}function ft(e){let t=ie(ct),n=ie(r=>{if(typeof r=="string")return t(r);let s=E(r);return(s&&m(s))??r});try{Object.defineProperty(e,"responseText",{configurable:!0,get(){let r=w(e,"responseText");return typeof r=="string"?t(r):r}}),Object.defineProperty(e,"response",{configurable:!0,get(){let r=w(e,"response");return e.responseType===""||e.responseType==="text"||e.responseType==="json"?n(r):r}})}catch{return}}function pt(e){if(e.responseType==="json")return E(w(e,"response"));if(e.responseType===""||e.responseType==="text"){let t=w(e,"responseText");return typeof t=="string"?x(t):null}return null}var g=!1,T=!1,d,C,N,I=new WeakMap;function gt(){g||(d=window.fetch,window.fetch=function(t,n){let r=tt(t);return S.test(r)&&(l||T)?lt(this,r,t,n):l&&k.test(r)?at(this,t,n):d.call(this,t,n)},C=XMLHttpRequest.prototype.open,N=XMLHttpRequest.prototype.send,I=new WeakMap,XMLHttpRequest.prototype.open=function(t,n,...r){return I.set(this,String(n)),C.call(this,t,n,...r)},XMLHttpRequest.prototype.send=function(t){let n=I.get(this)??"";if(S.test(n)&&(l||T)&&ft(this),!l)return N.call(this,t);let r=t,s;try{k.test(n)&&(s=X(t),r=D(t))}catch{r=t}return(k.test(n)||S.test(n))&&this.addEventListener("load",()=>{try{let o=pt(this);k.test(n)?s!==void 0&&ye(o,s):me(n,o)}catch{return}},{once:!0}),N.call(this,r??null)},g=!0)}function ht(){g&&(window.fetch=d,XMLHttpRequest.prototype.open=C,XMLHttpRequest.prototype.send=N,g=!1)}function yt(){let e=ue();if(!e||l&&u?.slug===e)return;l=!0,gt();let t=fe(e);pe(t),b(t,()=>{Ze(t),de(t)})}function mt(){l&&(l=!1,he(),T||ht(),u&&(u.posted=null),le())}})();

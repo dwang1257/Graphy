@@ -1,5 +1,4 @@
 export interface SigParam {
-  /** Raw declared type, or "" when the language is untyped and JSDoc is absent. */
   type: string;
   name: string;
 }
@@ -9,7 +8,6 @@ export interface Signature {
   params: SigParam[];
 }
 
-/** Language slugs as LeetCode reports them. */
 type Lang =
   | "cpp"
   | "java"
@@ -31,15 +29,9 @@ const IDENTIFIER = /^[A-Za-z_]\w*$/;
 
 const SKIP_METHODS = new Set([
   "main", "Solution", "init", "__init__", "new",
-  // C-style patterns also match control flow; these are never the solution method.
   "if", "for", "while", "switch", "catch", "return", "else", "do",
 ]);
 
-/**
- * Pulls the solution method's parameter list out of the editor buffer. Returns
- * null for design problems (`LRUCache`) and anything we cannot parse - callers
- * fall back to shape heuristics.
- */
 export function parseSignature(code: string, lang: string): Signature | null {
   const source = stripComments(code, lang);
   const candidates = signatureCandidates(source, lang as Lang);
@@ -90,7 +82,6 @@ const PATTERNS: Partial<Record<Lang, RegExp[]>> = {
   ],
 };
 
-/** Splits on top-level commas so `Map<int, int> m` stays intact. */
 function splitParams(list: string): string[] {
   const out: string[] = [];
   let depth = 0;
@@ -114,7 +105,6 @@ const TRAILING_NAME = /([A-Za-z_]\w*)\s*$/;
 function splitTypeAndName(param: string, lang: Lang): SigParam {
   const text = param.replace(/=.*$/, "").trim();
 
-  // `name: Type` languages.
   if (lang === "python" || lang === "python3" || lang === "typescript" ||
       lang === "swift" || lang === "kotlin" || lang === "scala" || lang === "rust") {
     const colon = text.indexOf(":");
@@ -123,13 +113,11 @@ function splitTypeAndName(param: string, lang: Lang): SigParam {
     return { type: text.slice(colon + 1).trim(), name };
   }
 
-  // Go declares `edges [][]int`.
   if (lang === "golang") {
     const parts = text.split(/\s+/);
     return { type: parts.slice(1).join(" "), name: parts[0] ?? "" };
   }
 
-  // `Type name` languages; C-style arrays may sit on either side.
   const match = TRAILING_NAME.exec(text.replace(/\[\s*\]\s*$/, ""));
   if (!match) return { type: text, name: "" };
   const name = match[1]!;
@@ -139,7 +127,6 @@ function splitTypeAndName(param: string, lang: Lang): SigParam {
 
 const JSDOC_PARAM = /@param\s*\{([^}]+)\}\s*(\w+)/g;
 
-/** JavaScript templates carry their types only in the JSDoc block above. */
 function withJsDocTypes(params: SigParam[], code: string): SigParam[] {
   if (params.every((p) => p.type !== "")) return params;
   const types = new Map<string, string>();

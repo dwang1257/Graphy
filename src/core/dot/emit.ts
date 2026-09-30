@@ -1,4 +1,5 @@
 import type { GEdge, GNode, GraphModel, MatrixData } from "../types.js";
+import { gridPaneOf } from "../scene.js";
 import { contrastInkFromCss } from "../../panel/imageInk.js";
 import type { Layout, Palette } from "../../settings/schema.js";
 
@@ -46,31 +47,32 @@ export function emitDot(model: GraphModel, options: EmitOptions): string {
     })}];`,
   ];
 
-  if (model.matrix) {
-    lines.push(`  m [${attrs({ shape: "plaintext", style: "", label: html(matrixTable(model.matrix, options)) })}];`);
-  } else {
-    if (model.nodes.length === 0) {
-      lines.push(`  empty [${attrs({
-        shape: "plaintext",
-        style: "",
-        label: "∅",
-        fontcolor: palette.terminalText,
-        fontsize: (layout.fontSize + 2) * s,
-      })}];`);
-    }
-    for (const node of model.nodes) lines.push(`  ${nodeLine(node, options)}`);
-    for (const edge of model.edges) lines.push(`  ${edgeLine(edge, model.directed, options)}`);
-    for (const group of model.ranks) {
-      if (group.ids.length >= 2) lines.push(`  { rank=same; ${group.ids.map(id).join(" ")} }`);
-    }
+  if (model.nodes.length === 0) {
+    lines.push(`  empty [${attrs({
+      shape: "plaintext",
+      style: "",
+      label: "∅",
+      fontcolor: palette.terminalText,
+      fontsize: (layout.fontSize + 2) * s,
+    })}];`);
+  }
+  const ranked = new Set(model.ranks.flatMap((group) => group.ids));
+  for (const node of model.nodes) lines.push(`  ${nodeLine(node, options, ranked.has(node.id))}`);
+  for (const edge of model.edges) lines.push(`  ${edgeLine(edge, model.directed, options)}`);
+  for (const group of model.ranks) {
+    if (group.ids.length >= 2) lines.push(`  { rank=same; ${group.ids.map(id).join(" ")} }`);
   }
 
   lines.push("}");
   return lines.join("\n");
 }
 
-function nodeLine(node: GNode, { palette, layout }: EmitOptions): string {
+function nodeLine(node: GNode, options: EmitOptions, ranked: boolean): string {
+  const { palette, layout } = options;
   const { nodeSize } = layout;
+  if (node.matrix) {
+    return `${id(node.id)} [${attrs({ shape: "plaintext", style: "", label: html(matrixTable(node.matrix, gridPaneOf(node.id) ?? "a", options)) })}];`;
+  }
   const base: Record<string, string | number | undefined> = { label: node.label };
   switch (node.role) {
     case "root":
@@ -92,12 +94,25 @@ function nodeLine(node: GNode, { palette, layout }: EmitOptions): string {
           : { style: "invis" },
       );
       break;
+    case "title":
+      Object.assign(base, {
+        shape: "plaintext",
+        style: "",
+        fontcolor: palette.edgeText,
+        fontsize: Math.max(8, layout.fontSize - 3) * nodeSize,
+        height: 0,
+        margin: 0,
+      }, ranked ? { width: 0 } : { fixedsize: "true" });
+      break;
     case "terminal":
       Object.assign(base, {
         shape: "plaintext",
         style: "",
         fontcolor: palette.terminalText,
         fontsize: (layout.fontSize + 2) * nodeSize,
+        width: 0,
+        height: 0,
+        margin: 0,
       });
       break;
   }
@@ -106,6 +121,7 @@ function nodeLine(node: GNode, { palette, layout }: EmitOptions): string {
 
 function edgeLine(edge: GEdge, directed: boolean, { palette, layout }: EmitOptions): string {
   const base: Record<string, string | number | undefined> = { label: edge.label };
+  if ("constraint" in edge && edge.constraint === false) base.constraint = "false";
   if (edge.role === "spine") Object.assign(base, { style: "invis", weight: 10 });
   else if (edge.role === "null") {
     Object.assign(base, layout.showNullChildren
@@ -123,7 +139,7 @@ function edgeLine(edge: GEdge, directed: boolean, { palette, layout }: EmitOptio
   return `${id(edge.from)} ${directed ? "->" : "--"} ${id(edge.to)} [${attrs(base)}];`;
 }
 
-function matrixTable(matrix: MatrixData, { palette, layout }: EmitOptions): string {
+function matrixTable(matrix: MatrixData, pane: string, { palette, layout }: EmitOptions): string {
   const s = layout.nodeSize;
   const cellSize = Math.round(26 * s);
   const cellFontSize = layout.fontSize * s;
@@ -145,7 +161,7 @@ function matrixTable(matrix: MatrixData, { palette, layout }: EmitOptions): stri
       }
       const fill = cell.filled ? palette.cellFill : palette.cellEmptyFill;
       tds.push(
-        `<TD HREF="graphy://cell/${r}/${c}" BGCOLOR="${esc(fill)}" WIDTH="${cellSize}" HEIGHT="${cellSize}" ALIGN="CENTER">` +
+        `<TD HREF="graphy://cell/${pane}/${r}/${c}" BGCOLOR="${esc(fill)}" WIDTH="${cellSize}" HEIGHT="${cellSize}" ALIGN="CENTER">` +
         `<FONT COLOR="${esc(palette.cellText)}" POINT-SIZE="${cellFontSize}">${htmlText(cell.text)}</FONT></TD>`,
       );
     }

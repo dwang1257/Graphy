@@ -2,15 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks"
 import type { JSX } from "preact";
 
 import { clampCaseIndex } from "../core/cases.js";
-import { stdoutForCase } from "../core/traceCases.js";
+import { traceTextForCase } from "../core/traceCases.js";
 import { buildPanes } from "../core/build.js";
-import { emitDot } from "../core/dot/emit.js";
-import { parseSignature } from "../core/signature.js";
-import { framesFromStdout, type TraceFrame } from "../core/trace.js";
-import { canonicalizeLinks, supportsTopologyMorph } from "../core/topology.js";
-import { applyTopology } from "../core/treeModel.js";
-import { withListAllocs } from "../core/parse/linkedList.js";
-import { EMPTY_STAGE_COPY, isEmptyStage, isTooLarge, tooLargeCopy } from "./emptyStage.js";
+import { parseSignature, type Signature } from "../core/signature.js";
+import { EMPTY_TRACE, buildTrace } from "../core/trace.js";
+import { EMPTY_CUSTOM_COPY, EMPTY_STAGE_COPY, isEmptyStage, isTooLarge, tooLargeCopy } from "./emptyStage.js";
 import { visibleNodeCount, type StructureKind } from "../core/types.js";
 import { useStructureKind } from "./useStructureKind.js";
 import { DEFAULT_SETTINGS, type Settings } from "../settings/schema.js";
@@ -23,6 +19,7 @@ import {
   saveOverrides,
   savePrivacyNoticeDismissed,
   saveSettings,
+  withOverrideKind,
   type Override,
 } from "../settings/storage.js";
 import { PANEL_CHANNEL, isToPanel, type FromPanel, type Snapshot } from "../shared/protocol.js";
@@ -31,32 +28,35 @@ import { SETTINGS_DOT_DEBOUNCE_MS, dotStyleKey } from "./dotStyle.js";
 import { GraphView } from "./GraphView.js";
 import { SettingsDrawer } from "./SettingsDrawer.js";
 import { PrivacyNotice } from "./privacyNotice.js";
-import { CaseTabs } from "./CaseTabs.js";
+import { CUSTOM_CASE, CaseTabs, caseTabId, type CaseSelection, type CaseTabActivation } from "./CaseTabs.js";
+import { CustomInput } from "./CustomInput.js";
+import {
+  EMPTY_CUSTOM_CASE,
+  addField,
+  canAddField,
+  customFields,
+  customInput,
+  customKinds,
+  pasteValues,
+  removeField,
+  setFieldKind,
+  setFieldValue,
+  type CustomCase,
+} from "./customCase.js";
 import { inkFromDataUrl } from "./imageInk.js";
+import { compactSettingsImages } from "./imageUpload.js";
 import { stageBackgroundStyle, stageInkVars } from "./stageBackground.js";
 import { TitleBar } from "./TitleBar.js";
 import { TracePlayback } from "./TracePlayback.js";
-import { preload, renderDot } from "./graphviz.js";
+import { useSceneRender } from "./useSceneRender.js";
+import { preload } from "./graphviz.js";
 import { detectParentOrigin, isAllowedParentOrigin } from "./parentOrigin.js";
 
 const PARENT_ORIGIN = detectParentOrigin();
-const MAX_TOPOLOGY_LAYOUTS = 40;
 
-function frameLayoutKey(frame: TraceFrame): string {
-  return `${canonicalizeLinks(frame.links)}#${frame.allocs.map((n) => n.id).join(",")}`;
-}
-
-function frameTopoKey(frame: TraceFrame | null | undefined): string {
-  return frame && Object.keys(frame.links).length > 0 ? frameLayoutKey(frame) : "";
-}
-
-function svgForFrame(
-  frame: TraceFrame | null | undefined,
-  topologySvgs: Record<string, string>,
-  fallback: string,
-): string {
-  const key = frameTopoKey(frame);
-  return (key && topologySvgs[key]) || fallback;
+function signatureOf(snapshot: Snapshot): Signature | null {
+  if (snapshot.params && snapshot.params.length > 0) return { method: "", params: snapshot.params };
+  return parseSignature(snapshot.code, snapshot.lang);
 }
 
 function toHost(message: FromPanel): void {
@@ -68,10 +68,9 @@ export function App(): JSX.Element {
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [showSettings, setShowSettings] = useState(false);
-  const [activeCase, setActiveCase] = useState(0);
-  const [svg, setSvg] = useState("");
-  const [topologySvgs, setTopologySvgs] = useState<Record<string, string>>({});
-  const [error, setError] = useState<string | null>(null);
+  const [activeCase, setActiveCase] = useState<CaseSelection>(0);
+  const [customCases, setCustomCases] = useState<Record<string, CustomCase>>({});
+  const [customFocusRequest, setCustomFocusRequest] = useState(0);
   const [fitCount, setFitCount] = useState(0);
   const [overrides, setOverrides] = useState<Record<string, Override>>({});
   const [traceIndex, setTraceIndex] = useState(0);
@@ -79,19 +78,25 @@ export function App(): JSX.Element {
   const [shrunk, setShrunk] = useState(false);
   const [stageImageInk, setStageImageInk] = useState<string | null>(null);
   const [showPrivacyNotice, setShowPrivacyNotice] = useState(true);
-  const prevTraceIndex = useRef(0);
 
-  const liveUpdate = useRef(true);
-  liveUpdate.current = settings.liveUpdate;
-  const hasRendered = useRef(false);
   const lastSaved = useRef("");
   const saveTimer = useRef<number | undefined>(undefined);
   const lastSlug = useRef("");
   const sawHostShrunk = useRef(false);
+  const customFieldRef = useRef<HTMLTextAreaElement>(null);
+  const statusbarRef = useRef<HTMLDivElement>(null);
+  const [statusbarHeight, setStatusbarHeight] = useState(0);
 
   useEffect(() => {
     preload();
-    void loadSettings().then(setSettings);
+    void loadSettings().then(async (loaded) => {
+      setSettings(loaded);
+      const compacted = await compactSettingsImages(loaded);
+      if (compacted === loaded) return;
+      setSettings(compacted);
+      lastSaved.current = JSON.stringify(compacted);
+      void saveSettings(compacted);
+    });
     void loadOverrides().then(setOverrides);
     void loadPanelState().then((state) => {
       if (!sawHostShrunk.current) setShrunk(state.shrunk);
@@ -112,25 +117,13 @@ export function App(): JSX.Element {
         return;
       }
       if (data.type === "clear") {
-        hasRendered.current = false;
         setSnapshot(null);
-        setError(null);
         setActiveCase(0);
         setTraceIndex(0);
         setTracePlaying(false);
-        setSvg("");
-        setTopologySvgs({});
         return;
       }
-      if (data.payload.source === "editor" && !liveUpdate.current && hasRendered.current) return;
-      setSnapshot((prev) => {
-        const next = data.payload;
-        if (next.source !== "editor") return next;
-        const stdout = next.stdout ?? prev?.stdout;
-        const stdoutByCase = next.stdoutByCase ?? prev?.stdoutByCase;
-        if (stdout === next.stdout && stdoutByCase === next.stdoutByCase) return next;
-        return { ...next, stdout, stdoutByCase };
-      });
+      setSnapshot(data.payload);
     };
 
     window.addEventListener("message", onMessage);
@@ -147,52 +140,77 @@ export function App(): JSX.Element {
 
   const slug = snapshot?.slug ?? "";
   const cases = snapshot?.cases ?? [];
-  const caseIndex = clampCaseIndex(activeCase, cases.length);
-  const caseInput = cases[caseIndex] ?? "";
+  const customCase = customCases[slug] ?? EMPTY_CUSTOM_CASE;
+  const caseIndex = activeCase === CUSTOM_CASE ? null : clampCaseIndex(activeCase, cases.length);
+  const tabSelection: CaseSelection | null =
+    caseIndex === null ? CUSTOM_CASE : cases.length > 0 ? caseIndex : null;
 
   useEffect(() => {
     if (slug === lastSlug.current) return;
     lastSlug.current = slug;
-    setActiveCase(0);
+    setActiveCase((prev) => (prev === CUSTOM_CASE && cases.length === 0 ? prev : 0));
   }, [slug]);
+
+  useEffect(() => {
+    if (customFocusRequest > 0) customFieldRef.current?.focus();
+  }, [customFocusRequest]);
+
+  const selectCase = useCallback((selection: CaseSelection, activation: CaseTabActivation) => {
+    setActiveCase(selection);
+    if (selection === CUSTOM_CASE && activation === "click") setCustomFocusRequest((n) => n + 1);
+  }, []);
+
+  const updateCustomCase = useCallback(
+    (update: (current: CustomCase) => CustomCase) => {
+      setCustomCases((prev) => ({ ...prev, [slug]: update(prev[slug] ?? EMPTY_CUSTOM_CASE) }));
+    },
+    [slug],
+  );
+
+  const applyCustomDraft = useCallback(
+    () => updateCustomCase((current) => ({ ...current, applied: current.draft, revision: current.revision + 1 })),
+    [updateCustomCase],
+  );
 
   const override = overrides[slug] ?? {};
 
-  const applyOverride = useCallback((patch: Override) => {
+  const persistKind = useCallback((kind: StructureKind | undefined) => {
     if (!slug) return;
     setOverrides((prev) => {
-      const all = { ...prev, [slug]: { ...prev[slug], ...patch } };
+      const all = withOverrideKind(prev, slug, kind);
       void saveOverrides(all);
       return all;
     });
   }, [slug]);
-
-  const persistKind = useCallback(
-    (kind: StructureKind) => applyOverride({ kind }),
-    [applyOverride],
-  );
   const { selectedKind, setKind } = useStructureKind(slug, override.kind, persistKind);
 
+  const paramsKey = snapshot?.params ? JSON.stringify(snapshot.params) : "";
   const signature = useMemo(
-    () => (snapshot ? parseSignature(snapshot.code, snapshot.lang) : null),
-    [snapshot?.code, snapshot?.lang],
+    () => (snapshot ? signatureOf(snapshot) : null),
+    [snapshot?.code, snapshot?.lang, paramsKey],
   );
 
-  const result = useMemo(() => {
-    return buildPanes(caseInput, signature, {
-      override: selectedKind,
-      showTerminal: settings.layout.showListTerminal,
-      showIndices: settings.layout.showMatrixIndices,
-    });
-  }, [
-    caseInput,
-    signature,
-    selectedKind,
-    settings.layout.showListTerminal,
-    settings.layout.showMatrixIndices,
-  ]);
+  const caseInput = caseIndex === null ? customInput(customCase.applied) : cases[caseIndex] ?? "";
+  const caseKinds = useMemo(
+    () => (caseIndex === null ? customKinds(customCase.applied) : undefined),
+    [caseIndex, customCase.applied],
+  );
 
-  const pane = result.panes[0];
+  const result = useMemo(
+    () => buildPanes(caseInput, signature, {
+      override: selectedKind,
+      kinds: caseKinds,
+      showIndices: settings.layout.showMatrixIndices,
+    }),
+    [caseInput, signature, selectedKind, caseKinds, settings.layout.showMatrixIndices],
+  );
+  const panes = result.panes;
+
+  const fields = useMemo(
+    () => (caseIndex === null ? customFields(customCase.draft, signature) : []),
+    [caseIndex, customCase.draft, signature],
+  );
+
   const palette = settings[settings.mode];
 
   useEffect(() => {
@@ -207,30 +225,24 @@ export function App(): JSX.Element {
     return () => { cancelled = true; };
   }, [palette.backgroundImage]);
 
-  const scopedStdout = useMemo(
-    () => stdoutForCase(snapshot, caseIndex),
-    [snapshot, caseIndex],
+  const traceText = caseIndex === null ? "" : traceTextForCase(snapshot, caseIndex);
+  const trace = useMemo(
+    () => (traceText && panes.length > 0 ? buildTrace(traceText, panes) : EMPTY_TRACE),
+    [traceText, panes],
   );
-
-  const traceFrames = useMemo(() => {
-    if (!pane || !scopedStdout) return [];
-    return framesFromStdout(scopedStdout, pane.model);
-  }, [pane, scopedStdout]);
 
   useEffect(() => {
     setTraceIndex(0);
     setTracePlaying(false);
-    prevTraceIndex.current = 0;
-  }, [scopedStdout, pane?.id, caseIndex]);
+  }, [traceText, panes, caseIndex]);
 
-  const paneSize = pane ? visibleNodeCount(pane.model) : 0;
-  const tooLarge = !!pane && isTooLarge(paneSize);
-
+  const nodeCount = panes.reduce((total, pane) => total + visibleNodeCount(pane.model), 0);
+  const tooLarge = isTooLarge(nodeCount);
   const emptyStage = isEmptyStage({
     caseInput,
-    nodeCount: paneSize,
+    nodeCount,
     hasFailure: result.failures.length > 0,
-    hasPane: !!pane,
+    hasPane: panes.length > 0,
   });
 
   const styleKey = useMemo(
@@ -245,98 +257,22 @@ export function App(): JSX.Element {
     return () => window.clearTimeout(timer);
   }, [styleKey, debouncedStyleKey]);
 
-  const dot = useMemo(() => {
-    if (!pane || tooLarge || emptyStage) return "";
-    try {
-      return emitDot(pane.model, { palette, layout: settings.layout });
-    } catch {
-      return "";
-    }
-  }, [pane, tooLarge, emptyStage, debouncedStyleKey]);
+  const scene = useSceneRender({
+    panes,
+    trace,
+    frameIndex: traceIndex,
+    emit: { palette, layout: settings.layout },
+    styleKey: debouncedStyleKey,
+    showTerminal: settings.layout.showListTerminal,
+    enabled: panes.length > 0 && !tooLarge && !emptyStage,
+  });
 
-  const topologyKeys = useMemo(() => {
-    if (!pane?.model.links || !supportsTopologyMorph(pane.model.kind)) return [] as string[];
-    const keys = new Set<string>();
-    for (const frame of traceFrames) {
-      const key = frameTopoKey(frame);
-      if (!key) continue;
-      keys.add(key);
-      if (keys.size >= MAX_TOPOLOGY_LAYOUTS) break;
-    }
-    return [...keys];
-  }, [pane, traceFrames]);
+  const rendering = scene.baseDot !== "" && !scene.error;
 
-  useEffect(() => {
-    if (!dot) {
-      setSvg("");
-      setError(null);
-      return;
-    }
-    setError(null);
-    let cancelled = false;
-    const timer = window.setTimeout(() => {
-      renderDot(dot)
-        .then((out) => {
-          if (cancelled) return;
-          hasRendered.current = true;
-          setError(null);
-          setSvg(out);
-        })
-        .catch((cause: unknown) => {
-          if (cancelled) return;
-          setError(cause instanceof Error ? cause.message : String(cause));
-          setSvg("");
-        });
-    }, 120);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [dot]);
-
-  useEffect(() => {
-    if (!pane || tooLarge || emptyStage || topologyKeys.length === 0) {
-      setTopologySvgs({});
-      return;
-    }
-    let cancelled = false;
-    const options = { palette, layout: settings.layout };
-    void (async () => {
-      const next: Record<string, string> = {};
-      for (const key of topologyKeys) {
-        if (cancelled) return;
-        try {
-          const frame = traceFrames.find((f) => frameLayoutKey(f) === key);
-          if (!frame) continue;
-          const model = applyTopology(withListAllocs(pane.model, frame.allocs), frame.links);
-          next[key] = await renderDot(emitDot(model, options));
-        } catch {
-        }
-      }
-      if (!cancelled) setTopologySvgs(next);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [pane, tooLarge, emptyStage, topologyKeys, debouncedStyleKey, traceFrames, palette, settings.layout]);
-
-  const activeFrame = traceFrames[traceIndex] ?? null;
-  const displaySvg = svgForFrame(activeFrame, topologySvgs, svg);
-  const prevFrame = traceIndex > 0 ? traceFrames[traceIndex - 1] : null;
-  const morphFromSvg = prevFrame ? svgForFrame(prevFrame, topologySvgs, svg) : null;
-
-  const steppedForward = traceIndex === prevTraceIndex.current + 1;
-  useEffect(() => {
-    prevTraceIndex.current = traceIndex;
-  }, [traceIndex]);
-
-  const shouldMorph =
-    steppedForward &&
-    !!morphFromSvg &&
-    !!displaySvg &&
-    morphFromSvg !== displaySvg &&
-    topologyKeys.length > 0 &&
-    topologyKeys.length <= MAX_TOPOLOGY_LAYOUTS;
+  const viewKey = `${slug}:${caseIndex ?? `custom-${customCase.revision}`}:${selectedKind ?? ""}:${panes.map((pane) => pane.id).join("")}`;
+  const renderedViewKey = useRef(viewKey);
+  if (scene.renderedBaseDot === scene.baseDot) renderedViewKey.current = viewKey;
+  const fitKey = `${renderedViewKey.current}:${fitCount}`;
 
   const updateSettings = useCallback((next: Settings) => {
     setSettings(next);
@@ -352,9 +288,21 @@ export function App(): JSX.Element {
     [palette.background, palette.backgroundImage],
   );
   const panelStyle = useMemo(
-    () => ({ "--stage-bg": palette.background, ...stageInkVars(palette.background, stageImageInk) }) as JSX.CSSProperties,
-    [palette.background, stageImageInk],
+    () => ({
+      "--stage-bg": palette.background,
+      "--statusbar-height": `${statusbarHeight}px`,
+      ...stageInkVars(palette.background, stageImageInk),
+    }) as JSX.CSSProperties,
+    [palette.background, stageImageInk, statusbarHeight],
   );
+
+  useEffect(() => {
+    const el = statusbarRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => setStatusbarHeight(el.getBoundingClientRect().height));
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   return (
     <div
@@ -364,6 +312,7 @@ export function App(): JSX.Element {
       <TitleBar
         showSettings={showSettings}
         selectedKind={selectedKind}
+        detectedKinds={result.detected}
         onKindChange={setKind}
         onFit={() => setFitCount((n) => n + 1)}
         onToggleSettings={() => {
@@ -403,60 +352,72 @@ export function App(): JSX.Element {
         <div
           class="stage-area"
           id="graphy-case-panel"
-          role={cases.length > 1 ? "tabpanel" : undefined}
-          aria-labelledby={cases.length > 1 ? `graphy-case-tab-${caseIndex}` : undefined}
+          role={tabSelection === null ? undefined : "tabpanel"}
+          aria-labelledby={tabSelection === null ? undefined : caseTabId(tabSelection)}
           style={stageStyle}
         >
-          {displaySvg ? (
+          {scene.svg ? (
             <GraphView
-              svg={displaySvg}
-              fitKey={`${slug}:${caseIndex}:${pane?.id ?? ""}:${fitCount}`}
+              svg={scene.svg}
+              fitKey={fitKey}
               nodeBackgroundImage={palette.nodeBackgroundImage}
-              traceFrame={activeFrame}
-              morphFromSvg={shouldMorph ? morphFromSvg : null}
-              morph={shouldMorph}
+              traceFrame={trace.frames[traceIndex] ?? null}
+              morphFromSvg={scene.morphFromSvg}
+              morph={!!scene.morphFromSvg}
             />
           ) : (
             <>
               <div class="stage" />
-              <Placeholder
-                snapshot={snapshot}
-                error={error}
+              {!rendering && <Placeholder
+                captureError={caseIndex === null ? undefined : snapshot?.captureError}
+                emptyCopy={caseIndex === null ? EMPTY_CUSTOM_COPY : EMPTY_STAGE_COPY}
+                error={scene.error}
                 tooLarge={tooLarge}
-                nodeCount={paneSize}
+                nodeCount={nodeCount}
                 emptyStage={emptyStage}
-                failure={result.failures[0]?.reason}
-              />
+                failures={result.failures.map((failure) => failure.reason)}
+              />}
             </>
           )}
         </div>
       </div>
 
-      {(cases.length > 1 || traceFrames.length > 0) && (
-        <div class="statusbar">
-          {cases.length > 1 && (
-            <CaseTabs count={cases.length} activeIndex={caseIndex} onChange={setActiveCase} />
-          )}
-          <TracePlayback
-            frames={traceFrames}
-            index={traceIndex}
-            playing={tracePlaying}
-            onIndexChange={setTraceIndex}
-            onPlayingChange={setTracePlaying}
+      <div class="statusbar" ref={statusbarRef}>
+        <CaseTabs count={cases.length} selection={tabSelection} onChange={selectCase} />
+        {caseIndex === null && (
+          <CustomInput
+            fields={fields}
+            canAddField={canAddField(customCase.draft, signature)}
+            onValueChange={(i, value) => updateCustomCase((c) => ({ ...c, draft: setFieldValue(c.draft, i, value) }))}
+            onKindChange={(i, kind) => updateCustomCase((c) => ({ ...c, draft: setFieldKind(c.draft, i, kind) }))}
+            onPasteValues={(i, values) => updateCustomCase((c) => ({ ...c, draft: pasteValues(c.draft, i, values, signature) }))}
+            onAddField={() => updateCustomCase((c) => ({ ...c, draft: addField(c.draft) }))}
+            onRemoveField={(i) => updateCustomCase((c) => ({ ...c, draft: removeField(c.draft, i) }))}
+            onApply={applyCustomDraft}
+            inputRef={customFieldRef}
           />
-        </div>
-      )}
+        )}
+        <TracePlayback
+          frames={trace.frames}
+          truncated={trace.truncated}
+          index={traceIndex}
+          playing={tracePlaying}
+          onIndexChange={setTraceIndex}
+          onPlayingChange={setTracePlaying}
+        />
+      </div>
     </div>
   );
 }
 
 interface PlaceholderProps {
-  snapshot: Snapshot | null;
+  captureError: string | undefined;
+  emptyCopy: string;
   error: string | null;
   tooLarge: boolean;
   nodeCount: number;
   emptyStage: boolean;
-  failure: string | undefined;
+  failures: string[];
 }
 
 function Placeholder(props: PlaceholderProps): JSX.Element {
@@ -469,21 +430,21 @@ function Placeholder(props: PlaceholderProps): JSX.Element {
     );
   }
 
-  let message = props.failure ?? "This input does not look like a graph structure.";
+  let messages = props.failures.length > 0 ? props.failures : ["This input does not look like a graph structure."];
   let error = false;
-  if (props.snapshot?.captureError) {
-    message = `Case split failed. ${props.snapshot.captureError}`;
+  if (props.captureError) {
+    messages = [props.captureError];
     error = true;
   } else if (props.tooLarge) {
-    message = tooLargeCopy(props.nodeCount);
+    messages = [tooLargeCopy(props.nodeCount)];
     error = true;
   } else if (props.emptyStage) {
-    message = EMPTY_STAGE_COPY;
+    messages = [props.emptyCopy];
   }
 
   return (
     <div class={error ? "placeholder error" : "placeholder"}>
-      <p>{message}</p>
+      {messages.map((message) => <p key={message}>{message}</p>)}
     </div>
   );
 }

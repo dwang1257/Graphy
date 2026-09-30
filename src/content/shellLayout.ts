@@ -129,6 +129,20 @@ export function clampPanelSize(
   };
 }
 
+export function clampPanelBox(
+  box: { x: number; y: number; width: number; height: number },
+  viewport: { width: number; height: number },
+): { x: number; y: number; width: number; height: number } {
+  const width = Math.min(Math.max(MIN_PANEL_WIDTH, box.width), Math.max(MIN_PANEL_WIDTH, viewport.width));
+  const height = Math.min(Math.max(MIN_PANEL_HEIGHT, box.height), Math.max(MIN_PANEL_HEIGHT, viewport.height));
+  return {
+    x: Math.min(Math.max(0, box.x), Math.max(0, viewport.width - width)),
+    y: Math.min(Math.max(0, box.y), Math.max(0, viewport.height - height)),
+    width,
+    height,
+  };
+}
+
 export function resizeScale(
   from: { width: number; height: number },
   to: { width: number; height: number },

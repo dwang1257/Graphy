@@ -39,6 +39,15 @@ export function extractImages(settings: Settings): ImageAssets {
   };
 }
 
+export function sameImages(a: ImageAssets, b: ImageAssets): boolean {
+  return (
+    a.light.backgroundImage === b.light.backgroundImage &&
+    a.light.nodeBackgroundImage === b.light.nodeBackgroundImage &&
+    a.dark.backgroundImage === b.dark.backgroundImage &&
+    a.dark.nodeBackgroundImage === b.dark.nodeBackgroundImage
+  );
+}
+
 export function mergeImages(settings: Settings, images: ImageAssets): Settings {
   return {
     ...settings,
@@ -47,7 +56,6 @@ export function mergeImages(settings: Settings, images: ImageAssets): Settings {
   };
 }
 
-/** Coerce a local-storage image bag; only non-empty strings are kept. */
 export function sanitizeImageAssets(stored: unknown): ImageAssets {
   if (!stored || typeof stored !== "object") {
     return { light: { ...EMPTY_IMAGES.light }, dark: { ...EMPTY_IMAGES.dark } };

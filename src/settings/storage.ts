@@ -1,10 +1,9 @@
-import { DEFAULT_SETTINGS, type Settings } from "./schema.js";
-import { extractImages, settingsFromStores, stripImages } from "./split.js";
-import { isStructureKind } from "../core/types.js";
+import { DEFAULT_SETTINGS, withDefaults, type Settings } from "./schema.js";
+import { extractImages, sameImages, sanitizeImageAssets, settingsFromStores, stripImages, type ImageAssets } from "./split.js";
+import { isStructureKind, type StructureKind } from "../core/types.js";
 
 const SYNC_KEY = "graphy.settings";
 const LOCAL_KEY = "graphy.panel";
-/** Data URLs blow the sync quota, so photos stay on-device. */
 const IMAGES_KEY = "graphy.images";
 const PRIVACY_NOTICE_KEY = "graphy.privacyNoticeDismissed";
 
@@ -30,7 +29,6 @@ function finiteNumber(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
-/** Coerce chrome.storage payloads so a stale or partial bag cannot poison layout. */
 export function sanitizePanelState(stored: unknown): PanelState {
   const raw = stored && typeof stored === "object" ? (stored as Record<string, unknown>) : {};
   return {
@@ -43,12 +41,19 @@ export function sanitizePanelState(stored: unknown): PanelState {
   };
 }
 
+let storedImages: ImageAssets | null = null;
+
+function rememberImages(localBag: Record<string, unknown>): void {
+  storedImages = sanitizeImageAssets(localBag[IMAGES_KEY]);
+}
+
 export async function loadSettings(): Promise<Settings> {
   try {
     const [syncBag, localBag] = await Promise.all([
       chrome.storage.sync.get(SYNC_KEY),
       chrome.storage.local.get(IMAGES_KEY),
     ]);
+    rememberImages(localBag);
     return settingsFromStores(
       syncBag[SYNC_KEY],
       localBag[IMAGES_KEY],
@@ -59,18 +64,31 @@ export async function loadSettings(): Promise<Settings> {
   }
 }
 
+export async function loadAutoOpen(): Promise<boolean> {
+  try {
+    const syncBag = await chrome.storage.sync.get(SYNC_KEY);
+    return withDefaults(syncBag[SYNC_KEY]).autoOpen;
+  } catch {
+    return DEFAULT_SETTINGS.autoOpen;
+  }
+}
+
 export async function saveSettings(settings: Settings): Promise<void> {
   const compact = stripImages(settings);
   const images = extractImages(settings);
-  try {
-    await chrome.storage.local.set({ [IMAGES_KEY]: images });
-  } catch {
-    /* Image quota must not block colors. */
+  const imagesChanged = !storedImages || !sameImages(storedImages, images);
+  if (imagesChanged && await settle(() => chrome.storage.local.set({ [IMAGES_KEY]: images }))) {
+    storedImages = images;
   }
+  await settle(() => chrome.storage.sync.set({ [SYNC_KEY]: compact }));
+}
+
+async function settle(write: () => Promise<void>): Promise<boolean> {
   try {
-    await chrome.storage.sync.set({ [SYNC_KEY]: compact });
+    await write();
+    return true;
   } catch {
-    /* Quota or context teardown - the live UI already has the value. */
+    return false;
   }
 }
 
@@ -79,14 +97,12 @@ export function onSettingsChanged(handler: (settings: Settings) => void): () => 
     changes: Record<string, chrome.storage.StorageChange>,
     area: string,
   ): void => {
-    // Compact sync writes null images; overlay local so photos are not wiped.
-    // Ignore local image events — a same-tab save writes local first, and
-    // applying that against still-old sync would flash previous colors.
     const syncChange = changes[SYNC_KEY];
     if (area !== "sync" || !syncChange) return;
     const syncValue = syncChange.newValue;
     void chrome.storage.local.get(IMAGES_KEY).then(
       (localBag) => {
+        rememberImages(localBag);
         handler(
           settingsFromStores(
             syncValue,
@@ -104,7 +120,6 @@ export function onSettingsChanged(handler: (settings: Settings) => void): () => 
   return () => chrome.storage.onChanged.removeListener(listener);
 }
 
-/** Geometry is per-device, so it stays out of the synced quota. */
 export async function loadPanelState(): Promise<PanelState> {
   try {
     const bag = await chrome.storage.local.get(LOCAL_KEY);
@@ -115,20 +130,15 @@ export async function loadPanelState(): Promise<PanelState> {
 }
 
 export async function savePanelState(state: PanelState): Promise<void> {
-  try {
-    await chrome.storage.local.set({ [LOCAL_KEY]: state });
-  } catch {
-    /* Quota or context teardown - geometry is not worth surfacing. */
-  }
+  await settle(() => chrome.storage.local.set({ [LOCAL_KEY]: state }));
 }
 
 const OVERRIDE_KEY = "graphy.overrides";
 
 export interface Override {
-  kind?: string;
+  kind?: StructureKind;
 }
 
-/** Manual corrections stick per problem, so a bad guess is fixed only once. */
 export async function loadOverrides(): Promise<Record<string, Override>> {
   try {
     const bag = await chrome.storage.local.get(OVERRIDE_KEY);
@@ -141,9 +151,10 @@ export async function loadOverrides(): Promise<Record<string, Override>> {
 export function sanitizeOverrides(stored: unknown): Record<string, Override> {
   if (!stored || typeof stored !== "object" || Array.isArray(stored)) return {};
   const out: Record<string, Override> = {};
-  for (const [slug, raw] of Object.entries(stored)) {
+  const entries: Array<[string, unknown]> = Object.entries(stored);
+  for (const [slug, raw] of entries) {
     if (!slug || slug.length > 128 || !raw || typeof raw !== "object" || Array.isArray(raw)) continue;
-    const kind = (raw as Record<string, unknown>).kind;
+    const kind = "kind" in raw ? raw.kind : undefined;
     if (isStructureKind(kind)) out[slug] = { kind };
   }
   return out;
@@ -151,11 +162,18 @@ export function sanitizeOverrides(stored: unknown): Record<string, Override> {
 
 export async function saveOverrides(all: Record<string, Override>): Promise<void> {
   const compact = sanitizeOverrides(all);
-  try {
-    await chrome.storage.local.set({ [OVERRIDE_KEY]: compact });
-  } catch {
-    /* Same - not worth surfacing. */
-  }
+  await settle(() => chrome.storage.local.set({ [OVERRIDE_KEY]: compact }));
+}
+
+export function withOverrideKind(
+  all: Readonly<Record<string, Override>>,
+  slug: string,
+  kind: StructureKind | undefined,
+): Record<string, Override> {
+  const next = { ...all };
+  if (kind) next[slug] = { ...next[slug], kind };
+  else delete next[slug];
+  return next;
 }
 
 export async function loadPrivacyNoticeDismissed(): Promise<boolean> {
@@ -168,8 +186,5 @@ export async function loadPrivacyNoticeDismissed(): Promise<boolean> {
 }
 
 export async function savePrivacyNoticeDismissed(): Promise<void> {
-  try {
-    await chrome.storage.local.set({ [PRIVACY_NOTICE_KEY]: true });
-  } catch {
-  }
+  await settle(() => chrome.storage.local.set({ [PRIVACY_NOTICE_KEY]: true }));
 }

@@ -1,64 +1,68 @@
 import { PANEL_CHANNEL, isPageMessage, type Snapshot } from "../shared/protocol.js";
-import { loadSettings } from "../settings/storage.js";
+import { loadAutoOpen } from "../settings/storage.js";
 import { PanelHost } from "./host.js";
 import { notifyPageHooks, notifyPageTrace } from "./pageTrace.js";
 
 const PROBLEM_PATH = /^\/problems\/[^/]+/;
 
 let host: PanelHost | null = null;
-let lastSnapshot: Snapshot | null = null;
-let pageScriptInjected = false;
-let pageHooksDesired = false;
+let pageScript: "absent" | "loading" | "loaded" = "absent";
+let pageWorkEnabled = false;
 
-/**
- * The capture script must run in the page world to reach CodeMirror's view
- * instances and patch `fetch`, so it is injected as a real <script> tag rather
- * than declared as a content script.
- */
+function notifyPageWork(): void {
+  notifyPageTrace(pageWorkEnabled);
+  notifyPageHooks(pageWorkEnabled);
+}
+
 function injectPageScript(): void {
-  if (pageScriptInjected) return;
-  pageScriptInjected = true;
+  pageScript = "loading";
   const script = document.createElement("script");
   script.src = chrome.runtime.getURL("injected.js");
   script.async = false;
   script.addEventListener("load", () => {
     script.remove();
-    notifyPageHooks(pageHooksDesired);
+    pageScript = "loaded";
+    notifyPageWork();
   });
   (document.head ?? document.documentElement).prepend(script);
 }
 
-function setPageHooks(enabled: boolean): void {
-  pageHooksDesired = enabled;
-  if (!enabled && !pageScriptInjected) return;
-  if (!pageScriptInjected) injectPageScript();
-  else notifyPageHooks(enabled);
+function setPageWork(enabled: boolean): void {
+  pageWorkEnabled = enabled;
+  if (pageScript === "loaded") notifyPageWork();
+  else if (pageScript === "absent" && enabled) injectPageScript();
 }
 
 function onProblemPage(): boolean {
   return PROBLEM_PATH.test(location.pathname);
 }
 
+function syncPageWork(): void {
+  setPageWork(host?.isOpen === true);
+}
+
 function mount(): void {
   if (host) return;
-  host = new PanelHost(chrome.runtime.getURL("src/panel/index.html"));
-  if (lastSnapshot) forward(lastSnapshot);
+  host = new PanelHost(chrome.runtime.getURL("src/panel/index.html"), {
+    onOpenChange: () => syncPageWork(),
+  });
   const created = host;
-  void Promise.all([created.restored, loadSettings()]).then(([, settings]) => {
+  void Promise.all([created.restored, loadAutoOpen()]).then(([, autoOpen]) => {
     if (host !== created) return;
-    if (settings.autoOpen || created.isOpen) created.open();
-    notifyPageTrace(created.isOpen);
+    if (autoOpen && !created.isOpen) created.open();
+    syncPageWork();
   });
 }
 
 function unmount(): void {
-  notifyPageTrace(false);
+  setPageWork(false);
   host?.destroy();
   host = null;
 }
 
 function forward(snapshot: Snapshot): void {
-  host?.send({ channel: PANEL_CHANNEL, type: "snapshot", payload: snapshot });
+  if (!host?.isOpen) return;
+  host.send({ channel: PANEL_CHANNEL, type: "snapshot", payload: snapshot });
 }
 
 function clearPanel(): void {
@@ -70,13 +74,8 @@ window.addEventListener("message", (event) => {
   if (event.origin !== location.origin) return;
   const data: unknown = event.data;
   if (!isPageMessage(data)) return;
-  if (data.type === "clear") {
-    lastSnapshot = null;
-    clearPanel();
-    return;
-  }
-  lastSnapshot = data.payload;
-  forward(data.payload);
+  if (data.type === "clear") clearPanel();
+  else forward(data.payload);
 });
 
 chrome.runtime.onMessage.addListener((message: { type?: string }) => {
@@ -85,45 +84,26 @@ chrome.runtime.onMessage.addListener((message: { type?: string }) => {
   else host.toggle();
 });
 
-// LeetCode is a client-routed SPA, so `document_start` fires only on hard loads.
 function watchNavigation(): void {
   let path = location.pathname;
-  const check = (): void => {
+  navigation.addEventListener("currententrychange", () => {
     if (location.pathname === path) return;
     path = location.pathname;
-    lastSnapshot = null;
-    clearPanel();
     if (onProblemPage()) {
       mount();
-      setPageHooks(true);
+      syncPageWork();
     } else {
-      setPageHooks(false);
+      clearPanel();
       unmount();
     }
-  };
-  const patch = <K extends "pushState" | "replaceState">(key: K): void => {
-    const native = history[key];
-    history[key] = function wrapped(this: History, ...args: Parameters<History[K]>) {
-      const result = (native as (...a: unknown[]) => unknown).apply(this, args);
-      queueMicrotask(check);
-      return result;
-    } as History[K];
-  };
-  patch("pushState");
-  patch("replaceState");
-  window.addEventListener("popstate", check);
-  window.setInterval(check, 1000);
+  });
 }
 
 function start(): void {
-  if (onProblemPage()) {
-    mount();
-    setPageHooks(true);
-  }
+  if (onProblemPage()) mount();
   watchNavigation();
 }
 
-// Mounting waits for <body> so the injected host never disturbs hydration.
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", start, { once: true });
 } else {

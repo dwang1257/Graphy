@@ -7,7 +7,6 @@ describe("withDefaults", () => {
     const settings = withDefaults({
       mode: "sepia",
       autoOpen: "yes",
-      liveUpdate: 1,
       layout: {
         nodeShape: "not-a-shape",
         edgeStyle: 7,
@@ -22,7 +21,6 @@ describe("withDefaults", () => {
 
     expect(settings.mode).toBe(DEFAULT_SETTINGS.mode);
     expect(settings.autoOpen).toBe(DEFAULT_SETTINGS.autoOpen);
-    expect(settings.liveUpdate).toBe(DEFAULT_SETTINGS.liveUpdate);
     expect(settings.layout.nodeShape).toBe(DEFAULT_LAYOUT.nodeShape);
     expect(settings.layout.edgeStyle).toBe(DEFAULT_LAYOUT.edgeStyle);
     expect(settings.layout.splines).toBe(DEFAULT_LAYOUT.splines);

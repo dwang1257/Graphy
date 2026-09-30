@@ -1,5 +1,3 @@
-import type { TreeLinks } from "./topology.js";
-
 export type StructureKind =
   | "binary-tree"
   | "linked-list"
@@ -11,12 +9,33 @@ export function isStructureKind(value: unknown): value is StructureKind {
   return typeof value === "string" && STRUCTURE_KINDS.includes(value as StructureKind);
 }
 
-export type NodeRole = "normal" | "null" | "spine" | "root" | "terminal";
+export type NodeRole = "normal" | "null" | "spine" | "root" | "terminal" | "title";
+
+export interface NodeLinks {
+  left?: string;
+  right?: string;
+  next?: string;
+}
+
+export type Links = Record<string, NodeLinks>;
+
+export type TreeLinks = Links;
+
+export type KindChoice = StructureKind | "none";
+
+export const PANE_IDS = "abcdefghijklmnopqrstuvwxy";
+
+export function paneId(index: number): string | undefined {
+  return index >= 0 ? PANE_IDS[index] : undefined;
+}
+
+export const NODE_ID = /^[a-z]\d+$/;
 
 export interface GNode {
   id: string;
   label: string;
   role: NodeRole;
+  matrix?: MatrixData;
 }
 
 export type EdgeRole = "normal" | "spine" | "null" | "cycle";
@@ -50,7 +69,7 @@ export interface GraphModel {
   edges: GEdge[];
   ranks: RankGroup[];
   matrix?: MatrixData;
-  links?: TreeLinks;
+  links?: Links;
   listGroups?: string[][];
 }
 
@@ -83,6 +102,5 @@ export interface ParseFailure {
 export interface ParseResult {
   panes: Pane[];
   failures: ParseFailure[];
+  detected: Array<StructureKind | undefined>;
 }
-
-export type { TreeLinks };

@@ -3,10 +3,6 @@ import { isArray, isNestedArray, scalarText, type LCValue } from "./value.js";
 
 const FALSY = new Set(["0", "", ".", "false", "null"]);
 
-/**
- * Grids render as one Graphviz node carrying an HTML-like table label - cheaper
- * and far more legible than one node per cell with invisible alignment edges.
- */
 export function parseMatrix(value: LCValue, title?: string, showIndices = true): GraphModel {
   const model = emptyModel("matrix", title);
   model.directed = false;
@@ -28,7 +24,6 @@ function toCell(raw: LCValue): MatrixCell {
   return { text, filled: !FALSY.has(text.toLowerCase()) };
 }
 
-/** Accepts `[[..]]` directly, expands string grids, and promotes other flat arrays. */
 function normalize(value: LCValue): LCValue[][] | null {
   if (isNestedArray(value)) return value;
   if (isArray(value)) {

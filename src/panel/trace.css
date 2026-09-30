@@ -1,0 +1,72 @@
+.viewport svg .graphy-pointer {
+  fill: var(--color-accent);
+  font-family: var(--font-body);
+  font-size: 11px;
+  font-weight: 600;
+  pointer-events: none;
+}
+
+.viewport svg :is(g.node, a)[data-graphy-state~="dimmed"] {
+  opacity: 0.3;
+}
+
+.viewport svg :is(g.node, a)[data-graphy-state~="visited"]:not([data-graphy-state~="current"])[data-graphy-tone="light"] :is(ellipse, polygon, circle, rect, path),
+.viewport svg :is(g.node, a)[data-graphy-state~="current"][data-graphy-tone="light"] :is(ellipse, polygon, circle, rect, path)[fill^="url"] {
+  filter: brightness(var(--visited-shade));
+}
+
+.viewport svg :is(g.node, a)[data-graphy-state~="visited"]:not([data-graphy-state~="current"])[data-graphy-tone="dark"] :is(ellipse, polygon, circle, rect, path),
+.viewport svg :is(g.node, a)[data-graphy-state~="current"][data-graphy-tone="dark"] :is(ellipse, polygon, circle, rect, path)[fill^="url"] {
+  filter: brightness(var(--visited-lift));
+}
+
+.viewport svg g.node[data-graphy-state~="frontier"] :is(ellipse, polygon, circle, rect) {
+  stroke: var(--color-accent) !important;
+  stroke-width: 2.5px !important;
+  stroke-dasharray: 4 3;
+}
+
+.viewport svg g.node[data-graphy-state~="current"] :is(ellipse, polygon, circle, rect) {
+  stroke: var(--color-ink) !important;
+  stroke-width: 3px !important;
+  stroke-dasharray: none;
+}
+
+.viewport svg a:is([data-graphy-state~="current"], [data-graphy-state~="frontier"]) {
+  clip-path: inset(0) fill-box;
+}
+
+.viewport svg a[data-graphy-state~="frontier"] :is(polygon, path) {
+  stroke: var(--color-accent) !important;
+  stroke-width: 5px !important;
+  stroke-dasharray: 4 3;
+}
+
+.viewport svg a[data-graphy-state~="current"] :is(polygon, path) {
+  stroke: var(--color-ink) !important;
+  stroke-width: 6px !important;
+  stroke-dasharray: none;
+}
+
+.viewport svg :is(
+  g.node[data-graphy-state~="current"] :is(ellipse, polygon, circle, rect),
+  a[data-graphy-state~="current"] :is(polygon, path)
+):not([fill^="url"]) {
+  fill: var(--color-accent) !important;
+}
+
+.viewport svg :is(g.node, a)[data-graphy-state~="current"]:not(:has([fill^="url"])) text {
+  fill: var(--color-accent-ink) !important;
+}
+
+.viewport svg g.node[data-graphy-state="deleted"] {
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.trace-truncated {
+  flex: 0 0 auto;
+  color: var(--color-ink-2);
+  font-style: italic;
+  white-space: nowrap;
+}

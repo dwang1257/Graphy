@@ -1,15 +1,15 @@
 import { PANEL_CHANNEL, isPanelMessage, type ToPanel } from "../shared/protocol.js";
 import { DEFAULT_PANEL, loadPanelState, savePanelState, type PanelState } from "../settings/storage.js";
-import { notifyPageTrace } from "./pageTrace.js";
 import {
   RESIZE_CORNERS,
   RESIZE_HIT_PX,
   SHELL_RADIUS_PX,
   SHRINK_EASE,
   SHRINK_MS,
+  TITLEBAR_PX,
   applyResizePreview,
   applyShellStyles,
-  clampPanelSize,
+  clampPanelBox,
   clearResizePreview,
   clipAnimation,
   liveResizeRect,
@@ -25,6 +25,10 @@ const HIT = shrinkHitOffset();
 const HOST_ID = "graphy-root";
 
 type Box = { x: number; y: number; width: number; height: number };
+
+export interface PanelHostOptions {
+  onOpenChange?: (open: boolean) => void;
+}
 
 const STYLE = `
 :host {
@@ -117,6 +121,10 @@ const RESIZE_LABELS: Record<ResizeCorner, string> = {
   se: "Resize panel from bottom right",
 };
 
+export function queuePanelMessage(pending: Map<string, ToPanel>, message: ToPanel): void {
+  pending.set(message.type === "shrunk" ? "shrunk" : "content", message);
+}
+
 function makeButton(className: string, label?: string): HTMLButtonElement {
   const el = document.createElement("button");
   el.className = className;
@@ -146,9 +154,15 @@ export class PanelHost {
   private clipAnim: Animation | undefined;
   private clipSettled = true;
   private resizePointerId: number | undefined;
+  private moveRaf: number | null = null;
+  private pendingDx = 0;
+  private pendingDy = 0;
   readonly restored: Promise<void>;
 
-  constructor(private frameUrl: string) {
+  constructor(
+    private frameUrl: string,
+    private options: PanelHostOptions = {},
+  ) {
     const frameLocation = new URL(frameUrl);
     this.frameOrigin = `${frameLocation.protocol}//${frameLocation.host}`;
     document.getElementById(HOST_ID)?.remove();
@@ -170,7 +184,6 @@ export class PanelHost {
     this.shell.dataset.open = "false";
 
     this.frame = document.createElement("iframe");
-    this.frame.src = this.frameUrl;
     this.frame.setAttribute("title", "Graphy Visualizer");
     this.shell.appendChild(this.frame);
 
@@ -200,7 +213,13 @@ export class PanelHost {
     const state = await loadPanelState();
     this.state = state;
     if (state.x < 0 || state.y < 0) this.placeDefault();
+    if (this.state.open) this.ensureFrame();
     this.clamp();
+  }
+
+  private ensureFrame(): void {
+    if (this.frame.getAttribute("src")) return;
+    this.frame.src = this.frameUrl;
   }
 
   private placeDefault(): void {
@@ -224,7 +243,6 @@ export class PanelHost {
     this.clipSettled = true;
     clearResizePreview(this.shell);
     this.paint(this.state.shrunk);
-    notifyPageTrace(this.state.open);
   }
 
   private onShrinkClick = (): void => {
@@ -268,15 +286,15 @@ export class PanelHost {
   private clamp = (): void => {
     if (this.resizing) return;
     const view = this.viewport();
-    const size = clampPanelSize(
-      { width: this.state.width, height: this.state.height },
+    const visibleHeight = this.state.shrunk ? TITLEBAR_PX : this.state.height;
+    const next = clampPanelBox(
+      { x: this.state.x, y: this.state.y, width: this.state.width, height: visibleHeight },
       view,
-      { x: this.state.x, y: this.state.y },
     );
-    this.state.width = size.width;
-    this.state.height = size.height;
-    this.state.x = Math.min(Math.max(0, this.state.x), Math.max(0, view.width - 80));
-    this.state.y = Math.min(Math.max(0, this.state.y), Math.max(0, view.height - 40));
+    this.state.x = next.x;
+    this.state.y = next.y;
+    this.state.width = next.width;
+    if (!this.state.shrunk) this.state.height = next.height;
     this.apply();
   };
 
@@ -385,15 +403,31 @@ export class PanelHost {
     this.apply();
   };
 
+  private flushMove(): void {
+    if (this.moveRaf !== null) {
+      cancelAnimationFrame(this.moveRaf);
+      this.moveRaf = null;
+    }
+    if (this.pendingDx === 0 && this.pendingDy === 0) return;
+    this.state.x += this.pendingDx;
+    this.state.y += this.pendingDy;
+    this.pendingDx = 0;
+    this.pendingDy = 0;
+    this.clamp();
+  }
+
   private persist(): void {
     window.clearTimeout(this.saveTimer);
     this.saveTimer = window.setTimeout(() => void savePanelState(this.state), 400);
   }
 
   private setOpen(open: boolean): void {
+    const changed = this.state.open !== open;
     this.state.open = open;
+    if (open) this.ensureFrame();
     this.apply();
     this.persist();
+    if (changed) this.options.onOpenChange?.(open);
   }
 
   open(): void {
@@ -415,7 +449,7 @@ export class PanelHost {
 
   send(message: ToPanel): void {
     if (!this.ready) {
-      this.pending.set(message.type, message);
+      queuePanelMessage(this.pending, message);
       return;
     }
     this.frame.contentWindow?.postMessage(message, this.frameOrigin);
@@ -430,6 +464,7 @@ export class PanelHost {
     }
     window.removeEventListener("message", this.onMessage);
     window.removeEventListener("resize", this.clamp);
+    if (this.moveRaf !== null) cancelAnimationFrame(this.moveRaf);
     document.getElementById(HOST_ID)?.remove();
   }
 
@@ -451,11 +486,20 @@ export class PanelHost {
         this.close();
         break;
       case "move":
-        this.state.x += data.dx;
-        this.state.y += data.dy;
-        this.clamp();
+        this.pendingDx += data.dx;
+        this.pendingDy += data.dy;
+        if (this.moveRaf !== null) break;
+        this.moveRaf = requestAnimationFrame(() => {
+          this.moveRaf = null;
+          this.state.x += this.pendingDx;
+          this.state.y += this.pendingDy;
+          this.pendingDx = 0;
+          this.pendingDy = 0;
+          this.clamp();
+        });
         break;
       case "persist":
+        this.flushMove();
         this.persist();
         break;
       case "setShrunk":

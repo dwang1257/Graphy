@@ -14,9 +14,7 @@ export type ThemeMode = (typeof THEME_MODES)[number];
 
 export interface Palette {
   background: string;
-  /** Data URL for a stage background image, or null for color only. */
   backgroundImage: string | null;
-  /** Data URL for a node fill/background image, or null for solid fills. */
   nodeBackgroundImage: string | null;
   nodeFill: string;
   nodeStroke: string;
@@ -36,7 +34,6 @@ export interface Palette {
 
 export interface Layout {
   nodeShape: NodeShape;
-  /** Visual scale multiplier for node size (font and dimensions). */
   nodeSize: number;
   edgeStyle: EdgeStyle;
   splines: Splines;
@@ -57,10 +54,7 @@ export interface Settings {
   light: Palette;
   dark: Palette;
   layout: Layout;
-  /** Open the panel automatically when a problem page loads. */
   autoOpen: boolean;
-  /** Re-render while typing rather than only on Run. */
-  liveUpdate: boolean;
 }
 
 export const LIGHT: Palette = {
@@ -128,7 +122,6 @@ export const DEFAULT_SETTINGS: Settings = {
   dark: DARK,
   layout: DEFAULT_LAYOUT,
   autoOpen: true,
-  liveUpdate: true,
 };
 
 function num(v: unknown, fallback: number, min: number, max: number): number {
@@ -149,17 +142,12 @@ function bool(value: unknown, fallback: boolean): boolean {
   return typeof value === "boolean" ? value : fallback;
 }
 
-/** Accepts a non-empty string (typically a data URL), otherwise the fallback. */
 function imageUrl(v: unknown, fallback: string | null): string | null {
   if (v === null) return null;
   if (typeof v === "string" && v.length > 0) return v;
   return fallback;
 }
 
-/**
- * Fills gaps left by older stored settings and clamps numbers, so a schema
- * addition or a bad stored value never breaks load.
- */
 export function withDefaults(stored: unknown): Settings {
   const s = record(stored);
   const layout = { ...DEFAULT_LAYOUT, ...record(s.layout) };
@@ -172,7 +160,6 @@ export function withDefaults(stored: unknown): Settings {
   layout.showMatrixIndices = bool(layout.showMatrixIndices, DEFAULT_LAYOUT.showMatrixIndices);
   layout.showArrowheads = bool(layout.showArrowheads, DEFAULT_LAYOUT.showArrowheads);
   layout.fontSize = num(layout.fontSize, DEFAULT_LAYOUT.fontSize, 8, 24);
-  // Lift the previous 13pt default so stored settings pick up the larger labels.
   if (layout.fontSize === 13) layout.fontSize = DEFAULT_LAYOUT.fontSize;
   layout.penWidth = num(layout.penWidth, DEFAULT_LAYOUT.penWidth, 0.5, 4);
   layout.nodeSep = num(layout.nodeSep, DEFAULT_LAYOUT.nodeSep, 0.1, 1.5);
@@ -197,6 +184,5 @@ export function withDefaults(stored: unknown): Settings {
     dark,
     layout,
     autoOpen: bool(s.autoOpen, DEFAULT_SETTINGS.autoOpen),
-    liveUpdate: bool(s.liveUpdate, DEFAULT_SETTINGS.liveUpdate),
   };
 }

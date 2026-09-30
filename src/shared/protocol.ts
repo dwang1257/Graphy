@@ -1,5 +1,3 @@
-/** Messages crossing the page world, the content script, and the panel iframe. */
-
 export const PAGE_CHANNEL = "graphy:page";
 export const PANEL_CHANNEL = "graphy:panel";
 export const MAX_SNAPSHOT_CASES = 64;
@@ -10,24 +8,24 @@ export const MAX_SLUG_LENGTH = 128;
 export const MAX_CAPTURE_ERROR_LENGTH = 2 * 1024;
 export const MAX_STDOUT_LENGTH = 256 * 1024;
 export const MAX_STDOUT_CASES = 64;
+export const MAX_SNAPSHOT_PARAMS = 32;
+export const MAX_PARAM_FIELD_LENGTH = 128;
 
-/** Captured state of the LeetCode editor at one moment. */
+export interface SnapshotParam {
+  name: string;
+  type: string;
+}
+
 export interface Snapshot {
-  /** Ordered custom test cases; each entry is one Case N, parameters newline-separated. */
   cases: string[];
-  /** Full solution buffer, used for signature detection. */
   code: string;
-  /** LeetCode language slug, e.g. "cpp". */
   lang: string;
   slug: string;
-  /** "network" snapshots come from the Run request and are authoritative for a single run. */
   source: "editor" | "network";
   at: number;
-  /** Set when the full buffer could not be split into Case tabs. */
+  params?: SnapshotParam[];
   captureError?: string;
-  /** Run stdout from the LeetCode `/check` response, when present. */
   stdout?: string;
-  /** Per-case stdout from `std_output_list` (one string per custom test case). */
   stdoutByCase?: string[];
 }
 
@@ -77,6 +75,18 @@ function isStringArray(value: unknown, maxItems: number, maxLength: number): val
   return Array.isArray(value) && value.length <= maxItems && value.every((entry) => isBoundedString(entry, maxLength));
 }
 
+function isParams(value: unknown): value is SnapshotParam[] {
+  return (
+    Array.isArray(value) &&
+    value.length <= MAX_SNAPSHOT_PARAMS &&
+    value.every((entry) => {
+      if (typeof entry !== "object" || entry === null) return false;
+      const param = entry as Record<string, unknown>;
+      return isBoundedString(param.name, MAX_PARAM_FIELD_LENGTH, true) && isBoundedString(param.type, MAX_PARAM_FIELD_LENGTH, true);
+    })
+  );
+}
+
 function isSnapshot(payload: unknown): payload is Snapshot {
   if (typeof payload !== "object" || payload === null) return false;
   const p = payload as Record<string, unknown>;
@@ -91,13 +101,13 @@ function isSnapshot(payload: unknown): payload is Snapshot {
   ) {
     return false;
   }
+  if (p.params !== undefined && !isParams(p.params)) return false;
   if (p.captureError !== undefined && !isBoundedString(p.captureError, MAX_CAPTURE_ERROR_LENGTH)) return false;
   if (p.stdout !== undefined && !isBoundedString(p.stdout, MAX_STDOUT_LENGTH)) return false;
   if (p.stdoutByCase !== undefined && !isStringArray(p.stdoutByCase, MAX_STDOUT_CASES, MAX_STDOUT_LENGTH)) return false;
   return true;
 }
 
-/** Any page script can post on this channel, so payloads are shape-checked. */
 export function isPageMessage(data: unknown): data is PageMessage {
   if (!onChannel(data, PAGE_CHANNEL)) return false;
   const m = data as { type?: unknown; payload?: unknown };
@@ -124,7 +134,6 @@ export function isPanelMessage(data: unknown): data is FromPanel {
     case "ready":
     case "close":
     case "persist":
-    case "clear":
       return true;
     case "setShrunk":
       return typeof m.shrunk === "boolean";

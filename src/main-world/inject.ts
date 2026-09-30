@@ -1,35 +1,72 @@
 import {
+  MAX_CODE_LENGTH,
+  MAX_LANG_LENGTH,
+  MAX_SLUG_LENGTH,
+  MAX_SNAPSHOT_CASE_LENGTH,
   PAGE_CHANNEL,
   isPageControlMessage,
   pageClearMessage,
   type Snapshot,
+  type SnapshotParam,
 } from "../shared/protocol.js";
+import { stripCheckBody } from "../core/traceWire.js";
 import { instrumentRunBody } from "./instrument.js";
+import {
+  QUESTION_QUERY,
+  editCacheKey,
+  parseEditCache,
+  parseQuestion,
+  questionFromGraphql,
+  questionFromNextData,
+  splitDataInput,
+  type QuestionData,
+} from "./question.js";
 import { extractRunStdout, extractRunStdoutByCase } from "./runResult.js";
-import { captureCasesFromTabs, captureCasesWhenReady } from "./testcaseCapture.js";
-import { createTestcaseDomAdapter, type TestcaseDomAdapter } from "./testcaseDom.js";
-
-/**
- * Runs in the page world. Case tabs are visited after a Run's check returns a
- * terminal state. The last complete cache is reused if that walk fails; a Run
- * may fall back to data_input only when no cache exists.
- */
 
 interface CMNode extends HTMLElement {
   cmView?: { rootView?: { view?: { state?: { doc?: { toString(): string } } } } };
 }
 
+interface ProblemState {
+  slug: string;
+  lineCount: number | null;
+  params?: SnapshotParam[];
+  loaded: boolean;
+  loading: boolean;
+  queue: Promise<void>;
+  snapshot: Snapshot | null;
+  posted: Snapshot | null;
+  latestRun: number;
+}
+
+interface RunRequest {
+  dataInput: string;
+  code?: string;
+  lang?: string;
+}
+
+interface PendingRun {
+  sequence: number;
+  state: ProblemState;
+  snapshot: Snapshot | null;
+}
+
 const CODE_HINTS = /class\s+Solution|def\s+\w+\s*\(|func\s+\w+|impl\s+Solution|var\s+\w+\s*=\s*function|public\s+class|^\s*(?:int|char|void|double|bool|struct)\b[^=\n]*\(/m;
+const LOAD_ERROR = "Couldn't load this problem's testcases. Press Run to capture them.";
+const TOO_LARGE_ERROR = "This testcase is too large to draw.";
+const FALLBACK_LANG = "cpp";
+const QUESTION_TIMEOUT_MS = 10_000;
+const RUN_URL = /\/interpret_solution\/?$|\/interpret_solution\//;
+const CHECK_URL = /\/submissions\/detail\/([^/?]+)\/check\/?/;
+const IN_FLIGHT = new Set(["PENDING", "STARTED"]);
+const MAX_PENDING_RUNS = 32;
 
-const adapter: TestcaseDomAdapter = createTestcaseDomAdapter(document, window);
-
-let last = "";
-let generation = 0;
-let cache: { slug: string; cases: string[] } | null = null;
-let flight: Promise<void> = Promise.resolve();
+let problem: ProblemState | null = null;
 let tracingEnabled = false;
 let hooksActive = false;
-let activeSlug = "";
+let nextRunSequence = 0;
+const pendingRuns = new Map<number, PendingRun>();
+const pendingResults = new Map<string, PendingRun>();
 
 function onPageMessage(event: MessageEvent): void {
   if (event.source !== window) return;
@@ -39,7 +76,8 @@ function onPageMessage(event: MessageEvent): void {
     tracingEnabled = event.data.enabled;
     return;
   }
-  setHooksActive(event.data.enabled);
+  if (event.data.enabled) activate();
+  else deactivate();
 }
 
 window.addEventListener("message", onPageMessage);
@@ -50,7 +88,6 @@ function docOf(content: CMNode): string | null {
   return typeof text === "string" ? text : null;
 }
 
-/** Solution text only. Testcase editors are collected by the tab adapter. */
 function captureCode(): string {
   for (const el of document.querySelectorAll<CMNode>(".cm-content")) {
     const text = docOf(el);
@@ -60,21 +97,34 @@ function captureCode(): string {
 }
 
 function slugOf(): string {
-  return location.pathname.match(/\/problems\/([^/]+)/)?.[1] ?? "";
+  const slug = location.pathname.match(/\/problems\/([^/]+)/)?.[1] ?? "";
+  return slug.length <= MAX_SLUG_LENGTH ? slug : "";
 }
 
-function langOf(): string {
+function isLang(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= MAX_LANG_LENGTH;
+}
+
+function storedLang(): unknown {
   try {
     const raw = localStorage.getItem("global_lang");
-    if (raw) {
-      const parsed: unknown = JSON.parse(raw);
-      if (typeof parsed === "string") return parsed;
-    }
+    return raw ? (JSON.parse(raw) as unknown) : undefined;
   } catch {
-    /* Falls through to the DOM probe. */
+    return undefined;
   }
+}
+
+function domLang(): string {
   const button = document.querySelector<HTMLElement>("[id^='headlessui-listbox-button'], button[data-state]");
-  return (button?.textContent ?? "").trim().toLowerCase().replace(/[^a-z0-9+#]/g, "") || "cpp";
+  return (button?.textContent ?? "").trim().toLowerCase().replace(/[^a-z0-9+#]/g, "");
+}
+
+function langOf(requested?: string): string {
+  if (isLang(requested)) return requested;
+  const stored = storedLang();
+  if (isLang(stored)) return stored;
+  const fromDom = domLang();
+  return isLang(fromDom) ? fromDom : FALLBACK_LANG;
 }
 
 function post(snapshot: Snapshot): void {
@@ -85,118 +135,172 @@ function postClear(): void {
   window.postMessage(pageClearMessage(), location.origin);
 }
 
-function beginGeneration(): number {
-  generation += 1;
-  return generation;
+function enqueue(state: ProblemState, task: () => void | Promise<void>): void {
+  state.queue = state.queue
+    .then(() => (problem === state ? task() : undefined))
+    .catch(() => undefined);
 }
 
-function publish(
+function publishState(state: ProblemState): void {
+  if (!hooksActive || problem !== state || !state.snapshot || state.posted === state.snapshot) return;
+  state.posted = state.snapshot;
+  post(state.snapshot);
+}
+
+function commit(state: ProblemState, snapshot: Snapshot): void {
+  state.snapshot = snapshot;
+  publishState(state);
+}
+
+function snapshotOf(
+  state: ProblemState,
   source: Snapshot["source"],
-  override?: Partial<Snapshot>,
-  walk = false,
-  waitForReady = false,
-  preserveGeneration = false,
-): Promise<void> {
-  const slug = slugOf();
-  if (!slug) return Promise.resolve();
-
-  const gen = preserveGeneration ? generation : beginGeneration();
-  const queued = flight.then(async () => {
-    if (gen !== generation) return;
-    if (!hooksActive || activeSlug !== slug) return;
-
-    const isCurrent = () => gen === generation;
-    if (cache && cache.slug !== slug) cache = null;
-
-    let cases: string[] = cache?.cases ?? [];
-    let captureError: string | undefined;
-
-    if (walk) {
-      const fromDom = waitForReady
-        ? await captureCasesWhenReady(adapter, isCurrent)
-        : await captureCasesFromTabs(adapter, isCurrent);
-      if (!isCurrent()) return;
-      const liveSlug = slugOf();
-      if (!liveSlug || liveSlug !== slug) return;
-      if (cache && cache.slug !== liveSlug) cache = null;
-      cases = fromDom.cases;
-      captureError = fromDom.captureError;
-      const completeCache = cache && cache.cases.length > 0 ? cache : null;
-      if (captureError || cases.length === 0) {
-        if (completeCache) {
-          cases = completeCache.cases;
-          captureError = undefined;
-        } else if (captureError) {
-          cases = [];
-        }
-      } else {
-        cache = { slug: liveSlug, cases };
-      }
-    }
-
-    if (source === "network") {
-      const runCases = override?.cases;
-      const noCache = !cache || cache.cases.length === 0;
-      if (noCache && !captureError && runCases && runCases.length > 0) {
-        cases = runCases;
-      } else if (cache && cache.cases.length > 0) {
-        cases = cache.cases;
-        captureError = undefined;
-      }
-    }
-
-    if (source === "editor" && cases.length === 0 && !captureError) return;
-
-    const snapshot: Snapshot = {
-      cases,
-      code: override?.code ?? captureCode(),
-      lang: override?.lang ?? langOf(),
-      slug,
-      source,
-      at: Date.now(),
-    };
-    if (captureError) snapshot.captureError = captureError;
-    if (override?.stdout !== undefined) snapshot.stdout = override.stdout;
-    if (override?.stdoutByCase !== undefined) snapshot.stdoutByCase = override.stdoutByCase;
-
-    const key = `${snapshot.cases.join("\u001f")}\u001e${snapshot.code}\u001e${snapshot.lang}\u001e${snapshot.captureError ?? ""}`;
-    if (source === "editor" && key === last) return;
-    last = key;
-    post(snapshot);
-  });
-  flight = queued.then(() => undefined, () => undefined);
-  return flight;
+  cases: string[],
+  code: string,
+  lang: string,
+): Snapshot {
+  const fits = cases.every((entry) => entry.length <= MAX_SNAPSHOT_CASE_LENGTH);
+  const snapshot: Snapshot = {
+    cases: fits ? cases : [],
+    code: code.length <= MAX_CODE_LENGTH ? code : "",
+    lang,
+    slug: state.slug,
+    source,
+    at: Date.now(),
+  };
+  if (state.params) snapshot.params = state.params;
+  if (!fits) snapshot.captureError = TOO_LARGE_ERROR;
+  return snapshot;
 }
 
-/** Reads `data_input` out of a Run request - exactly what LeetCode will execute. */
-function fromRunBody(body: unknown): Partial<Snapshot> | null {
-  if (typeof body !== "string") return null;
+function sameCases(left: string[], right: string[]): boolean {
+  return left.length === right.length && left.every((entry, index) => entry === right[index]);
+}
+
+function nextData(): unknown {
+  const fromWindow = (window as { __NEXT_DATA__?: unknown }).__NEXT_DATA__;
+  if (fromWindow !== undefined) return fromWindow;
   try {
-    const parsed = JSON.parse(body) as Record<string, unknown>;
-    if (typeof parsed.data_input !== "string") return null;
-    return {
-      cases: [parsed.data_input],
-      code: typeof parsed.typed_code === "string" ? parsed.typed_code : undefined,
-      lang: typeof parsed.lang === "string" ? parsed.lang : undefined,
-    };
+    const text = document.getElementById("__NEXT_DATA__")?.textContent;
+    return text ? (JSON.parse(text) as unknown) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function pageFetch(): typeof window.fetch {
+  return networkPatched ? nativeFetch : window.fetch;
+}
+
+async function fetchQuestion(slug: string): Promise<QuestionData | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), QUESTION_TIMEOUT_MS);
+  try {
+    const response = await pageFetch().call(window, "/graphql", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ query: QUESTION_QUERY, variables: { titleSlug: slug } }),
+      signal: controller.signal,
+    });
+    if (!response.ok) return null;
+    return questionFromGraphql(await response.json());
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function readQuestion(slug: string): Promise<QuestionData | null> {
+  return questionFromNextData(nextData(), slug) ?? (await fetchQuestion(slug));
+}
+
+function editedCases(slug: string, lineCount: number | null): string[] | null {
+  try {
+    return parseEditCache(sessionStorage.getItem(editCacheKey(slug)), lineCount);
   } catch {
     return null;
   }
 }
 
-const RUN_URL = /\/interpret_solution\/?$|\/interpret_solution\//;
-const CHECK_URL = /\/submissions\/detail\/([^/?]+)\/check\/?/;
-const IN_FLIGHT = new Set(["PENDING", "STARTED"]);
-const MAX_PENDING_RUNS = 32;
-
-interface PendingRun {
-  override?: Partial<Snapshot>;
-  sequence: number;
+function load(state: ProblemState): void {
+  state.loading = true;
+  enqueue(state, async () => {
+    const data = await readQuestion(state.slug);
+    if (problem !== state) return;
+    state.loading = false;
+    const question = data ? parseQuestion(data) : null;
+    state.loaded = question !== null;
+    state.lineCount = question?.lineCount ?? null;
+    if (question?.params) state.params = question.params;
+    else delete state.params;
+    if (state.snapshot?.source === "network") return;
+    const cases = editedCases(state.slug, state.lineCount) ?? question?.cases ?? [];
+    const snapshot = snapshotOf(state, "editor", cases, captureCode(), langOf());
+    if (cases.length === 0) snapshot.captureError = LOAD_ERROR;
+    commit(state, snapshot);
+  });
 }
 
-let nextRunSequence = 0;
-const pendingRuns = new Map<number, PendingRun>();
-const pendingResults = new Map<string, PendingRun>();
+function problemFor(slug: string): ProblemState {
+  if (problem?.slug === slug) return problem;
+  if (problem) postClear();
+  clearPending();
+  problem = {
+    slug,
+    lineCount: null,
+    loaded: false,
+    loading: false,
+    queue: Promise.resolve(),
+    snapshot: null,
+    posted: null,
+    latestRun: -1,
+  };
+  return problem;
+}
+
+function ensureLoaded(state: ProblemState): void {
+  if (!state.loaded && !state.loading) load(state);
+}
+
+function refreshEdits(state: ProblemState): void {
+  if (!state.loaded || !state.snapshot) return;
+  const cases = editedCases(state.slug, state.lineCount);
+  if (!cases) return;
+  const snapshot = snapshotOf(state, "editor", cases, captureCode(), langOf());
+  if (!sameCases(snapshot.cases, state.snapshot.cases)) commit(state, snapshot);
+}
+
+function parseRunBody(body: unknown): RunRequest | null {
+  if (typeof body !== "string") return null;
+  const parsed = parseObject(body);
+  if (!parsed || typeof parsed.data_input !== "string") return null;
+  const run: RunRequest = { dataInput: parsed.data_input };
+  if (typeof parsed.typed_code === "string") run.code = parsed.typed_code;
+  if (typeof parsed.lang === "string") run.lang = parsed.lang;
+  return run;
+}
+
+function captureRun(body: unknown): number | undefined {
+  const run = parseRunBody(body);
+  const slug = slugOf();
+  if (!run || !slug) return undefined;
+  const state = problemFor(slug);
+  ensureLoaded(state);
+  const sequence = nextRunSequence;
+  nextRunSequence += 1;
+  const pending: PendingRun = { sequence, state, snapshot: null };
+  pendingRuns.set(sequence, pending);
+  trimPending();
+  enqueue(state, () => {
+    const cases = splitDataInput(run.dataInput, state.lineCount) ?? state.snapshot?.cases ?? [];
+    pending.snapshot = snapshotOf(state, "network", cases, run.code ?? captureCode(), langOf(run.lang));
+    state.latestRun = sequence;
+    commit(state, pending.snapshot);
+  });
+  return sequence;
+}
 
 function requestUrl(input: RequestInfo | URL): string {
   if (typeof input === "string") return input;
@@ -205,7 +309,7 @@ function requestUrl(input: RequestInfo | URL): string {
 }
 
 function asObject(value: unknown): Record<string, unknown> | null {
-  return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : null;
+  return typeof value === "object" && value !== null ? { ...value } : null;
 }
 
 function parseObject(text: string): Record<string, unknown> | null {
@@ -253,50 +357,207 @@ function clearPending(): void {
   pendingResults.clear();
 }
 
-function rememberRun(body: unknown): number {
-  const sequence = nextRunSequence;
-  nextRunSequence += 1;
-  pendingRuns.set(sequence, { override: fromRunBody(body) ?? undefined, sequence });
-  trimPending();
-  return sequence;
-}
-
 function rememberInterpretId(body: Record<string, unknown> | null, sequence: number): void {
-  const id = interpretIdOf(body);
   const pending = pendingRuns.get(sequence);
   if (!pending) return;
   pendingRuns.delete(sequence);
+  const id = interpretIdOf(body);
   if (!id) return;
   pendingResults.set(id, pending);
   trimPending();
 }
 
-function maybeWalkResults(url: string, body: Record<string, unknown> | null): void {
+function completeRun(url: string, body: Record<string, unknown> | null): void {
   const state = body?.state;
   if (typeof state !== "string" || IN_FLIGHT.has(state)) return;
   const checkId = CHECK_URL.exec(url)?.[1];
   if (!checkId) return;
   const pending = pendingResults.get(checkId);
   if (!pending) return;
-
-  const override: Partial<Snapshot> = { ...pending.override };
-  const stdout = extractRunStdout(body);
-  if (stdout !== undefined) override.stdout = stdout;
-  const stdoutByCase = extractRunStdoutByCase(body);
-  if (stdoutByCase !== undefined) override.stdoutByCase = stdoutByCase;
   pendingResults.delete(checkId);
-  void publish("network", override, true, false, true);
+  const stdout = extractRunStdout(body);
+  const stdoutByCase = extractRunStdoutByCase(body);
+  enqueue(pending.state, () => {
+    if (!pending.snapshot || pending.sequence !== pending.state.latestRun) return;
+    const snapshot: Snapshot = { ...pending.snapshot, at: Date.now() };
+    if (stdout !== undefined) snapshot.stdout = stdout;
+    if (stdoutByCase !== undefined) snapshot.stdoutByCase = stdoutByCase;
+    commit(pending.state, snapshot);
+  });
 }
 
-function outgoingRun(body: unknown): { remember: unknown; send: unknown } {
+function outgoingRun<T>(body: T): T | string {
   const rewritten = tracingEnabled ? instrumentRunBody(body) : null;
-  return {
-    remember: body,
-    send: rewritten ? rewritten.body : body,
+  if (rewritten === null) return body;
+  instrumented = true;
+  return rewritten;
+}
+
+function captureInitRun(init: RequestInit | undefined): { sequence: number | undefined; init: RequestInit | undefined } {
+  try {
+    const sequence = captureRun(init?.body);
+    const body = outgoingRun(init?.body);
+    return { sequence, init: body !== init?.body && init ? { ...init, body } : init };
+  } catch {
+    return { sequence: undefined, init };
+  }
+}
+
+function rememberRun(request: Promise<Response>, sequence: number | undefined): void {
+  if (sequence === undefined) return;
+  void request
+    .then(async (response) => rememberInterpretId(await readResponseJson(response), sequence))
+    .catch(() => undefined);
+}
+
+async function fetchRequestRun(
+  self: typeof globalThis,
+  input: Request,
+  init: RequestInit | undefined,
+): Promise<Response> {
+  let text: string | undefined;
+  try {
+    text = await input.clone().text();
+  } catch {
+    text = undefined;
+  }
+  let sequence: number | undefined;
+  let body: unknown = text;
+  try {
+    sequence = captureRun(text);
+    body = outgoingRun(text);
+  } catch {
+    body = text;
+  }
+  let request: Promise<Response> | undefined;
+  if (typeof body === "string" && body !== text) {
+    try {
+      request = nativeFetch.call(self, new Request(input, { body }), init);
+    } catch {
+      request = undefined;
+    }
+  }
+  request ??= nativeFetch.call(self, input, init);
+  rememberRun(request, sequence);
+  return request;
+}
+
+function fetchRun(
+  self: typeof globalThis,
+  input: RequestInfo | URL,
+  init: RequestInit | undefined,
+): Promise<Response> {
+  if (input instanceof Request && init?.body === undefined) return fetchRequestRun(self, input, init);
+  const captured = captureInitRun(init);
+  const request = nativeFetch.call(self, input, captured.init);
+  rememberRun(request, captured.sequence);
+  return request;
+}
+
+function cleanedResponse(response: Response, body: Record<string, unknown>): Response {
+  const headers = new Headers(response.headers);
+  headers.delete("content-length");
+  headers.delete("content-encoding");
+  const cleaned = new Response(JSON.stringify(body), {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+  Object.defineProperty(cleaned, "url", { value: response.url, configurable: true });
+  Object.defineProperty(cleaned, "redirected", { value: response.redirected, configurable: true });
+  return cleaned;
+}
+
+async function fetchCheck(
+  self: typeof globalThis,
+  url: string,
+  input: RequestInfo | URL,
+  init: RequestInit | undefined,
+): Promise<Response> {
+  const response = await nativeFetch.call(self, input, init);
+  let body: Record<string, unknown> | null;
+  try {
+    body = parseObject(await response.clone().text());
+  } catch {
+    return response;
+  }
+  try {
+    completeRun(url, body);
+  } catch {
+    return response;
+  }
+  const cleaned = body ? stripCheckBody(body) : null;
+  return cleaned ? cleanedResponse(response, cleaned) : response;
+}
+
+type Getter = (this: XMLHttpRequest) => unknown;
+
+function nativeGetter(target: object, name: "response" | "responseText"): Getter | undefined {
+  for (let proto: object | null = Object.getPrototypeOf(target); proto; proto = Object.getPrototypeOf(proto)) {
+    const descriptor = Object.getOwnPropertyDescriptor(proto, name);
+    if (descriptor) return descriptor.get;
+  }
+  return undefined;
+}
+
+function rawResponse(xhr: XMLHttpRequest, name: "response" | "responseText"): unknown {
+  const getter = nativeGetter(xhr, name);
+  return getter ? getter.call(xhr) : xhr[name];
+}
+
+function cleanText(text: string): string {
+  const body = parseObject(text);
+  const cleaned = body ? stripCheckBody(body) : null;
+  return cleaned ? JSON.stringify(cleaned) : text;
+}
+
+function memo<T>(clean: (raw: T) => T): (raw: T) => T {
+  let last: { raw: T; clean: T } | undefined;
+  return (raw) => {
+    if (last && last.raw === raw) return last.clean;
+    last = { raw, clean: clean(raw) };
+    return last.clean;
   };
 }
 
+function stripXhr(xhr: XMLHttpRequest): void {
+  const text = memo<string>(cleanText);
+  const value = memo<unknown>((raw) => {
+    if (typeof raw === "string") return text(raw);
+    const body = asObject(raw);
+    return (body && stripCheckBody(body)) ?? raw;
+  });
+  try {
+    Object.defineProperty(xhr, "responseText", {
+      configurable: true,
+      get() {
+        const raw = rawResponse(xhr, "responseText");
+        return typeof raw === "string" ? text(raw) : raw;
+      },
+    });
+    Object.defineProperty(xhr, "response", {
+      configurable: true,
+      get() {
+        const raw = rawResponse(xhr, "response");
+        return xhr.responseType === "" || xhr.responseType === "text" || xhr.responseType === "json" ? value(raw) : raw;
+      },
+    });
+  } catch {
+    return;
+  }
+}
+
+function xhrBody(xhr: XMLHttpRequest): Record<string, unknown> | null {
+  if (xhr.responseType === "json") return asObject(rawResponse(xhr, "response"));
+  if (xhr.responseType === "" || xhr.responseType === "text") {
+    const text = rawResponse(xhr, "responseText");
+    return typeof text === "string" ? parseObject(text) : null;
+  }
+  return null;
+}
+
 let networkPatched = false;
+let instrumented = false;
 let nativeFetch: typeof window.fetch;
 let nativeOpen: typeof XMLHttpRequest.prototype.open;
 let nativeSend: typeof XMLHttpRequest.prototype.send;
@@ -306,33 +567,10 @@ function patchNetwork(): void {
   if (networkPatched) return;
   nativeFetch = window.fetch;
   window.fetch = function patched(this: typeof globalThis, input: RequestInfo | URL, init?: RequestInit) {
-    if (!hooksActive) return nativeFetch.call(this, input, init);
     const url = requestUrl(input);
-    let nextInit = init;
-    let sequence: number | undefined;
-    try {
-      if (RUN_URL.test(url)) {
-        const run = outgoingRun(init?.body);
-        sequence = rememberRun(run.remember);
-        if (run.send !== init?.body && init) {
-          nextInit = { ...init, body: run.send as BodyInit };
-        }
-      }
-    } catch {
-      /* Never let instrumentation break the page's own request. */
-    }
-
-    const request = nativeFetch.call(this, input as RequestInfo, nextInit);
-    void request
-      .then(async (response) => {
-        if (RUN_URL.test(url)) {
-          if (sequence !== undefined) rememberInterpretId(await readResponseJson(response), sequence);
-          return;
-        }
-        if (CHECK_URL.test(url)) maybeWalkResults(url, await readResponseJson(response));
-      })
-      .catch(() => undefined);
-    return request;
+    if (CHECK_URL.test(url) && (hooksActive || instrumented)) return fetchCheck(this, url, input, init);
+    if (hooksActive && RUN_URL.test(url)) return fetchRun(this, input, init);
+    return nativeFetch.call(this, input, init);
   };
 
   nativeOpen = XMLHttpRequest.prototype.open;
@@ -345,28 +583,31 @@ function patchNetwork(): void {
   } as typeof XMLHttpRequest.prototype.open;
 
   XMLHttpRequest.prototype.send = function send(this: XMLHttpRequest, body?: Document | XMLHttpRequestBodyInit | null) {
-    if (!hooksActive) return nativeSend.call(this, body);
     const url = xhrUrls.get(this) ?? "";
+    if (CHECK_URL.test(url) && (hooksActive || instrumented)) stripXhr(this);
+    if (!hooksActive) return nativeSend.call(this, body);
     let nextBody = body;
     let sequence: number | undefined;
     try {
       if (RUN_URL.test(url)) {
-        const run = outgoingRun(body);
-        sequence = rememberRun(run.remember);
-        nextBody = run.send as typeof body;
+        sequence = captureRun(body);
+        nextBody = outgoingRun(body);
       }
     } catch {
-      /* Same - instrumentation must never be fatal. */
+      nextBody = body;
     }
 
     if (RUN_URL.test(url) || CHECK_URL.test(url)) {
       this.addEventListener("load", () => {
         try {
-          const parsed = parseObject(String(this.responseText ?? ""));
-          if (RUN_URL.test(url) && sequence !== undefined) rememberInterpretId(parsed, sequence);
-          else maybeWalkResults(url, parsed);
+          const parsed = xhrBody(this);
+          if (RUN_URL.test(url)) {
+            if (sequence !== undefined) rememberInterpretId(parsed, sequence);
+          } else {
+            completeRun(url, parsed);
+          }
         } catch {
-          /* Same - instrumentation must never be fatal. */
+          return;
         }
       }, { once: true });
     }
@@ -383,31 +624,25 @@ function unpatchNetwork(): void {
   networkPatched = false;
 }
 
-function setHooksActive(enabled: boolean): void {
+function activate(): void {
   const slug = slugOf();
-  if (enabled) {
-    if (!slug) return;
-    if (hooksActive && activeSlug === slug) return;
-    const changedSlug = activeSlug !== "" && activeSlug !== slug;
-    hooksActive = true;
-    activeSlug = slug;
-    beginGeneration();
-    last = "";
-    cache = null;
-    clearPending();
-    patchNetwork();
-    if (changedSlug) postClear();
-    void publish("editor", undefined, true, true);
-    return;
-  }
+  if (!slug) return;
+  if (hooksActive && problem?.slug === slug) return;
+  hooksActive = true;
+  patchNetwork();
+  const state = problemFor(slug);
+  ensureLoaded(state);
+  enqueue(state, () => {
+    refreshEdits(state);
+    publishState(state);
+  });
+}
 
-  if (!hooksActive && activeSlug === "") return;
+function deactivate(): void {
+  if (!hooksActive) return;
   hooksActive = false;
-  activeSlug = "";
-  beginGeneration();
-  last = "";
-  cache = null;
   clearPending();
-  unpatchNetwork();
+  if (!instrumented) unpatchNetwork();
+  if (problem) problem.posted = null;
   postClear();
 }

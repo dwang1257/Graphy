@@ -48,7 +48,6 @@
       </ul>
     </li>
     <li><a href="#usage">Usage</a></li>
-    <li><a href="#customization">Customization</a></li>
     <li><a href="#roadmap">Roadmap</a></li>
     <li><a href="#contact">Contact</a></li>
     <li><a href="#acknowledgments">Acknowledgments</a></li>
@@ -62,7 +61,10 @@ Graphy is a highly customizable graph visualizer for LeetCode problems. You can 
 
 Graphy reads the test case straight out of the editor and renders it in a floating panel next to the problem. Currently it supports binary trees, linked lists, and graphs.
 
-It can also show how your code runs on that drawing. Hit **Run** and Graphy highlights the walk: the current node, the nodes you have already visited, and the frontier (queue or stack) as the algorithm moves. On Python tree problems this happens automatically — Graphy traces the solution without you changing the editor, and **pointer swaps and deletions reshape the tree** (nodes slide to their new positions). In any language you can print `#graphy` lines (`current`, `visit`, `enqueue`, `dequeue`, `frontier`, `topology`) and step through them with the play / pause / scrubber under the graph.
+It can also show how your code runs on that drawing.
+Hit **Run** and Graphy steps through your solution: the current node, the nodes you have already visited, the frontier (queue or stack), and named pointers as the algorithm moves.
+Python solutions are traced automatically, and pointer rewrites, new nodes, and deletions reshape the drawing as they happen.
+Other languages can print `#graphy` lines to drive the same playback.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -74,7 +76,9 @@ It can also show how your code runs on that drawing. Hit **Run** and Graphy high
 | Linked list | `[1,2,3,4]`, `pos = 1` |
 | Graph | `["11110","10001"]`, `[[1,1,0],[1,1,0],[0,0,1]]` |
 
-Pick the structure from the dropdown in the panel's title bar.
+Graphy detects the structure of each input from the problem's signature.
+Use the dropdown in the panel's title bar to override it, or pick **Auto** to go back to detection.
+Problems with several structure inputs, such as Same Tree or Merge Two Sorted Lists, draw every structure side by side.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -110,6 +114,41 @@ Graphy reads the LeetCode editor, custom testcase inputs, and Run output locally
 Graphy stores visual settings in Chrome sync storage, and stores panel geometry, selected images, and the privacy-notice dismissal in local storage.
 Graphy does not send this data to a Graphy server.
 See [PRIVACY.md](PRIVACY.md) for the complete policy.
+
+<!-- USAGE -->
+## Usage
+
+### Custom input
+
+Open the **Custom** tab under the graph to draw your own input.
+There is one field per parameter of the problem, labelled with its name and type.
+Each structure field has its own dropdown, so you can pick a structure, choose **None** to skip it, or leave it on **Auto**.
+Pasting a whole LeetCode testcase, with one value per line, fills the fields in order.
+Press **Enter** or **Draw** to render, and **Shift+Enter** for a new line.
+
+### Tracing
+
+Python solutions are traced automatically when you hit **Run**, so you do not need to change your code.
+Graphy keeps its trace data out of LeetCode's stdout, so the output you see is only what your code prints.
+Use the play, step, and scrubber controls under the graph to move through the run.
+Very long runs are cut short and marked as truncated.
+
+In other languages, print lines that start with `#graphy` followed by one or more verbs and node references:
+
+| Verb | Effect |
+| --- | --- |
+| `current <refs>` | Moves the current highlight |
+| `visit <refs>` | Marks nodes as visited |
+| `walk <refs>` | Moves the current highlight and marks each node as visited |
+| `enqueue <refs>` | Adds nodes to the frontier |
+| `dequeue <refs>` | Removes nodes from the frontier |
+| `frontier <refs>` | Replaces the frontier |
+| `clear` | Clears all highlights |
+
+A reference is a node value such as `5`, a node id such as `a3`, or a grid cell such as `2,3`.
+For example, `print("#graphy walk 1 2 4")` walks three nodes of a tree.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 <!-- ROADMAP -->
 ## Roadmap

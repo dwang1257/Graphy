@@ -4,11 +4,6 @@ export function isAllowedParentOrigin(origin: string): boolean {
   return PARENT_ORIGINS.has(origin);
 }
 
-/**
- * The panel iframe lives on `chrome-extension://…`; its parent is the LeetCode
- * tab. `postMessage` targetOrigin and inbound `event.origin` must be that
- * parent, not the iframe's own origin, or close/move/snapshot all go nowhere.
- */
 export function resolveParentOrigin(input: {
   ancestorOrigin: string;
   referrer: string;

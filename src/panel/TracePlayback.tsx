@@ -4,7 +4,8 @@ import type { TraceFrame } from "../core/trace.js";
 import { PauseIcon, PlayIcon, StepBackIcon, StepForwardIcon } from "./icons.js";
 
 interface Props {
-  frames: TraceFrame[];
+  frames: readonly TraceFrame[];
+  truncated?: boolean;
   index: number;
   playing: boolean;
   onIndexChange: (index: number) => void;
@@ -13,9 +14,9 @@ interface Props {
 
 const STEP_MS = 650;
 
-/** Play / pause / step scrubber for `#graphy` Run traces. */
 export function TracePlayback({
   frames,
+  truncated = false,
   index,
   playing,
   onIndexChange,
@@ -93,6 +94,11 @@ export function TracePlayback({
       <span class="trace-meta">
         {at + 1}/{frames.length}
       </span>
+      {truncated && (
+        <span class="trace-truncated" title="The run took too many steps, so only the start is shown.">
+          trace truncated
+        </span>
+      )}
     </div>
   );
 }

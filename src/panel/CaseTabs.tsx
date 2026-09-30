@@ -1,59 +1,86 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { JSX } from "preact";
 
-interface Props {
-  count: number;
-  activeIndex: number;
-  onChange: (index: number) => void;
+export const CUSTOM_CASE = "custom";
+
+export type CaseSelection = number | typeof CUSTOM_CASE;
+
+export type CaseTabActivation = "click" | "arrow";
+
+export function caseTabId(selection: CaseSelection): string {
+  return `graphy-case-tab-${selection}`;
 }
 
-export function CaseTabs({ count, activeIndex, onChange }: Props): JSX.Element | null {
-  const [focusIndex, setFocusIndex] = useState(activeIndex);
+function positionOf(selection: CaseSelection, count: number): number {
+  if (selection === CUSTOM_CASE) return count;
+  return selection >= 0 && selection < count ? selection : -1;
+}
+
+function selectionAt(position: number, count: number): CaseSelection {
+  return position >= count ? CUSTOM_CASE : position;
+}
+
+interface Props {
+  count: number;
+  selection: CaseSelection | null;
+  onChange: (selection: CaseSelection, activation: CaseTabActivation) => void;
+}
+
+export function CaseTabs({ count, selection, onChange }: Props): JSX.Element {
+  const total = count + 1;
+  const [focused, setFocused] = useState<CaseSelection>(selection ?? 0);
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
   useEffect(() => {
-    setFocusIndex(activeIndex);
-  }, [activeIndex]);
+    if (selection !== null) setFocused(selection);
+  }, [selection]);
 
-  if (count <= 1) return null;
+  const selectedPosition = selection === null ? -1 : positionOf(selection, count);
+  const focusedPosition = positionOf(focused, count);
+  const rovingPosition = focusedPosition >= 0 ? focusedPosition : Math.max(selectedPosition, 0);
 
-  const selectIndex = (index: number): void => {
-    setFocusIndex(index);
-    onChange(index);
-    tabRefs.current[index]?.focus();
+  const selectPosition = (position: number, activation: CaseTabActivation): void => {
+    const next = selectionAt(position, count);
+    setFocused(next);
+    tabRefs.current[position]?.focus();
+    onChange(next, activation);
   };
 
-  const onKeyDown = (event: JSX.TargetedKeyboardEvent<HTMLButtonElement>, index: number): void => {
-    let nextIndex: number | undefined;
-    if (event.key === "ArrowRight") nextIndex = (index + 1) % count;
-    if (event.key === "ArrowLeft") nextIndex = (index - 1 + count) % count;
-    if (event.key === "Home") nextIndex = 0;
-    if (event.key === "End") nextIndex = count - 1;
-    if (nextIndex === undefined) return;
+  const onKeyDown = (event: JSX.TargetedKeyboardEvent<HTMLButtonElement>, position: number): void => {
+    let nextPosition: number | undefined;
+    if (event.key === "ArrowRight") nextPosition = (position + 1) % total;
+    if (event.key === "ArrowLeft") nextPosition = (position - 1 + total) % total;
+    if (event.key === "Home") nextPosition = 0;
+    if (event.key === "End") nextPosition = total - 1;
+    if (nextPosition === undefined) return;
     event.preventDefault();
-    selectIndex(nextIndex);
+    selectPosition(nextPosition, "arrow");
   };
 
   return (
     <div class="case-switcher" role="tablist" aria-label="Test cases">
-      {Array.from({ length: count }, (_, index) => (
-        <button
-          ref={(element) => { tabRefs.current[index] = element; }}
-          class="case-pill"
-          role="tab"
-          key={index}
-          id={`graphy-case-tab-${index}`}
-          type="button"
-          tabIndex={index === focusIndex ? 0 : -1}
-          aria-selected={index === activeIndex}
-          aria-controls="graphy-case-panel"
-          aria-label={`Case ${index + 1}`}
-          onClick={() => selectIndex(index)}
-          onKeyDown={(event) => onKeyDown(event, index)}
-        >
-          Case {index + 1}
-        </button>
-      ))}
+      {Array.from({ length: total }, (_, position) => {
+        const tab = selectionAt(position, count);
+        const label = tab === CUSTOM_CASE ? "Custom" : `Case ${tab + 1}`;
+        return (
+          <button
+            ref={(element) => { tabRefs.current[position] = element; }}
+            class={tab === CUSTOM_CASE ? "case-pill case-pill-custom" : "case-pill"}
+            role="tab"
+            key={tab}
+            id={caseTabId(tab)}
+            type="button"
+            tabIndex={position === rovingPosition ? 0 : -1}
+            aria-selected={position === selectedPosition}
+            aria-controls="graphy-case-panel"
+            aria-label={label}
+            onClick={() => selectPosition(position, "click")}
+            onKeyDown={(event) => onKeyDown(event, position)}
+          >
+            {label}
+          </button>
+        );
+      })}
     </div>
   );
 }

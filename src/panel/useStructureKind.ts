@@ -6,17 +6,17 @@ import { displayedStructureKind, pendingKindForSlug, type PendingStructureKind }
 export function useStructureKind(
   slug: string,
   savedKind: string | undefined,
-  persist: (kind: StructureKind) => void,
+  persist: (kind: StructureKind | undefined) => void,
 ): {
   selectedKind: StructureKind | undefined;
-  setKind: (kind: StructureKind) => void;
+  setKind: (kind: StructureKind | undefined) => void;
 } {
   const [pendingKind, setPendingKind] = useState<PendingStructureKind>();
   const selectedKind = displayedStructureKind(savedKind, pendingKindForSlug(pendingKind, slug));
 
   const setKind = useCallback(
-    (kind: StructureKind) => {
-      setPendingKind({ slug, kind });
+    (kind: StructureKind | undefined) => {
+      setPendingKind({ slug, kind: kind ?? null });
       if (slug) persist(kind);
     },
     [persist, slug],

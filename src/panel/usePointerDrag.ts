@@ -21,14 +21,35 @@ export function pointerDragHandler<T extends HTMLElement>(
     let lastX = useScreen ? event.screenX : event.clientX;
     let lastY = useScreen ? event.screenY : event.clientY;
 
+    let pendingDx = 0;
+    let pendingDy = 0;
+    let frame = 0;
+
+    const flush = (): void => {
+      frame = 0;
+      if (pendingDx === 0 && pendingDy === 0) return;
+      const dx = pendingDx;
+      const dy = pendingDy;
+      pendingDx = 0;
+      pendingDy = 0;
+      options.onMove(dx, dy);
+    };
+
     const move = (e: PointerEvent): void => {
       const x = useScreen ? e.screenX : e.clientX;
       const y = useScreen ? e.screenY : e.clientY;
-      options.onMove(x - lastX, y - lastY);
+      pendingDx += x - lastX;
+      pendingDy += y - lastY;
       lastX = x;
       lastY = y;
+      if (frame) return;
+      frame = requestAnimationFrame(flush);
     };
     const up = (): void => {
+      if (frame) {
+        cancelAnimationFrame(frame);
+        flush();
+      }
       options.onEnd?.();
       el.removeEventListener("pointermove", move);
       el.removeEventListener("pointerup", up);

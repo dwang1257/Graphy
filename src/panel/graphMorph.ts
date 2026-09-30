@@ -1,3 +1,5 @@
+import { NODE_ID } from "../core/types.js";
+
 export interface Point {
   x: number;
   y: number;
@@ -16,12 +18,11 @@ export function createMorphGeneration(): { next: () => number; isCurrent: (gener
   };
 }
 
-/** Visible Graphy node positions from a Graphviz SVG root. */
 export function nodePositions(svgRoot: Element): Map<string, Point> {
   const out = new Map<string, Point>();
   for (const node of svgRoot.querySelectorAll("g.node")) {
     const title = node.querySelector("title")?.textContent?.trim();
-    if (!title || !/^n\d+$/i.test(title)) continue;
+    if (!title || !NODE_ID.test(title)) continue;
     const shape =
       node.querySelector("ellipse") ||
       node.querySelector("circle") ||
@@ -29,30 +30,30 @@ export function nodePositions(svgRoot: Element): Map<string, Point> {
       node.querySelector("rect");
     if (!shape) continue;
     const point = shapeCenter(shape);
-    if (point) out.set(title.toLowerCase(), point);
+    if (point) out.set(title, point);
   }
   return out;
 }
 
 function shapeCenter(shape: Element): Point | null {
-  if (shape instanceof SVGEllipseElement || shape.tagName.toLowerCase() === "ellipse") {
+  const tag = shape.tagName.toLowerCase();
+  if (tag === "ellipse") {
     const cx = Number(shape.getAttribute("cx"));
     const cy = Number(shape.getAttribute("cy"));
     if (Number.isFinite(cx) && Number.isFinite(cy)) return { x: cx, y: cy };
   }
-  if (shape instanceof SVGCircleElement || shape.tagName.toLowerCase() === "circle") {
+  if (tag === "circle") {
     const cx = Number(shape.getAttribute("cx"));
     const cy = Number(shape.getAttribute("cy"));
     if (Number.isFinite(cx) && Number.isFinite(cy)) return { x: cx, y: cy };
   }
-  if (shape instanceof SVGRectElement || shape.tagName.toLowerCase() === "rect") {
+  if (tag === "rect") {
     const x = Number(shape.getAttribute("x"));
     const y = Number(shape.getAttribute("y"));
     const w = Number(shape.getAttribute("width"));
     const h = Number(shape.getAttribute("height"));
     if ([x, y, w, h].every(Number.isFinite)) return { x: x + w / 2, y: y + h / 2 };
   }
-  // polygon / path fallback via bbox when available
   if ("getBBox" in shape && typeof (shape as SVGGraphicsElement).getBBox === "function") {
     try {
       const box = (shape as SVGGraphicsElement).getBBox();
@@ -67,22 +68,39 @@ function shapeCenter(shape: Element): Point | null {
 export interface MorphOptions {
   fromRoot: Element;
   toRoot: Element;
-  deletedIds: string[];
   durationMs?: number;
 }
 
-/**
- * FLIP-slides live nodes from `fromRoot` positions onto `toRoot`, fades new edges in,
- * and ghosts deleted nodes out. Resolves when the animation finishes.
- */
-export function animateGraphMorph(options: MorphOptions): Promise<void> {
-  const { fromRoot, toRoot, deletedIds, durationMs = MORPH_MS } = options;
+export interface MorphHandle {
+  done: Promise<void>;
+  cancel(): void;
+}
+
+function clearMorphStyles(toRoot: Element): void {
+  for (const ghost of [...toRoot.querySelectorAll('[data-graphy-state="deleted"]')]) {
+    ghost.remove();
+  }
+  for (const node of toRoot.querySelectorAll("g.node, g.edge")) {
+    const el = node as SVGGElement;
+    el.style.transition = "";
+    el.style.transform = "";
+    el.style.opacity = "";
+  }
+}
+
+export function animateGraphMorph(options: MorphOptions): MorphHandle {
+  const { fromRoot, toRoot, durationMs = MORPH_MS } = options;
   const from = nodePositions(fromRoot);
   const to = nodePositions(toRoot);
+  let cancelled = false;
+  let outerFrame = 0;
+  let innerFrame = 0;
+  let timer = 0;
+  let settle: (() => void) | undefined;
 
   for (const node of toRoot.querySelectorAll("g.node")) {
-    const title = node.querySelector("title")?.textContent?.trim()?.toLowerCase();
-    if (!title || !/^n\d+$/.test(title)) continue;
+    const title = node.querySelector("title")?.textContent?.trim();
+    if (!title || !NODE_ID.test(title)) continue;
     const start = from.get(title);
     const end = to.get(title);
     if (!start || !end) continue;
@@ -100,21 +118,24 @@ export function animateGraphMorph(options: MorphOptions): Promise<void> {
     el.style.opacity = "0";
   }
 
-  const parent = toRoot;
-  for (const id of deletedIds) {
-    const source = [...fromRoot.querySelectorAll("g.node")].find(
-      (n) => n.querySelector("title")?.textContent?.trim()?.toLowerCase() === id,
-    );
-    if (!source) continue;
+  const ghostParent = toRoot.querySelector("g.graph") ?? toRoot;
+  for (const source of fromRoot.querySelectorAll("g.node")) {
+    const id = source.querySelector("title")?.textContent?.trim();
+    if (!id || !NODE_ID.test(id) || to.has(id)) continue;
     const ghost = source.cloneNode(true) as Element;
     ghost.setAttribute("data-graphy-state", "deleted");
     ghost.setAttribute("data-graphy-id", id);
-    parent.appendChild(ghost);
+    ghostParent.appendChild(ghost);
   }
 
-  return new Promise((resolve) => {
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
+  const done = new Promise<void>((resolve) => {
+    settle = resolve;
+    outerFrame = requestAnimationFrame(() => {
+      innerFrame = requestAnimationFrame(() => {
+        if (cancelled) {
+          resolve();
+          return;
+        }
         for (const node of toRoot.querySelectorAll("g.node")) {
           const el = node as SVGGElement;
           el.style.transition = `transform ${durationMs}ms ease-in-out`;
@@ -131,21 +152,26 @@ export function animateGraphMorph(options: MorphOptions): Promise<void> {
           el.style.opacity = "0";
           el.style.transform = `${el.style.transform || ""} scale(0.85)`.trim();
         }
-        window.setTimeout(() => {
-          for (const ghost of [...toRoot.querySelectorAll('[data-graphy-state="deleted"]')]) {
-            ghost.remove();
-          }
-          for (const node of toRoot.querySelectorAll("g.node, g.edge")) {
-            const el = node as SVGGElement;
-            el.style.transition = "";
-            el.style.transform = "";
-            el.style.opacity = "";
-          }
+        timer = window.setTimeout(() => {
+          if (!cancelled) clearMorphStyles(toRoot);
           resolve();
         }, durationMs + 20);
       });
     });
   });
+
+  return {
+    done,
+    cancel() {
+      if (cancelled) return;
+      cancelled = true;
+      cancelAnimationFrame(outerFrame);
+      cancelAnimationFrame(innerFrame);
+      window.clearTimeout(timer);
+      clearMorphStyles(toRoot);
+      settle?.();
+    },
+  };
 }
 
 export { MORPH_MS };

@@ -1,41 +1,22 @@
-import { emptyModel, type GNode, type GraphModel } from "../types.js";
-import { modelFromTree } from "../treeModel.js";
-import type { TreeLinks } from "../topology.js";
+import { emptyModel, type GraphModel, type Links } from "../types.js";
 import { isArray, scalarText, type LCValue } from "./value.js";
 
-/**
- * Parses LeetCode level-order form (`[1,null,2,3]`) where children are only
- * enumerated for non-null parents.
- *
- * Graphviz `dot` does not preserve child order, and a lone right child would
- * render centered under its parent - indistinguishable from a left child. So
- * every node with exactly one child also gets an invisible anchor on the empty
- * side plus an invisible spine node, all pinned to the child's rank.
- */
-export function parseBinaryTree(value: LCValue, title?: string): GraphModel {
-  if (!isArray(value)) {
-    return emptyModel("binary-tree", title);
-  }
-  if (value.length === 0) {
-    return emptyModel("binary-tree", title);
-  }
-  if (value[0] === null) {
+export function parseBinaryTree(value: LCValue, title: string | undefined, paneId: string): GraphModel {
+  const links: Links = {};
+  const model: GraphModel = { ...emptyModel("binary-tree", title), links };
+  if (!isArray(value) || value.length === 0) return model;
+  if (value[0] === null || value[0] === undefined) {
     if (value.slice(1).some((raw) => raw !== null && raw !== undefined)) {
       throw new Error("Binary-tree input contains an unreachable value.");
     }
-    return emptyModel("binary-tree", title);
+    return model;
   }
 
-  const nodes: GNode[] = [];
-  const links: TreeLinks = {};
-  const labels = new Map<string, string>();
+  const rootId = `${paneId}0`;
+  model.nodes.push({ id: rootId, label: scalarText(value[0]), role: "root" });
+  links[rootId] = {};
 
-  const rootLabel = scalarText(value[0]!);
-  nodes.push({ id: "n0", label: rootLabel, role: "root" });
-  labels.set("n0", rootLabel);
-  links.n0 = {};
-
-  const queue: string[] = ["n0"];
+  const queue: string[] = [rootId];
   let cursor = 1;
   let head = 0;
 
@@ -46,13 +27,11 @@ export function parseBinaryTree(value: LCValue, title?: string): GraphModel {
     for (const side of ["left", "right"] as const) {
       if (cursor >= value.length) break;
       const raw = value[cursor];
-      const childId = `n${cursor}`;
+      const childId = `${paneId}${cursor}`;
       cursor += 1;
       if (raw === null || raw === undefined) continue;
 
-      const label = scalarText(raw);
-      nodes.push({ id: childId, label, role: "normal" });
-      labels.set(childId, label);
+      model.nodes.push({ id: childId, label: scalarText(raw), role: "normal" });
       links[childId] = {};
       parentLinks[side] = childId;
       queue.push(childId);
@@ -63,5 +42,5 @@ export function parseBinaryTree(value: LCValue, title?: string): GraphModel {
     throw new Error("Binary-tree input contains an unreachable value.");
   }
 
-  return modelFromTree(nodes, links, title);
+  return model;
 }

@@ -1,64 +1,33 @@
 import { describe, expect, it } from "vitest";
 
-import { extractRunStdout, extractRunStdoutByCase } from "../main-world/runResult.js";
-import { emptyModel, type GraphModel } from "./types.js";
-import { framesFromStdout } from "./trace.js";
-import { splitStdoutByCase, stdoutForCase } from "./traceCases.js";
+import { traceTextForCase } from "./traceCases.js";
+import { TRACE_SENTINEL } from "./traceWire.js";
 
-const tree: GraphModel = {
-  ...emptyModel("binary-tree", "root"),
-  nodes: [
-    { id: "n0", label: "4", role: "root" },
-    { id: "n1", label: "2", role: "normal" },
-    { id: "n2", label: "7", role: "normal" },
-  ],
-  links: {
-    n0: { left: "n1", right: "n2" },
-    n1: {},
-    n2: {},
-  },
-};
+const S = TRACE_SENTINEL;
 
-const case1Stdout = ["#graphy current n0", "#graphy topology n0:n1,n2 n1:-,- n2:-,-"].join("\n");
-const case2Stdout = ["#graphy current n0", "#graphy topology n0:n2,- n2:-,-"].join("\n");
-
-function lastLinks(stdout: string): GraphModel["links"] {
-  return framesFromStdout(stdout, tree).at(-1)?.links;
-}
-
-describe("stdoutForCase", () => {
-  it("does not leak case 2 topology into case 1 frames from concatenated stdout", () => {
-    const joined = `${case1Stdout}\n#graphy /\n${case2Stdout}`;
-    expect(lastLinks(stdoutForCase({ stdout: joined }, 0))?.n0).toEqual({
-      left: "n1",
-      right: "n2",
-    });
-    expect(lastLinks(stdoutForCase({ stdout: joined }, 1))?.n0).toEqual({ left: "n2" });
+describe("traceTextForCase", () => {
+  it("returns nothing without a source", () => {
+    expect(traceTextForCase(null, 0)).toBe("");
+    expect(traceTextForCase({ stdout: "x" }, -1)).toBe("");
   });
 
-  it("maps std_output_list of two cases to the selected case only", () => {
-    const body = { std_output_list: [case1Stdout, case2Stdout] };
-    const snapshot = {
-      stdout: extractRunStdout(body),
-      stdoutByCase: extractRunStdoutByCase(body),
-    };
-    expect(lastLinks(stdoutForCase(snapshot, 0))?.n0).toEqual({ left: "n1", right: "n2" });
-    expect(lastLinks(stdoutForCase(snapshot, 1))?.n0).toEqual({ left: "n2" });
+  it("uses the per-case stdout, including a trace printed after text without a newline", () => {
+    const source = { stdoutByCase: [`user\n${S}0 1`, `done${S}1 2\n`, "#graphy visit 3"] };
+    expect(traceTextForCase(source, 0)).toBe(`${S}0 1`);
+    expect(traceTextForCase(source, 1)).toBe(`${S}1 2`);
+    expect(traceTextForCase(source, 2)).toBe("#graphy visit 3");
+    expect(traceTextForCase(source, 3)).toBe("");
   });
-});
 
-describe("splitStdoutByCase", () => {
-  it("scopes compact one-line-per-case emit so case 2 topology does not leak", () => {
-    const joined = [
-      "#g / c n0 v n0 t n0:n1,n2 n1:-,- n2:-,-",
-      "#g / c n0 v n0 t n0:n2,- n2:-,-",
-    ].join("\n");
+  it("picks the trace by case number from joined stdout", () => {
+    const stdout = `print 0\n${S}0 a\nprint 2\n${S}2 c`;
+    expect(traceTextForCase({ stdout }, 0)).toBe(`${S}0 a`);
+    expect(traceTextForCase({ stdout }, 1)).toBe("");
+    expect(traceTextForCase({ stdout }, 2)).toBe(`${S}2 c`);
+  });
 
-    expect(splitStdoutByCase(joined)).toHaveLength(2);
-    expect(lastLinks(stdoutForCase({ stdout: joined }, 0))?.n0).toEqual({
-      left: "n1",
-      right: "n2",
-    });
-    expect(lastLinks(stdoutForCase({ stdout: joined }, 1))?.n0).toEqual({ left: "n2" });
+  it("keeps manual lines for the first case of joined stdout only", () => {
+    expect(traceTextForCase({ stdout: "#graphy visit 1" }, 0)).toBe("#graphy visit 1");
+    expect(traceTextForCase({ stdout: "#graphy visit 1" }, 1)).toBe("");
   });
 });

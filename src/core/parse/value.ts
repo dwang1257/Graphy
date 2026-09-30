@@ -1,5 +1,3 @@
-/** LeetCode custom input is newline-separated, one JSON-ish literal per parameter. */
-
 export type LCValue = string | number | boolean | null | LCValue[];
 
 export const MAX_INPUT_LENGTH = 256 * 1024;
@@ -121,10 +119,6 @@ function lenient(raw: string): LenientValue | LenientError {
   }
 }
 
-/**
- * Splits a testcase buffer into top-level parameter values while tracking
- * delimiter nesting and quoted regions.
- */
 export function scanInputValues(input: string): { values: string[]; error?: string } {
   if (input.length > MAX_INPUT_LENGTH) {
     return { values: [], error: `Input is too large. Maximum is ${MAX_INPUT_LENGTH} characters.` };
@@ -225,15 +219,10 @@ export function scanInputValues(input: string): { values: string[]; error?: stri
   return error ? { values, error } : { values };
 }
 
-/**
- * Splits a testcase buffer into top-level parameter values. Unlike a raw
- * newline split, bracket depth is tracked so pretty-printed arrays stay one value.
- */
 export function splitInputValues(input: string): string[] {
   return scanInputValues(input).values;
 }
 
-/** Splits a custom-testcase blob into one parsed value per parameter. */
 export function parseInput(input: string): LCValue[] {
   return parseInputResult(input).values;
 }
@@ -276,7 +265,6 @@ export function isArray(v: LCValue): v is LCValue[] {
   return Array.isArray(v);
 }
 
-/** True for [[..], [..]] shapes. */
 export function isNestedArray(v: LCValue): v is LCValue[][] {
   return isArray(v) && v.length > 0 && v.every(isArray);
 }
