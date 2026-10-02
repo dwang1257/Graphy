@@ -2,6 +2,7 @@ import { IMAGE_TONE_ATTR, NODE_OUTLINE, imageToneFromInk } from "./imageInk.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const PATTERN_ID = "graphy-node-bg";
+const PATTERN_FILL = `url(#${PATTERN_ID})`;
 const SHAPE_SELECTOR = "ellipse, polygon, circle, rect";
 const MIN_RADIUS = 4;
 const MIN_EXTENT = 8;
@@ -9,13 +10,16 @@ const MIN_EXTENT = 8;
 export function applyNodeBackgroundImage(svgRoot: Element, imageUrl: string, ink?: string): void {
   const doc = svgRoot.ownerDocument!;
   const defs = ensureDefs(svgRoot, doc);
-  defs.querySelector(`#${PATTERN_ID}`)?.remove();
-  defs.appendChild(buildPattern(doc, imageUrl));
+  const existing = defs.querySelector(`#${PATTERN_ID}`);
+  if (existing?.querySelector("image")?.getAttribute("href") !== imageUrl) {
+    existing?.remove();
+    defs.appendChild(buildPattern(doc, imageUrl));
+  }
 
   for (const node of svgRoot.querySelectorAll("g.node")) {
     for (const shape of node.querySelectorAll(SHAPE_SELECTOR)) {
       if (!isPaintableNodeShape(shape)) continue;
-      shape.setAttribute("fill", `url(#${PATTERN_ID})`);
+      shape.setAttribute("fill", PATTERN_FILL);
       shape.setAttribute("stroke", NODE_OUTLINE);
     }
   }
@@ -25,7 +29,14 @@ export function applyNodeBackgroundImage(svgRoot: Element, imageUrl: string, ink
     for (const label of svgRoot.querySelectorAll("text")) {
       label.setAttribute("fill", ink);
     }
+  } else {
+    svgRoot.removeAttribute(IMAGE_TONE_ATTR);
   }
+}
+
+export function clearNodeBackgroundImage(svgRoot: Element): void {
+  svgRoot.querySelector(`:scope > defs > #${PATTERN_ID}`)?.remove();
+  svgRoot.removeAttribute(IMAGE_TONE_ATTR);
 }
 
 function ensureDefs(svgRoot: Element, doc: Document): Element {
@@ -64,6 +75,7 @@ function buildPattern(doc: Document, imageUrl: string): Element {
 function isPaintableNodeShape(shape: Element): boolean {
   const fill = shape.getAttribute("fill");
   if (!fill || fill === "none") return false;
+  if (fill === PATTERN_FILL) return true;
 
   const tag = shape.tagName.toLowerCase();
   if (tag === "ellipse" || tag === "circle") {

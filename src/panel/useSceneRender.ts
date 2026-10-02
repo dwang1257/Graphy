@@ -1,21 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 
-import { emitDot, type EmitOptions } from "../core/dot/emit.js";
+import { emitDot } from "../core/dot/emit.js";
 import { initialTopology, layoutKeyOf, sceneModel, type SceneTopology } from "../core/scene.js";
 import type { Trace } from "../core/trace.js";
 import type { Pane } from "../core/types.js";
-import { renderDot } from "./graphviz.js";
+import type { Layout } from "../settings/schema.js";
+import { isEngineReady, layoutNow, loadEngine, renderDot, yieldToMain } from "./graphviz.js";
 
 export const MAX_CACHED_LAYOUTS = 32;
 export const PREFETCH_LAYOUTS = 3;
-export const BASE_RENDER_DELAY_MS = 120;
 
 export interface SceneRenderOptions {
   panes: readonly Pane[];
   trace: Trace;
   frameIndex: number;
-  emit: EmitOptions;
-  styleKey: string;
+  layout: Layout;
   showTerminal: boolean;
   enabled: boolean;
 }
@@ -65,68 +64,81 @@ export class SvgCache {
   }
 }
 
-function dotFor(panes: readonly Pane[], topology: SceneTopology, emit: EmitOptions, showTerminal: boolean): string {
+function dotFor(panes: readonly Pane[], topology: SceneTopology, layout: Layout, showTerminal: boolean): string {
   try {
-    return emitDot(sceneModel(panes, topology, { showTerminal }), emit);
+    return emitDot(sceneModel(panes, topology, { showTerminal }), { layout });
   } catch {
     return "";
   }
 }
 
-interface Rendered {
-  dot: string;
+interface BaseLayout {
   svg: string;
+  error: string | null;
 }
 
-const NONE: Rendered = { dot: "", svg: "" };
+const NO_LAYOUT: BaseLayout = { svg: "", error: null };
+
+function messageOf(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause);
+}
+
+function layoutBase(dot: string): BaseLayout {
+  try {
+    return { svg: layoutNow(dot), error: null };
+  } catch (cause) {
+    return { svg: "", error: messageOf(cause) };
+  }
+}
+
+function useEngine(enabled: boolean): { ready: boolean; error: string | null } {
+  const [state, setState] = useState(() => ({ ready: isEngineReady(), error: null as string | null }));
+  useEffect(() => {
+    if (!enabled || state.ready) return;
+    let cancelled = false;
+    loadEngine().then(
+      () => {
+        if (!cancelled) setState({ ready: true, error: null });
+      },
+      (cause: unknown) => {
+        if (!cancelled) setState({ ready: false, error: messageOf(cause) });
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [enabled, state.ready]);
+  return state;
+}
 
 export function useSceneRender(options: SceneRenderOptions): SceneRender {
-  const { panes, trace, frameIndex, emit, styleKey, showTerminal, enabled } = options;
+  const { panes, trace, frameIndex, layout, showTerminal, enabled } = options;
   const base = useMemo(() => initialTopology(panes), [panes]);
   const baseKey = useMemo(() => layoutKeyOf(base), [base]);
   const baseDot = useMemo(
-    () => (enabled ? dotFor(panes, base, emit, showTerminal) : ""),
-    [enabled, panes, base, showTerminal, styleKey],
+    () => (enabled ? dotFor(panes, base, layout, showTerminal) : ""),
+    [enabled, panes, base, layout, showTerminal],
   );
 
-  const cache = useRef({ owner: "", svgs: new SvgCache(), inflight: new Map<string, Promise<string>>() });
-  if (cache.current.owner !== baseDot) cache.current = { owner: baseDot, svgs: new SvgCache(), inflight: new Map() };
-  const { svgs, inflight } = cache.current;
+  const engine = useEngine(baseDot !== "");
+  const baseLayout = useMemo(
+    () => (baseDot && engine.ready ? layoutBase(baseDot) : NO_LAYOUT),
+    [baseDot, engine.ready],
+  );
+  const error = baseDot ? baseLayout.error ?? engine.error : null;
+  const ready = baseLayout.svg !== "";
 
-  const [renderedBase, setRenderedBase] = useState<Rendered>(NONE);
-  const [error, setError] = useState<string | null>(null);
+  const { svgs, inflight } = useMemo(
+    () => ({ svgs: new SvgCache(), inflight: new Map<string, Promise<string>>() }),
+    [baseDot],
+  );
   const [, setVersion] = useState(0);
   const lastShown = useRef("");
-
-  useEffect(() => {
-    setError(null);
-    if (!baseDot) {
-      setRenderedBase(NONE);
-      return;
-    }
-    let cancelled = false;
-    const timer = window.setTimeout(() => {
-      renderDot(baseDot)
-        .then((svg) => {
-          if (cancelled) return;
-          svgs.set(baseKey, svg);
-          setRenderedBase({ dot: baseDot, svg });
-        })
-        .catch((cause: unknown) => {
-          if (cancelled) return;
-          setError(cause instanceof Error ? cause.message : String(cause));
-          setRenderedBase(NONE);
-        });
-    }, BASE_RENDER_DELAY_MS);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [baseDot]);
+  const renderedBaseDot = useRef("");
+  if (ready) renderedBaseDot.current = baseDot;
 
   const frames = trace.frames;
   const activeKey = frames[frameIndex]?.layoutKey ?? baseKey;
-  const ready = baseDot !== "" && renderedBase.dot === baseDot;
 
   useEffect(() => {
     if (!ready) return;
@@ -138,8 +150,8 @@ export function useSceneRender(options: SceneRenderOptions): SceneRender {
     const renderKey = (key: string): Promise<string> | undefined => {
       const running = inflight.get(key);
       if (running) return running;
-      const topology = key === baseKey ? base : frames.find((frame) => frame.layoutKey === key)?.topology;
-      const dot = topology ? dotFor(panes, topology, emit, showTerminal) : "";
+      const topology = frames.find((frame) => frame.layoutKey === key)?.topology;
+      const dot = topology ? dotFor(panes, topology, layout, showTerminal) : "";
       if (!dot) return undefined;
       const job = renderDot(dot).then((svg) => {
         svgs.set(key, svg);
@@ -153,7 +165,11 @@ export function useSceneRender(options: SceneRenderOptions): SceneRender {
     void (async () => {
       for (const key of wanted) {
         if (cancelled) return;
-        if (svgs.has(key)) continue;
+        if (key === baseKey || svgs.has(key)) continue;
+        if (key !== activeKey) {
+          await yieldToMain();
+          if (cancelled) return;
+        }
         try {
           await renderKey(key);
         } catch {
@@ -168,6 +184,11 @@ export function useSceneRender(options: SceneRenderOptions): SceneRender {
     };
   }, [ready, activeKey, frameIndex, frames, svgs]);
 
+  const lookup = (key: string, touch: boolean): string | undefined => {
+    if (key === baseKey) return baseLayout.svg || undefined;
+    return touch ? svgs.get(key) : svgs.peek(key);
+  };
+
   const step = useRef<{ index: number; from: number | null; frames: unknown }>({ index: frameIndex, from: null, frames });
   if (step.current.frames !== frames) step.current = { index: frameIndex, from: null, frames };
   else if (step.current.index !== frameIndex) {
@@ -175,13 +196,13 @@ export function useSceneRender(options: SceneRenderOptions): SceneRender {
   }
 
   let svg = "";
-  if (baseDot && !error) svg = (ready ? svgs.get(activeKey) : undefined) ?? lastShown.current;
+  if (baseDot && !error) svg = (ready ? lookup(activeKey, true) : undefined) ?? lastShown.current;
   lastShown.current = svg;
 
   const from = step.current.from;
   const fromKey = from === null ? undefined : frames[from]?.layoutKey;
-  const fromSvg = fromKey === undefined ? undefined : svgs.peek(fromKey);
+  const fromSvg = fromKey === undefined ? undefined : lookup(fromKey, false);
   const morphFromSvg = fromSvg && fromSvg !== svg ? fromSvg : null;
 
-  return { svg, morphFromSvg, error, baseDot, renderedBaseDot: renderedBase.dot };
+  return { svg, morphFromSvg, error, baseDot, renderedBaseDot: renderedBaseDot.current };
 }

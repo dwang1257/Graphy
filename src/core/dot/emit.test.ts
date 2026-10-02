@@ -3,8 +3,9 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_SETTINGS } from "../../settings/schema.js";
 import type { GraphModel } from "../types.js";
 import { emitDot } from "./emit.js";
+import { PLACEHOLDER, roleOfPlaceholder } from "./paintRoles.js";
 
-const options = { palette: DEFAULT_SETTINGS.light, layout: DEFAULT_SETTINGS.layout };
+const options = { layout: DEFAULT_SETTINGS.layout };
 
 function model(patch: Partial<GraphModel>): GraphModel {
   return { kind: "linked-list", directed: true, nodes: [], edges: [], ranks: [], ...patch };
@@ -17,7 +18,39 @@ describe("emitDot", () => {
 
   it("renders title nodes as small plaintext in the edge text color", () => {
     const dot = emitDot(model({ nodes: [{ id: "t_a", label: "list1", role: "title" }] }), options);
-    expect(dot).toContain(`"t_a" [label="list1", shape="plaintext", style="", fontcolor="${DEFAULT_SETTINGS.light.edgeText}"`);
+    expect(dot).toContain(`"t_a" [label="list1", shape="plaintext", style="", fontcolor="${PLACEHOLDER.edgeText}"`);
+  });
+
+  it("paints with role placeholders so the DOT only carries geometry", () => {
+    const dot = emitDot(model({
+      kind: "binary-tree",
+      nodes: [
+        { id: "a0", label: "1", role: "root" },
+        { id: "a1", label: "2", role: "normal" },
+        {
+          id: "b_grid",
+          label: "",
+          role: "normal",
+          matrix: { showIndices: true, rows: [[{ text: "1", filled: true }, { text: "0", filled: false }]] },
+        },
+      ],
+      edges: [{ from: "a0", to: "a1", role: "normal" }, { from: "a1", to: "a0", role: "cycle" }],
+    }), options);
+    const colors = [...dot.matchAll(/(?:color|COLOR)="(#[0-9a-f]{6})"/gi)].map((match) => match[1]!);
+    expect(colors.length).toBeGreaterThan(0);
+    expect(colors.every((color) => roleOfPlaceholder(color) !== undefined)).toBe(true);
+    for (const role of ["nodeFill", "nodeStroke", "nodeInk", "rootFill", "rootInk", "edge", "cycle", "cellFill", "cellEmptyFill", "cellStroke", "cellText", "gutterText"] as const) {
+      expect(dot).toContain(PLACEHOLDER[role]);
+    }
+    for (const palette of [DEFAULT_SETTINGS.light, DEFAULT_SETTINGS.dark]) {
+      expect(dot).not.toContain(palette.nodeFill);
+      expect(dot).not.toContain(palette.edgeColor);
+    }
+  });
+
+  it("uses the layout font family for every label", () => {
+    const dot = emitDot(model({}), { layout: { ...DEFAULT_SETTINGS.layout, fontFamily: "Inter Tight" } });
+    expect(dot.match(/fontname="Inter Tight"/g)).toHaveLength(3);
   });
 
   it("shrinks terminal glyphs to their text so the arrow meets them", () => {

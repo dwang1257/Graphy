@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import type { TraceFrame } from "../core/trace.js";
 import { initialTopology } from "../core/scene.js";
-import { applyTraceOverlay, clearTraceOverlay } from "./traceOverlay.js";
+import { applyTraceOverlay, clearTraceOverlay, refreshTraceTones } from "./traceOverlay.js";
 
 const SVG = `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"><g id="graph0" class="graph">
 <g class="node"><title>a0</title><ellipse cx="20" cy="-30" rx="10" ry="12" fill="#fff"/><text x="20" y="-26">1</text></g>
@@ -66,5 +66,17 @@ describe("traceOverlay", () => {
     expect(badges[0]?.parentElement?.getAttribute("class")).toBe("graph");
     clearTraceOverlay(root);
     expect(root.querySelectorAll(".graphy-pointer")).toHaveLength(0);
+  });
+
+  it("refreshes marked tones after a repaint without touching states or labels", () => {
+    const root = svgRoot();
+    applyTraceOverlay(root, frame({ visited: ["a0", "a1"], labels: { a0: "9" } }));
+    expect(node(root, "a0").getAttribute("data-graphy-tone")).toBe("light");
+    node(root, "a0").querySelector("ellipse")?.setAttribute("fill", "#111111");
+    refreshTraceTones(root);
+    expect(node(root, "a0").getAttribute("data-graphy-tone")).toBe("dark");
+    expect(node(root, "a1").getAttribute("data-graphy-tone")).toBe("light");
+    expect(node(root, "a0").getAttribute("data-graphy-state")).toBe("visited");
+    expect(node(root, "a0").querySelector("text")?.textContent).toBe("9");
   });
 });

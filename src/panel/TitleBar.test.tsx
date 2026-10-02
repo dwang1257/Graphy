@@ -71,7 +71,7 @@ describe("TitleBar kind picker", () => {
   it("asks for a choice when nothing is detected", async () => {
     const { select, value } = await mount(undefined, [undefined]);
 
-    expect(value.textContent).toBe("Choose an Option:");
+    expect(value.textContent).toBe("Choose a structure");
     expect(select.options[0]?.textContent).toBe("Auto");
   });
 

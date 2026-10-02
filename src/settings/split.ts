@@ -76,3 +76,8 @@ export function settingsFromStores(
   if (!hasLocalImages) return compact;
   return mergeImages(compact, sanitizeImageAssets(localImages));
 }
+
+export function sameSettings(a: Settings, b: Settings): boolean {
+  if (a === b) return true;
+  return sameImages(extractImages(a), extractImages(b)) && JSON.stringify(stripImages(a)) === JSON.stringify(stripImages(b));
+}

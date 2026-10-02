@@ -34,10 +34,32 @@ export interface ShellGeometry {
 export const SHRINK_MS = 160;
 export const SHRINK_EASE = "cubic-bezier(0.16, 1, 0.3, 1)";
 
+export type StyleWriter = (el: HTMLElement, styles: Record<string, string>) => void;
+
+function writeStylesDirect(el: HTMLElement, styles: Record<string, string>): void {
+  for (const [prop, value] of Object.entries(styles)) el.style.setProperty(prop, value);
+}
+
+export function createStyleWriter(): StyleWriter {
+  const written = new WeakMap<HTMLElement, Map<string, string>>();
+  return (el, styles) => {
+    let known = written.get(el);
+    if (!known) {
+      known = new Map();
+      written.set(el, known);
+    }
+    for (const [prop, value] of Object.entries(styles)) {
+      if (known.get(prop) === value) continue;
+      known.set(prop, value);
+      el.style.setProperty(prop, value);
+    }
+  };
+}
+
 export interface ApplyShellOptions {
-  animate: boolean;
   settle?: boolean;
   clipPath?: string | false;
+  write?: StyleWriter;
 }
 
 export function clipAnimation(from: string, to: string): Keyframe[] {
@@ -85,13 +107,13 @@ export function applyShellStyles(
   shell: HTMLElement,
   frame: HTMLElement,
   state: ShellLayoutState,
-  options: ApplyShellOptions,
+  options: ApplyShellOptions = {},
 ): void {
   const settle = options.settle === true;
+  const write = options.write ?? writeStylesDirect;
   const { shell: box, iframe, clipPath } = shellGeometry(state, settle);
-  shell.dataset.open = String(state.open);
-  shell.dataset.shrunk = String(state.shrunk);
-  shell.dataset.animate = String(options.animate);
+  const open = String(state.open);
+  if (shell.dataset.open !== open) shell.dataset.open = open;
   const next: Record<string, string> = {
     left: `${state.x}px`,
     top: `${state.y}px`,
@@ -99,10 +121,10 @@ export function applyShellStyles(
     height: `${box.height}px`,
   };
   if (options.clipPath !== false) {
-    next.clipPath = settle ? clipPath : (options.clipPath ?? clipPath);
+    next["clip-path"] = settle ? clipPath : (options.clipPath ?? clipPath);
   }
-  Object.assign(shell.style, next);
-  Object.assign(frame.style, {
+  write(shell, next);
+  write(frame, {
     width: `${iframe.width}px`,
     height: `${iframe.height}px`,
   });
@@ -116,19 +138,6 @@ export type ResizeCorner = "nw" | "ne" | "sw" | "se";
 
 export const RESIZE_CORNERS: ResizeCorner[] = ["nw", "ne", "sw", "se"];
 
-export function clampPanelSize(
-  size: { width: number; height: number },
-  viewport: { width: number; height: number },
-  origin: { x: number; y: number },
-): { width: number; height: number } {
-  const maxW = Math.max(MIN_PANEL_WIDTH, viewport.width - origin.x);
-  const maxH = Math.max(MIN_PANEL_HEIGHT, viewport.height - origin.y);
-  return {
-    width: Math.min(maxW, Math.max(MIN_PANEL_WIDTH, size.width)),
-    height: Math.min(maxH, Math.max(MIN_PANEL_HEIGHT, size.height)),
-  };
-}
-
 export function clampPanelBox(
   box: { x: number; y: number; width: number; height: number },
   viewport: { width: number; height: number },
@@ -141,30 +150,6 @@ export function clampPanelBox(
     width,
     height,
   };
-}
-
-export function resizeScale(
-  from: { width: number; height: number },
-  to: { width: number; height: number },
-): { sx: number; sy: number } {
-  return { sx: to.width / from.width, sy: to.height / from.height };
-}
-
-export function resizeTransformOrigin(corner: ResizeCorner): string {
-  const x = corner.includes("w") ? "right" : "left";
-  const y = corner.includes("n") ? "bottom" : "top";
-  return `${y} ${x}`;
-}
-
-export function applyResizePreview(shell: HTMLElement, frame: HTMLElement, state: ShellLayoutState): void {
-  clearResizePreview(shell);
-  applyShellStyles(shell, frame, state, { animate: false, settle: state.shrunk });
-}
-
-export function clearResizePreview(shell: HTMLElement): void {
-  shell.style.transform = "";
-  shell.style.transformOrigin = "";
-  shell.style.willChange = "";
 }
 
 export function resizeHitPosition(

@@ -1,8 +1,16 @@
 import { describe, expect, it } from "vitest";
 
-import { DEFAULT_LAYOUT, DEFAULT_SETTINGS, withDefaults } from "./schema.js";
+import { DARK, DEFAULT_LAYOUT, DEFAULT_SETTINGS, LIGHT, withDefaults } from "./schema.js";
 
 describe("withDefaults", () => {
+  it("falls back to defaults for retired node shapes and edge styles", () => {
+    for (const [nodeShape, edgeStyle] of [["hexagon", "bold"], ["ellipse", "dotted"], ["box", "dashed"]] as const) {
+      const { layout } = withDefaults({ layout: { nodeShape, edgeStyle } });
+      expect(layout.nodeShape).toBe(DEFAULT_LAYOUT.nodeShape);
+      expect(layout.edgeStyle).toBe(edgeStyle === "bold" ? DEFAULT_LAYOUT.edgeStyle : edgeStyle);
+    }
+  });
+
   it("uses defaults for invalid layout enums and booleans", () => {
     const settings = withDefaults({
       mode: "sepia",
@@ -35,5 +43,33 @@ describe("withDefaults", () => {
     const settings = withDefaults("malformed");
 
     expect(settings).toEqual(DEFAULT_SETTINGS);
+  });
+
+  it("measures labels in the rendered font, migrating the retired Outfit setting", () => {
+    expect(DEFAULT_LAYOUT.fontFamily).toBe("Inter Tight");
+    expect(withDefaults({ layout: { fontFamily: "Outfit" } }).layout.fontFamily).toBe("Inter Tight");
+  });
+
+  it("replaces colors still on the retired indigo defaults with the brand palette", () => {
+    const settings = withDefaults({
+      light: { background: "#FFFFFF", nodeFill: "#eef2ff", nodeStroke: "#4f46e5", nodeText: "#1e1b4b" },
+      dark: { background: "#1a1a1a", nodeFill: "#312e81", edgeColor: "#94a3b8", nodeText: "#e0e7ff" },
+    });
+
+    expect(settings.light).toEqual(LIGHT);
+    expect(settings.dark).toEqual(DARK);
+  });
+
+  it("keeps colors the user picked and normalizes their hex form", () => {
+    const settings = withDefaults({
+      light: { background: "#ABC", nodeFill: "#123456", backgroundImage: "data:image/png;base64,AA" },
+      dark: { edgeColor: "#FEDCBA", nodeFill: "not a color" },
+    });
+
+    expect(settings.light.background).toBe("#aabbcc");
+    expect(settings.light.nodeFill).toBe("#123456");
+    expect(settings.light.backgroundImage).toBe("data:image/png;base64,AA");
+    expect(settings.dark.edgeColor).toBe("#fedcba");
+    expect(settings.dark.nodeFill).toBe(DARK.nodeFill);
   });
 });

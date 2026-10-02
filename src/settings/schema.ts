@@ -1,7 +1,7 @@
 import { normalizeCssHex } from "./cssColor.js";
 
-export const NODE_SHAPES = ["circle", "ellipse", "box", "square", "diamond", "hexagon", "doublecircle", "plaintext"] as const;
-export const EDGE_STYLES = ["solid", "dashed", "dotted", "bold"] as const;
+export const NODE_SHAPES = ["circle", "square", "diamond"] as const;
+export const EDGE_STYLES = ["solid", "dashed", "dotted"] as const;
 export const SPLINES = ["spline", "line", "polyline", "ortho", "curved"] as const;
 export const RANK_DIRS = ["TB", "LR", "BT", "RL"] as const;
 export const THEME_MODES = ["light", "dark"] as const;
@@ -58,44 +58,96 @@ export interface Settings {
 }
 
 export const LIGHT: Palette = {
-  background: "#ffffff",
+  background: "#fdf7f1",
   backgroundImage: null,
   nodeBackgroundImage: null,
-  nodeFill: "#eef2ff",
-  nodeStroke: "#4f46e5",
-  nodeText: "#111827",
-  rootFill: "#4f46e5",
-  rootStroke: "#3730a3",
-  terminalText: "#94a3b8",
-  edgeColor: "#64748b",
-  edgeText: "#475569",
-  cycleColor: "#e11d48",
-  cellFill: "#c7d2fe",
-  cellEmptyFill: "#f8fafc",
-  cellStroke: "#cbd5e1",
-  cellText: "#1e293b",
-  gutterText: "#94a3b8",
+  nodeFill: "#f1e5ff",
+  nodeStroke: "#7031a6",
+  nodeText: "#1e130e",
+  rootFill: "#d8bcfa",
+  rootStroke: "#571f84",
+  terminalText: "#7b736c",
+  edgeColor: "#7b736c",
+  edgeText: "#544b45",
+  cycleColor: "#c92420",
+  cellFill: "#ddc4fc",
+  cellEmptyFill: "#f5ede5",
+  cellStroke: "#ccc2b8",
+  cellText: "#1e130e",
+  gutterText: "#7b736c",
 };
 
 export const DARK: Palette = {
-  background: "#1a1a1a",
+  background: "#1a1815",
   backgroundImage: null,
   nodeBackgroundImage: null,
-  nodeFill: "#312e81",
-  nodeStroke: "#818cf8",
-  nodeText: "#ffffff",
-  rootFill: "#6366f1",
-  rootStroke: "#a5b4fc",
-  terminalText: "#64748b",
-  edgeColor: "#94a3b8",
-  edgeText: "#cbd5e1",
-  cycleColor: "#fb7185",
-  cellFill: "#4338ca",
-  cellEmptyFill: "#262626",
-  cellStroke: "#404040",
-  cellText: "#e5e7eb",
-  gutterText: "#6b7280",
+  nodeFill: "#3f2956",
+  nodeStroke: "#b88fe6",
+  nodeText: "#f5f1ec",
+  rootFill: "#694191",
+  rootStroke: "#d8bcfa",
+  terminalText: "#83807b",
+  edgeColor: "#8f8c87",
+  edgeText: "#c7c4be",
+  cycleColor: "#f47c6e",
+  cellFill: "#543772",
+  cellEmptyFill: "#262421",
+  cellStroke: "#45423e",
+  cellText: "#eeebe5",
+  gutterText: "#898681",
 };
+
+type PaletteColorKey = Exclude<keyof Palette, "backgroundImage" | "nodeBackgroundImage">;
+
+const RETIRED_LIGHT: Record<PaletteColorKey, readonly string[]> = {
+  background: ["#ffffff"],
+  nodeFill: ["#eef2ff"],
+  nodeStroke: ["#4f46e5"],
+  nodeText: ["#111827", "#1e1b4b"],
+  rootFill: ["#4f46e5"],
+  rootStroke: ["#3730a3"],
+  terminalText: ["#94a3b8"],
+  edgeColor: ["#64748b"],
+  edgeText: ["#475569"],
+  cycleColor: ["#e11d48"],
+  cellFill: ["#c7d2fe"],
+  cellEmptyFill: ["#f8fafc"],
+  cellStroke: ["#cbd5e1"],
+  cellText: ["#1e293b"],
+  gutterText: ["#94a3b8"],
+};
+
+const RETIRED_DARK: Record<PaletteColorKey, readonly string[]> = {
+  background: ["#1a1a1a"],
+  nodeFill: ["#312e81"],
+  nodeStroke: ["#818cf8"],
+  nodeText: ["#ffffff", "#e0e7ff"],
+  rootFill: ["#6366f1"],
+  rootStroke: ["#a5b4fc"],
+  terminalText: ["#64748b"],
+  edgeColor: ["#94a3b8"],
+  edgeText: ["#cbd5e1"],
+  cycleColor: ["#fb7185"],
+  cellFill: ["#4338ca"],
+  cellEmptyFill: ["#262626"],
+  cellStroke: ["#404040"],
+  cellText: ["#e5e7eb"],
+  gutterText: ["#6b7280"],
+};
+
+const PALETTE_COLOR_KEYS = Object.keys(RETIRED_LIGHT) as PaletteColorKey[];
+
+function paletteFrom(stored: unknown, defaults: Palette, retired: Record<PaletteColorKey, readonly string[]>): Palette {
+  const source = record(stored);
+  const palette: Palette = { ...defaults };
+  for (const key of PALETTE_COLOR_KEYS) {
+    const value = normalizeCssHex(source[key]);
+    palette[key] = value === null || retired[key].includes(value) ? defaults[key] : value;
+  }
+  palette.backgroundImage = imageUrl(source.backgroundImage, defaults.backgroundImage);
+  palette.nodeBackgroundImage = imageUrl(source.nodeBackgroundImage, defaults.nodeBackgroundImage);
+  return palette;
+}
 
 export const DEFAULT_LAYOUT: Layout = {
   nodeShape: "circle",
@@ -103,7 +155,7 @@ export const DEFAULT_LAYOUT: Layout = {
   edgeStyle: "solid",
   splines: "spline",
   rankdir: "TB",
-  fontFamily: "Outfit",
+  fontFamily: "Inter Tight",
   fontSize: 16,
   penWidth: 1.4,
   nodeSep: 0.35,
@@ -166,16 +218,8 @@ export function withDefaults(stored: unknown): Settings {
   layout.rankSep = num(layout.rankSep, DEFAULT_LAYOUT.rankSep, 0.1, 2);
   layout.nodeSize = num(layout.nodeSize, DEFAULT_LAYOUT.nodeSize, 0.6, 1.8);
   layout.fontFamily = DEFAULT_LAYOUT.fontFamily;
-  const light = { ...LIGHT, ...record(s.light) };
-  const dark = { ...DARK, ...record(s.dark) };
-  light.background = normalizeCssHex(light.background) ?? LIGHT.background;
-  dark.background = normalizeCssHex(dark.background) ?? DARK.background;
-  if (light.nodeText === "#1e1b4b") light.nodeText = LIGHT.nodeText;
-  if (dark.nodeText === "#e0e7ff") dark.nodeText = DARK.nodeText;
-  light.backgroundImage = imageUrl(light.backgroundImage, LIGHT.backgroundImage);
-  dark.backgroundImage = imageUrl(dark.backgroundImage, DARK.backgroundImage);
-  light.nodeBackgroundImage = imageUrl(light.nodeBackgroundImage, LIGHT.nodeBackgroundImage);
-  dark.nodeBackgroundImage = imageUrl(dark.nodeBackgroundImage, DARK.nodeBackgroundImage);
+  const light = paletteFrom(s.light, LIGHT, RETIRED_LIGHT);
+  const dark = paletteFrom(s.dark, DARK, RETIRED_DARK);
   const mode: ThemeMode = enumValue(s.mode, THEME_MODES, DEFAULT_SETTINGS.mode);
   return {
     ...DEFAULT_SETTINGS,

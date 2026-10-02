@@ -1,6 +1,6 @@
 # Privacy Policy for Graphy
 
-Last updated: September 17, 2026
+Last updated: October 1, 2026
 
 Graphy is a Chrome extension that draws LeetCode custom test cases as graphs. It is made by Dylan Wang (`dwang2022@gmail.com`).
 
@@ -62,7 +62,7 @@ Graphy does not:
 ## Third-party services
 
 - **LeetCode** receives your code and Run requests as it normally would. Graphy’s Python tracer, when used, is part of that same Run request.
-- **Google Fonts** may load Inter Tight for the panel UI and its page-world host (`fonts.googleapis.com` / `fonts.gstatic.com`). That is a font request from Graphy’s extension surface, not Graphy sending your solutions to Google.
+- **Fonts** ship inside the extension. Graphy makes no font requests to Google Fonts or any other third party.
 
 Google’s handling of Chrome sync data is covered by [Google’s Privacy Policy](https://policies.google.com/privacy).
 

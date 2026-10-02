@@ -22,6 +22,14 @@ export function clearTraceOverlay(svgRoot: Element): void {
   for (const badge of svgRoot.querySelectorAll(`.${POINTER_CLASS}`)) badge.remove();
 }
 
+export function refreshTraceTones(svgRoot: Element): void {
+  const tone = imageToneOf(svgRoot);
+  for (const target of svgRoot.querySelectorAll(`[${TONE_ATTR}]`)) {
+    const next = paintTone(paintFill(target), tone);
+    if (target.getAttribute(TONE_ATTR) !== next) target.setAttribute(TONE_ATTR, next);
+  }
+}
+
 export function applyTraceOverlay(svgRoot: Element, frame: TraceFrame): void {
   clearTraceOverlay(svgRoot);
 

@@ -2,6 +2,7 @@ import { useEffect, useRef } from "preact/hooks";
 import type { JSX } from "preact";
 import type { TraceFrame } from "../core/trace.js";
 import { PauseIcon, PlayIcon, StepBackIcon, StepForwardIcon } from "./icons.js";
+import { memo } from "./memo.js";
 
 interface Props {
   frames: readonly TraceFrame[];
@@ -14,7 +15,7 @@ interface Props {
 
 const STEP_MS = 650;
 
-export function TracePlayback({
+function TracePlaybackView({
   frames,
   truncated = false,
   index,
@@ -48,6 +49,7 @@ export function TracePlayback({
         type="button"
         class="trace-btn"
         aria-label={playing ? "Pause" : "Play"}
+        title={playing ? "Pause" : "Play"}
         onClick={() => {
           if (!playing && at >= frames.length - 1) onIndexChange(0);
           onPlayingChange(!playing);
@@ -59,6 +61,7 @@ export function TracePlayback({
         type="button"
         class="trace-btn"
         aria-label="Previous step"
+        title="Previous step"
         disabled={at <= 0}
         onClick={() => {
           onPlayingChange(false);
@@ -71,6 +74,7 @@ export function TracePlayback({
         type="button"
         class="trace-btn"
         aria-label="Next step"
+        title="Next step"
         disabled={at >= frames.length - 1}
         onClick={() => {
           onPlayingChange(false);
@@ -88,7 +92,7 @@ export function TracePlayback({
         aria-label="Trace step"
         onInput={(event) => {
           onPlayingChange(false);
-          onIndexChange(Number((event.target as HTMLInputElement).value));
+          onIndexChange(Number(event.currentTarget.value));
         }}
       />
       <span class="trace-meta">
@@ -96,9 +100,11 @@ export function TracePlayback({
       </span>
       {truncated && (
         <span class="trace-truncated" title="The run took too many steps, so only the start is shown.">
-          trace truncated
+          Trace cut off at {frames.length} steps
         </span>
       )}
     </div>
   );
 }
+
+export const TracePlayback = memo(TracePlaybackView);

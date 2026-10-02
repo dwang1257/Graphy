@@ -47,7 +47,15 @@
         <li><a href="#installation">Installation</a></li>
       </ul>
     </li>
-    <li><a href="#usage">Usage</a></li>
+    <li>
+      <a href="#usage">Usage</a>
+      <ul>
+        <li><a href="#styling">Styling</a></li>
+        <li><a href="#custom-input">Custom input</a></li>
+        <li><a href="#tracing">Tracing</a></li>
+      </ul>
+    </li>
+    <li><a href="#development">Development</a></li>
     <li><a href="#roadmap">Roadmap</a></li>
     <li><a href="#contact">Contact</a></li>
     <li><a href="#acknowledgments">Acknowledgments</a></li>
@@ -57,7 +65,8 @@
 <!-- ABOUT THE PROJECT -->
 ## About The Project
 
-Graphy is a highly customizable graph visualizer for LeetCode problems. You can change the background, nodes, and edges as you please.
+Graphy is a highly customizable graph visualizer for LeetCode problems.
+You can restyle the canvas, nodes, and edges as you please, and every change shows up on the graph instantly.
 
 Graphy reads the test case straight out of the editor and renders it in a floating panel next to the problem. Currently it supports binary trees, linked lists, and graphs.
 
@@ -113,10 +122,28 @@ Click the Graphy icon in the toolbar to show or hide the panel.
 Graphy reads the LeetCode editor, custom testcase inputs, and Run output locally in your browser to draw and trace graphs.
 Graphy stores visual settings in Chrome sync storage, and stores panel geometry, selected images, and the privacy-notice dismissal in local storage.
 Graphy does not send this data to a Graphy server.
+Fonts ship inside the extension, so the panel makes no requests to Google Fonts or any other third party.
 See [PRIVACY.md](PRIVACY.md) for the complete policy.
 
 <!-- USAGE -->
 ## Usage
+
+### Styling
+
+Click **Style** in the panel's title bar to open the style drawer.
+Changes apply to the graph as you make them, including while you drag a color picker.
+
+| Group | Settings |
+| --- | --- |
+| Theme | Light or Dark |
+| Nodes | Shape, fill color, and an optional image |
+| Edges | Line style, color, and arrowheads |
+| Canvas | Background color and an optional image |
+| Display | Null children in trees, grid indices, and the list end marker |
+
+Colors and images are saved per theme, so Light and Dark each keep their own palette.
+**Reset Light theme** (or **Reset Dark theme**) restores that theme's default colors, and **Undo reset** stays available for a few seconds afterwards.
+Press **Escape** or click outside the drawer to close it.
 
 ### Custom input
 
@@ -131,7 +158,7 @@ Press **Enter** or **Draw** to render, and **Shift+Enter** for a new line.
 Python solutions are traced automatically when you hit **Run**, so you do not need to change your code.
 Graphy keeps its trace data out of LeetCode's stdout, so the output you see is only what your code prints.
 Use the play, step, and scrubber controls under the graph to move through the run.
-Very long runs are cut short and marked as truncated.
+Very long runs are cut off, and the playback bar shows how many steps were kept.
 
 In other languages, print lines that start with `#graphy` followed by one or more verbs and node references:
 
@@ -147,6 +174,29 @@ In other languages, print lines that start with `#graphy` followed by one or mor
 
 A reference is a node value such as `5`, a node id such as `a3`, or a grid cell such as `2,3`.
 For example, `print("#graphy walk 1 2 4")` walks three nodes of a tree.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+<!-- DEVELOPMENT -->
+## Development
+
+Graphy is built with Vite and CRXJS.
+Install dependencies with `npm install`, which also keeps packages in `node_modules.nosync` so iCloud does not evict them.
+Run a plain `npm install` again after adding a package, because `npm install <package>` skips that step.
+
+| Command | What it does |
+| --- | --- |
+| `npm run build` | Builds the extension into `dist/` |
+| `npm test` | Runs the script checks and the Vitest suite |
+| `npm run typecheck` | Type-checks the extension and the harness |
+| `npm run lint` | Type-checks and runs the repository lint rules |
+| `npm run harness` | Serves the panel standalone at `http://localhost:5199` |
+
+The harness renders the real panel inside a stand-in LeetCode host, with an in-memory `chrome.storage` and sample inputs for trees, lists, grids, multiple cases, and traces.
+It never writes to `dist/`, so use it instead of `npm run dev` for quick visual checks.
+From the browser console, `window.graphyHarness` can send samples, resize the panel, and switch themes.
+
+To try a build in Chrome, open `chrome://extensions`, turn on **Developer mode**, click **Load unpacked**, and select `dist/`.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -175,6 +225,7 @@ LinkedIn: [https://www.linkedin.com/in/dylanwang1/](https://www.linkedin.com/in/
 
 * [Graphviz](https://graphviz.org) and [@hpcc-js/wasm-graphviz](https://github.com/hpcc-systems/hpcc-js-wasm) for the layout engine
 * [CRXJS](https://crxjs.dev/vite-plugin) for the Manifest V3 build pipeline
+* [Inter Tight](https://github.com/googlefonts/inter-tight) and [JetBrains Mono](https://www.jetbrains.com/lp/mono/), bundled through [Fontsource](https://fontsource.org)
 * [Best-README-Template](https://github.com/othneildrew/Best-README-Template) for this README's structure
 * [Shields.io](https://shields.io) for the badges
 

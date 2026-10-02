@@ -29,30 +29,52 @@ function compactOf(settings: Settings): Settings {
   };
 }
 
-function installChromeMock(options?: { localSetError?: Error }) {
+type Listener = (changes: Record<string, { newValue?: unknown; oldValue?: unknown }>, area: string) => void;
+
+function installChromeMock(options?: { localSetError?: Error; holdLocalSet?: boolean }) {
   const syncStore: Record<string, unknown> = {};
   const localStore: Record<string, unknown> = {};
+  const listeners: Listener[] = [];
+  const heldLocal: Array<() => void> = [];
 
-  const area = (store: Record<string, unknown>, rejectSet?: Error) => ({
+  const area = (name: string, store: Record<string, unknown>, rejectSet?: Error, hold?: boolean) => ({
     get: vi.fn(async (key: string) =>
       Object.prototype.hasOwnProperty.call(store, key) ? { [key]: store[key] } : {},
     ),
     set: vi.fn(async (items: Record<string, unknown>) => {
       if (rejectSet) throw rejectSet;
+      if (hold) await new Promise<void>((resolve) => heldLocal.push(resolve));
       Object.assign(store, items);
+      const changes = Object.fromEntries(Object.entries(items).map(([key, value]) => [key, { newValue: structuredClone(value) }]));
+      for (const listener of listeners) listener(changes, name);
     }),
   });
 
-  const sync = area(syncStore);
-  const local = area(localStore, options?.localSetError);
+  const sync = area("sync", syncStore);
+  const local = area("local", localStore, options?.localSetError, options?.holdLocalSet);
   vi.stubGlobal("chrome", {
     storage: {
       sync,
       local,
-      onChanged: { addListener: vi.fn(), removeListener: vi.fn() },
+      onChanged: {
+        addListener: vi.fn((listener: Listener) => listeners.push(listener)),
+        removeListener: vi.fn((listener: Listener) => listeners.splice(listeners.indexOf(listener), 1)),
+      },
     },
   });
-  return { syncStore, localStore, sync, local };
+  const emit = (area: string, key: string, newValue: unknown) => {
+    for (const listener of [...listeners]) listener({ [key]: { newValue } }, area);
+  };
+  return { syncStore, localStore, sync, local, emit, heldLocal };
+}
+
+function collect(onSettingsChanged: (handler: (update: (prev: Settings) => Settings) => void) => () => void, start: Settings) {
+  const state = { current: start, calls: 0 };
+  const stop = onSettingsChanged((update) => {
+    state.calls += 1;
+    state.current = update(state.current);
+  });
+  return { state, stop };
 }
 
 afterEach(() => {
@@ -121,6 +143,102 @@ describe("saveSettings", () => {
     await saveSettings(settings);
 
     expect(local.set).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("saveSettings writes", () => {
+  it("does not wait for the image write before writing style to sync", async () => {
+    const { sync, local, heldLocal } = installChromeMock({ holdLocalSet: true });
+    const { saveSettings } = await storage();
+    const saving = saveSettings(settingsWithImages({ mode: "light" }));
+    await Promise.resolve();
+    expect(local.set).toHaveBeenCalledTimes(1);
+    expect(sync.set).toHaveBeenCalledTimes(1);
+    heldLocal.forEach((resolve) => resolve());
+    await saving;
+  });
+
+  it("skips the sync write when the compact style is unchanged", async () => {
+    const { syncStore, sync } = installChromeMock();
+    syncStore[SYNC_KEY] = compactOf(settingsWithImages());
+    const { loadSettings, saveSettings } = await storage();
+    const loaded = await loadSettings();
+    await saveSettings(loaded);
+    expect(sync.set).not.toHaveBeenCalled();
+    await saveSettings({ ...loaded, mode: "light" });
+    await saveSettings({ ...loaded, mode: "light" });
+    expect(sync.set).toHaveBeenCalledTimes(1);
+  });
+
+  it("tags sync writes with this panel's writer id and an increasing revision", async () => {
+    const { syncStore } = installChromeMock();
+    const { saveSettings, writeMetaOf, WRITER_ID } = await storage();
+    await saveSettings({ ...DEFAULT_SETTINGS, mode: "light" });
+    expect(writeMetaOf(syncStore[SYNC_KEY])).toEqual({ writer: WRITER_ID, rev: 1 });
+    await saveSettings({ ...DEFAULT_SETTINGS, mode: "dark" });
+    expect(writeMetaOf(syncStore[SYNC_KEY])).toEqual({ writer: WRITER_ID, rev: 2 });
+  });
+});
+
+describe("onSettingsChanged", () => {
+  it("ignores echoes of this panel's own writes", async () => {
+    installChromeMock();
+    const { onSettingsChanged, saveSettings } = await storage();
+    const { state } = collect(onSettingsChanged, DEFAULT_SETTINGS);
+    await saveSettings(settingsWithImages({ mode: "light" }));
+    expect(state.calls).toBe(0);
+  });
+
+  it("applies style from another writer and keeps the current images without reading local storage", async () => {
+    const { localStore, local, emit } = installChromeMock();
+    localStore[IMAGES_KEY] = IMAGES;
+    const { loadSettings, onSettingsChanged } = await storage();
+    const loaded = await loadSettings();
+    local.get.mockClear();
+    const { state } = collect(onSettingsChanged, loaded);
+    emit("sync", SYNC_KEY, { ...compactOf(loaded), mode: "light", light: { ...loaded.light, nodeFill: "#00ff00", backgroundImage: null }, meta: { writer: "other", rev: 1 } });
+    expect(state.calls).toBe(1);
+    expect(state.current.mode).toBe("light");
+    expect(state.current.light.nodeFill).toBe("#00ff00");
+    expect(state.current.light.backgroundImage).toBe(IMAGES.light.backgroundImage);
+    expect(local.get).not.toHaveBeenCalled();
+  });
+
+  it("drops stale revisions from another writer", async () => {
+    const { emit } = installChromeMock();
+    const { onSettingsChanged } = await storage();
+    const { state } = collect(onSettingsChanged, DEFAULT_SETTINGS);
+    emit("sync", SYNC_KEY, { ...DEFAULT_SETTINGS, mode: "light", meta: { writer: "other", rev: 2 } });
+    emit("sync", SYNC_KEY, { ...DEFAULT_SETTINGS, mode: "dark", meta: { writer: "other", rev: 1 } });
+    expect(state.calls).toBe(1);
+    expect(state.current.mode).toBe("light");
+  });
+
+  it("merges only images when another panel changes the image store", async () => {
+    const { localStore, emit } = installChromeMock();
+    localStore[IMAGES_KEY] = IMAGES;
+    const { loadSettings, onSettingsChanged } = await storage();
+    const loaded = await loadSettings();
+    const edited = { ...loaded, light: { ...loaded.light, nodeFill: "#abcdef" } };
+    const { state } = collect(onSettingsChanged, edited);
+    emit("local", IMAGES_KEY, IMAGES);
+    expect(state.calls).toBe(0);
+    const next = { ...IMAGES, dark: { ...IMAGES.dark, backgroundImage: "data:image/png;base64,next" } };
+    emit("local", IMAGES_KEY, next);
+    expect(state.calls).toBe(1);
+    expect(state.current.dark.backgroundImage).toBe("data:image/png;base64,next");
+    expect(state.current.light.nodeFill).toBe("#abcdef");
+  });
+
+  it("ignores unrelated keys and stops listening when disposed", async () => {
+    const { emit } = installChromeMock();
+    const { onSettingsChanged } = await storage();
+    const { state, stop } = collect(onSettingsChanged, DEFAULT_SETTINGS);
+    emit("local", "graphy.panel", { x: 1 });
+    emit("sync", "graphy.other", 1);
+    stop();
+    emit("sync", SYNC_KEY, { ...DEFAULT_SETTINGS, mode: "light", meta: { writer: "other", rev: 1 } });
+    expect(state.calls).toBe(0);
   });
 });
 

@@ -1,5 +1,5 @@
 import { DEFAULT_SETTINGS, withDefaults, type Settings } from "./schema.js";
-import { extractImages, sameImages, sanitizeImageAssets, settingsFromStores, stripImages, type ImageAssets } from "./split.js";
+import { extractImages, mergeImages, sameImages, sanitizeImageAssets, settingsFromStores, stripImages, type ImageAssets } from "./split.js";
 import { isStructureKind, type StructureKind } from "../core/types.js";
 
 const SYNC_KEY = "graphy.settings";
@@ -41,10 +41,36 @@ export function sanitizePanelState(stored: unknown): PanelState {
   };
 }
 
-let storedImages: ImageAssets | null = null;
+export interface WriteMeta {
+  writer: string;
+  rev: number;
+}
 
-function rememberImages(localBag: Record<string, unknown>): void {
-  storedImages = sanitizeImageAssets(localBag[IMAGES_KEY]);
+export type SettingsUpdate = (prev: Settings) => Settings;
+
+function randomWriterId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
+export const WRITER_ID = randomWriterId();
+
+let rev = 0;
+let storedImages: ImageAssets | null = null;
+let lastSyncJson: string | null = null;
+const seenRevs = new Map<string, number>();
+
+function compactJson(settings: Settings): string {
+  return JSON.stringify(stripImages(settings));
+}
+
+export function writeMetaOf(stored: unknown): WriteMeta | null {
+  if (!stored || typeof stored !== "object") return null;
+  const meta = (stored as Record<string, unknown>).meta;
+  if (!meta || typeof meta !== "object") return null;
+  const { writer, rev: written } = meta as Record<string, unknown>;
+  if (typeof writer !== "string" || typeof written !== "number" || !Number.isFinite(written)) return null;
+  return { writer, rev: written };
 }
 
 export async function loadSettings(): Promise<Settings> {
@@ -53,12 +79,11 @@ export async function loadSettings(): Promise<Settings> {
       chrome.storage.sync.get(SYNC_KEY),
       chrome.storage.local.get(IMAGES_KEY),
     ]);
-    rememberImages(localBag);
-    return settingsFromStores(
-      syncBag[SYNC_KEY],
-      localBag[IMAGES_KEY],
-      Object.prototype.hasOwnProperty.call(localBag, IMAGES_KEY),
-    );
+    const hasImages = Object.prototype.hasOwnProperty.call(localBag, IMAGES_KEY);
+    if (hasImages) storedImages = sanitizeImageAssets(localBag[IMAGES_KEY]);
+    const settings = settingsFromStores(syncBag[SYNC_KEY], localBag[IMAGES_KEY], hasImages);
+    if (Object.prototype.hasOwnProperty.call(syncBag, SYNC_KEY)) lastSyncJson = compactJson(settings);
+    return settings;
   } catch {
     return DEFAULT_SETTINGS;
   }
@@ -73,14 +98,32 @@ export async function loadAutoOpen(): Promise<boolean> {
   }
 }
 
-export async function saveSettings(settings: Settings): Promise<void> {
+function writeImages(images: ImageAssets): Promise<void> | null {
+  if (storedImages && sameImages(storedImages, images)) return null;
+  const previous = storedImages;
+  storedImages = images;
+  return settle(() => chrome.storage.local.set({ [IMAGES_KEY]: images })).then((ok) => {
+    if (!ok && storedImages === images) storedImages = previous;
+  });
+}
+
+function writeStyle(settings: Settings): Promise<void> | null {
   const compact = stripImages(settings);
-  const images = extractImages(settings);
-  const imagesChanged = !storedImages || !sameImages(storedImages, images);
-  if (imagesChanged && await settle(() => chrome.storage.local.set({ [IMAGES_KEY]: images }))) {
-    storedImages = images;
-  }
-  await settle(() => chrome.storage.sync.set({ [SYNC_KEY]: compact }));
+  const json = JSON.stringify(compact);
+  if (json === lastSyncJson) return null;
+  lastSyncJson = json;
+  rev += 1;
+  const meta: WriteMeta = { writer: WRITER_ID, rev };
+  return settle(() => chrome.storage.sync.set({ [SYNC_KEY]: { ...compact, meta } })).then((ok) => {
+    if (!ok && lastSyncJson === json) lastSyncJson = null;
+  });
+}
+
+export async function saveSettings(settings: Settings): Promise<void> {
+  const writes = [writeImages(extractImages(settings)), writeStyle(settings)].filter(
+    (write): write is Promise<void> => write !== null,
+  );
+  await Promise.all(writes);
 }
 
 async function settle(write: () => Promise<void>): Promise<boolean> {
@@ -92,29 +135,40 @@ async function settle(write: () => Promise<void>): Promise<boolean> {
   }
 }
 
-export function onSettingsChanged(handler: (settings: Settings) => void): () => void {
+function isFreshRemote(meta: WriteMeta | null): boolean {
+  if (!meta) return true;
+  if (meta.writer === WRITER_ID) return false;
+  const seen = seenRevs.get(meta.writer);
+  if (seen !== undefined && meta.rev <= seen) return false;
+  seenRevs.set(meta.writer, meta.rev);
+  return true;
+}
+
+export function onSettingsChanged(handler: (update: SettingsUpdate) => void): () => void {
   const listener = (
     changes: Record<string, chrome.storage.StorageChange>,
     area: string,
   ): void => {
-    const syncChange = changes[SYNC_KEY];
-    if (area !== "sync" || !syncChange) return;
-    const syncValue = syncChange.newValue;
-    void chrome.storage.local.get(IMAGES_KEY).then(
-      (localBag) => {
-        rememberImages(localBag);
-        handler(
-          settingsFromStores(
-            syncValue,
-            localBag[IMAGES_KEY],
-            Object.prototype.hasOwnProperty.call(localBag, IMAGES_KEY),
-          ),
-        );
-      },
-      () => {
-        handler(settingsFromStores(syncValue, undefined, false));
-      },
-    );
+    const imagesChange = area === "local" ? changes[IMAGES_KEY] : undefined;
+    if (imagesChange) {
+      const images = sanitizeImageAssets(imagesChange.newValue);
+      if (storedImages && sameImages(storedImages, images)) return;
+      storedImages = images;
+      handler((prev) => mergeImages(prev, images));
+      return;
+    }
+    const syncChange = area === "sync" ? changes[SYNC_KEY] : undefined;
+    if (!syncChange) return;
+    const value: unknown = syncChange.newValue;
+    if (!isFreshRemote(writeMetaOf(value))) return;
+    const incoming = withDefaults(value);
+    lastSyncJson = compactJson(incoming);
+    if (storedImages) {
+      handler((prev) => mergeImages(incoming, extractImages(prev)));
+      return;
+    }
+    const legacy = settingsFromStores(value, undefined, false);
+    handler(() => legacy);
   };
   chrome.storage.onChanged.addListener(listener);
   return () => chrome.storage.onChanged.removeListener(listener);

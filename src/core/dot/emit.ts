@@ -1,15 +1,14 @@
 import type { GEdge, GNode, GraphModel, MatrixData } from "../types.js";
 import { gridPaneOf } from "../scene.js";
-import { contrastInkFromCss } from "../../panel/imageInk.js";
-import type { Layout, Palette } from "../../settings/schema.js";
+import type { Layout } from "../../settings/schema.js";
+import { PLACEHOLDER as paint } from "./paintRoles.js";
 
 export interface EmitOptions {
-  palette: Palette;
   layout: Layout;
 }
 
 export function emitDot(model: GraphModel, options: EmitOptions): string {
-  const { palette, layout } = options;
+  const { layout } = options;
   const s = layout.nodeSize;
   const keyword = model.directed ? "digraph" : "graph";
   const lines = [
@@ -27,17 +26,17 @@ export function emitDot(model: GraphModel, options: EmitOptions): string {
     `  node [${attrs({
       shape: layout.nodeShape,
       style: "filled",
-      fillcolor: palette.nodeFill,
-      color: palette.nodeStroke,
-      fontcolor: contrastInkFromCss(palette.nodeFill),
+      fillcolor: paint.nodeFill,
+      color: paint.nodeStroke,
+      fontcolor: paint.nodeInk,
       fontname: layout.fontFamily,
       fontsize: layout.fontSize * s,
       penwidth: layout.penWidth,
       margin: 0.04 * s,
     })}];`,
     `  edge [${attrs({
-      color: palette.edgeColor,
-      fontcolor: palette.edgeText,
+      color: paint.edge,
+      fontcolor: paint.edgeText,
       fontname: layout.fontFamily,
       fontsize: Math.max(8, layout.fontSize - 2) * s,
       penwidth: layout.penWidth,
@@ -52,7 +51,7 @@ export function emitDot(model: GraphModel, options: EmitOptions): string {
       shape: "plaintext",
       style: "",
       label: "∅",
-      fontcolor: palette.terminalText,
+      fontcolor: paint.terminal,
       fontsize: (layout.fontSize + 2) * s,
     })}];`);
   }
@@ -68,7 +67,7 @@ export function emitDot(model: GraphModel, options: EmitOptions): string {
 }
 
 function nodeLine(node: GNode, options: EmitOptions, ranked: boolean): string {
-  const { palette, layout } = options;
+  const { layout } = options;
   const { nodeSize } = layout;
   if (node.matrix) {
     return `${id(node.id)} [${attrs({ shape: "plaintext", style: "", label: html(matrixTable(node.matrix, gridPaneOf(node.id) ?? "a", options)) })}];`;
@@ -77,9 +76,9 @@ function nodeLine(node: GNode, options: EmitOptions, ranked: boolean): string {
   switch (node.role) {
     case "root":
       Object.assign(base, {
-        fillcolor: palette.rootFill,
-        color: palette.rootStroke,
-        fontcolor: contrastInkFromCss(palette.rootFill),
+        fillcolor: paint.rootFill,
+        color: paint.rootStroke,
+        fontcolor: paint.rootInk,
       });
       break;
     case "spine":
@@ -90,7 +89,7 @@ function nodeLine(node: GNode, options: EmitOptions, ranked: boolean): string {
         base,
         { label: "", shape: "point", width: 0.09 * nodeSize },
         layout.showNullChildren
-          ? { color: palette.terminalText, fillcolor: palette.terminalText, penwidth: 1 }
+          ? { color: paint.terminal, fillcolor: paint.terminal, penwidth: 1 }
           : { style: "invis" },
       );
       break;
@@ -98,7 +97,7 @@ function nodeLine(node: GNode, options: EmitOptions, ranked: boolean): string {
       Object.assign(base, {
         shape: "plaintext",
         style: "",
-        fontcolor: palette.edgeText,
+        fontcolor: paint.edgeText,
         fontsize: Math.max(8, layout.fontSize - 3) * nodeSize,
         height: 0,
         margin: 0,
@@ -108,7 +107,7 @@ function nodeLine(node: GNode, options: EmitOptions, ranked: boolean): string {
       Object.assign(base, {
         shape: "plaintext",
         style: "",
-        fontcolor: palette.terminalText,
+        fontcolor: paint.terminal,
         fontsize: (layout.fontSize + 2) * nodeSize,
         width: 0,
         height: 0,
@@ -119,18 +118,18 @@ function nodeLine(node: GNode, options: EmitOptions, ranked: boolean): string {
   return `${id(node.id)} [${attrs(base)}];`;
 }
 
-function edgeLine(edge: GEdge, directed: boolean, { palette, layout }: EmitOptions): string {
+function edgeLine(edge: GEdge, directed: boolean, { layout }: EmitOptions): string {
   const base: Record<string, string | number | undefined> = { label: edge.label };
   if ("constraint" in edge && edge.constraint === false) base.constraint = "false";
   if (edge.role === "spine") Object.assign(base, { style: "invis", weight: 10 });
   else if (edge.role === "null") {
     Object.assign(base, layout.showNullChildren
-      ? { style: "dotted", color: palette.terminalText, penwidth: 1, arrowhead: "none" }
+      ? { style: "dotted", color: paint.terminal, penwidth: 1, arrowhead: "none" }
       : { style: "invis" });
   } else if (edge.role === "cycle") {
     Object.assign(base, {
-      color: palette.cycleColor,
-      fontcolor: palette.cycleColor,
+      color: paint.cycle,
+      fontcolor: paint.cycle,
       style: "solid",
       penwidth: layout.penWidth + 0.4,
       constraint: "false",
@@ -139,7 +138,7 @@ function edgeLine(edge: GEdge, directed: boolean, { palette, layout }: EmitOptio
   return `${id(edge.from)} ${directed ? "->" : "--"} ${id(edge.to)} [${attrs(base)}];`;
 }
 
-function matrixTable(matrix: MatrixData, pane: string, { palette, layout }: EmitOptions): string {
+function matrixTable(matrix: MatrixData, pane: string, { layout }: EmitOptions): string {
   const s = layout.nodeSize;
   const cellSize = Math.round(26 * s);
   const cellFontSize = layout.fontSize * s;
@@ -147,33 +146,33 @@ function matrixTable(matrix: MatrixData, pane: string, { palette, layout }: Emit
   const rows: string[] = [];
 
   if (matrix.showIndices) {
-    const header = [`<TD BORDER="0"></TD>`, ...Array.from({ length: width }, (_, c) => gutter(String(c), palette, layout))];
+    const header = [`<TD BORDER="0"></TD>`, ...Array.from({ length: width }, (_, c) => gutter(String(c), layout))];
     rows.push(`<TR>${header.join("")}</TR>`);
   }
 
   matrix.rows.forEach((row, r) => {
-    const tds = matrix.showIndices ? [gutter(String(r), palette, layout)] : [];
+    const tds = matrix.showIndices ? [gutter(String(r), layout)] : [];
     for (let c = 0; c < width; c += 1) {
       const cell = row[c];
       if (!cell) {
         tds.push(`<TD BORDER="0"></TD>`);
         continue;
       }
-      const fill = cell.filled ? palette.cellFill : palette.cellEmptyFill;
+      const fill = cell.filled ? paint.cellFill : paint.cellEmptyFill;
       tds.push(
-        `<TD HREF="graphy://cell/${pane}/${r}/${c}" BGCOLOR="${esc(fill)}" WIDTH="${cellSize}" HEIGHT="${cellSize}" ALIGN="CENTER">` +
-        `<FONT COLOR="${esc(palette.cellText)}" POINT-SIZE="${cellFontSize}">${htmlText(cell.text)}</FONT></TD>`,
+        `<TD HREF="graphy://cell/${pane}/${r}/${c}" BGCOLOR="${fill}" WIDTH="${cellSize}" HEIGHT="${cellSize}" ALIGN="CENTER">` +
+        `<FONT COLOR="${paint.cellText}" POINT-SIZE="${cellFontSize}">${htmlText(cell.text)}</FONT></TD>`,
       );
     }
     rows.push(`<TR>${tds.join("")}</TR>`);
   });
 
-  return `<TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0" CELLPADDING="2" COLOR="${esc(palette.cellStroke)}">${rows.join("")}</TABLE>`;
+  return `<TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0" CELLPADDING="2" COLOR="${paint.cellStroke}">${rows.join("")}</TABLE>`;
 }
 
-function gutter(text: string, palette: Palette, layout: Layout): string {
+function gutter(text: string, layout: Layout): string {
   const fontSize = Math.max(7, layout.fontSize - 3) * layout.nodeSize;
-  return `<TD BORDER="0"><FONT COLOR="${esc(palette.gutterText)}" POINT-SIZE="${fontSize}">${htmlText(text)}</FONT></TD>`;
+  return `<TD BORDER="0"><FONT COLOR="${paint.gutterText}" POINT-SIZE="${fontSize}">${htmlText(text)}</FONT></TD>`;
 }
 
 const RAW = Symbol("raw");
@@ -204,8 +203,4 @@ function id(raw: string): string {
 
 function htmlText(text: string): string {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-
-function esc(text: string): string {
-  return htmlText(text).replace(/"/g, "&quot;");
 }

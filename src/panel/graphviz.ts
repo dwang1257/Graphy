@@ -1,10 +1,24 @@
 import { Graphviz } from "@hpcc-js/wasm-graphviz";
 
 let loading: Promise<Graphviz> | null = null;
+let engine: Graphviz | null = null;
 
-function engine(): Promise<Graphviz> {
-  loading ??= Graphviz.load();
+export function loadEngine(): Promise<Graphviz> {
+  loading ??= Graphviz.load().then(
+    (loaded) => {
+      engine = loaded;
+      return loaded;
+    },
+    (cause: unknown) => {
+      loading = null;
+      throw cause;
+    },
+  );
   return loading;
+}
+
+export function isEngineReady(): boolean {
+  return engine !== null;
 }
 
 export function yieldToMain(): Promise<void> {
@@ -19,14 +33,16 @@ export function yieldToMain(): Promise<void> {
   });
 }
 
+export function layoutNow(dot: string): string {
+  if (!engine) throw new Error("Graphviz is still loading");
+  return engine.layout(dot, "svg", "dot");
+}
+
 export async function renderDot(dot: string): Promise<string> {
-  const graphviz = await engine();
-  await yieldToMain();
+  const graphviz = await loadEngine();
   return graphviz.layout(dot, "svg", "dot");
 }
 
 export function preload(): void {
-  void engine().catch(() => {
-    loading = null;
-  });
+  void loadEngine().catch(() => undefined);
 }

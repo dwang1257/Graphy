@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { JSX } from "preact";
 
 import { clampCaseIndex } from "../core/cases.js";
@@ -10,6 +10,7 @@ import { EMPTY_CUSTOM_COPY, EMPTY_STAGE_COPY, isEmptyStage, isTooLarge, tooLarge
 import { visibleNodeCount, type StructureKind } from "../core/types.js";
 import { useStructureKind } from "./useStructureKind.js";
 import { DEFAULT_SETTINGS, type Settings } from "../settings/schema.js";
+import { extractImages, mergeImages, sameImages, sameSettings } from "../settings/split.js";
 import {
   loadOverrides,
   loadPanelState,
@@ -24,7 +25,7 @@ import {
 } from "../settings/storage.js";
 import { PANEL_CHANNEL, isToPanel, type FromPanel, type Snapshot } from "../shared/protocol.js";
 
-import { SETTINGS_DOT_DEBOUNCE_MS, dotStyleKey } from "./dotStyle.js";
+import { objectUrlFor } from "./blobUrl.js";
 import { GraphView } from "./GraphView.js";
 import { SettingsDrawer } from "./SettingsDrawer.js";
 import { PrivacyNotice } from "./privacyNotice.js";
@@ -42,10 +43,12 @@ import {
   setFieldKind,
   setFieldValue,
   type CustomCase,
+  type FieldKind,
 } from "./customCase.js";
-import { inkFromDataUrl } from "./imageInk.js";
+import { useImageInk } from "./imageInk.js";
 import { compactSettingsImages } from "./imageUpload.js";
 import { stageBackgroundStyle, stageInkVars } from "./stageBackground.js";
+import { svgPaint } from "./svgPaint.js";
 import { TitleBar } from "./TitleBar.js";
 import { TracePlayback } from "./TracePlayback.js";
 import { useSceneRender } from "./useSceneRender.js";
@@ -64,8 +67,13 @@ function toHost(message: FromPanel): void {
   parent.postMessage(message, PARENT_ORIGIN);
 }
 
-export function App(): JSX.Element {
-  const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
+export type SettingsInput = Settings | ((prev: Settings) => Settings);
+
+export const SETTINGS_SAVE_DELAY_MS = 300;
+
+export function App(): JSX.Element | null {
+  const [settings, setSettingsState] = useState<Settings>(DEFAULT_SETTINGS);
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [activeCase, setActiveCase] = useState<CaseSelection>(0);
@@ -76,35 +84,58 @@ export function App(): JSX.Element {
   const [traceIndex, setTraceIndex] = useState(0);
   const [tracePlaying, setTracePlaying] = useState(false);
   const [shrunk, setShrunk] = useState(false);
-  const [stageImageInk, setStageImageInk] = useState<string | null>(null);
   const [showPrivacyNotice, setShowPrivacyNotice] = useState(true);
 
-  const lastSaved = useRef("");
+  const settingsRef = useRef(settings);
   const saveTimer = useRef<number | undefined>(undefined);
+  const shrunkRef = useRef(shrunk);
+  shrunkRef.current = shrunk;
   const lastSlug = useRef("");
   const sawHostShrunk = useRef(false);
   const customFieldRef = useRef<HTMLTextAreaElement>(null);
   const statusbarRef = useRef<HTMLDivElement>(null);
-  const [statusbarHeight, setStatusbarHeight] = useState(0);
+
+  const commitSettings = useCallback((next: Settings) => {
+    settingsRef.current = next;
+    setSettingsState(next);
+  }, []);
+
+  const flushSettingsSave = useCallback(() => {
+    if (saveTimer.current === undefined) return;
+    window.clearTimeout(saveTimer.current);
+    saveTimer.current = undefined;
+    void saveSettings(settingsRef.current);
+  }, []);
+
+  const updateSettings = useCallback((update: SettingsInput) => {
+    const prev = settingsRef.current;
+    const next = typeof update === "function" ? update(prev) : update;
+    if (next === prev) return;
+    commitSettings(next);
+    window.clearTimeout(saveTimer.current);
+    saveTimer.current = window.setTimeout(flushSettingsSave, SETTINGS_SAVE_DELAY_MS);
+  }, [commitSettings, flushSettingsSave]);
 
   useEffect(() => {
     preload();
     void loadSettings().then(async (loaded) => {
-      setSettings(loaded);
+      commitSettings(loaded);
+      setSettingsLoaded(true);
       const compacted = await compactSettingsImages(loaded);
       if (compacted === loaded) return;
-      setSettings(compacted);
-      lastSaved.current = JSON.stringify(compacted);
-      void saveSettings(compacted);
+      updateSettings((prev) =>
+        sameImages(extractImages(prev), extractImages(loaded)) ? mergeImages(prev, extractImages(compacted)) : prev,
+      );
     });
     void loadOverrides().then(setOverrides);
     void loadPanelState().then((state) => {
       if (!sawHostShrunk.current) setShrunk(state.shrunk);
     });
     void loadPrivacyNoticeDismissed().then((dismissed) => setShowPrivacyNotice(!dismissed));
-    const stop = onSettingsChanged((incoming) => {
-      if (JSON.stringify(incoming) === lastSaved.current) return;
-      setSettings(incoming);
+    const stop = onSettingsChanged((update) => {
+      const prev = settingsRef.current;
+      const next = update(prev);
+      if (!sameSettings(prev, next)) commitSettings(next);
     });
 
     const onMessage = (event: MessageEvent): void => {
@@ -125,11 +156,19 @@ export function App(): JSX.Element {
       }
       setSnapshot(data.payload);
     };
+    const onVisibility = (): void => {
+      if (document.visibilityState === "hidden") flushSettingsSave();
+    };
 
     window.addEventListener("message", onMessage);
+    window.addEventListener("pagehide", flushSettingsSave);
+    document.addEventListener("visibilitychange", onVisibility);
     toHost({ channel: PANEL_CHANNEL, type: "ready" });
     return () => {
       window.removeEventListener("message", onMessage);
+      window.removeEventListener("pagehide", flushSettingsSave);
+      document.removeEventListener("visibilitychange", onVisibility);
+      flushSettingsSave();
       stop();
     };
   }, []);
@@ -212,18 +251,16 @@ export function App(): JSX.Element {
   );
 
   const palette = settings[settings.mode];
-
-  useEffect(() => {
-    const url = palette.backgroundImage;
-    setStageImageInk(null);
-    if (!url) return;
-    let cancelled = false;
-    void inkFromDataUrl(url).then(
-      (ink) => { if (!cancelled) setStageImageInk(ink); },
-      () => { if (!cancelled) setStageImageInk(null); },
-    );
-    return () => { cancelled = true; };
-  }, [palette.backgroundImage]);
+  const stageImageInk = useImageInk(palette.backgroundImage);
+  const nodeImageInk = useImageInk(palette.nodeBackgroundImage);
+  const nodeImageUrl = useMemo(
+    () => (palette.nodeBackgroundImage ? objectUrlFor(palette.nodeBackgroundImage) : null),
+    [palette.nodeBackgroundImage],
+  );
+  const paint = useMemo(
+    () => svgPaint(palette, nodeImageUrl, nodeImageInk ?? undefined),
+    [palette, nodeImageUrl, nodeImageInk],
+  );
 
   const traceText = caseIndex === null ? "" : traceTextForCase(snapshot, caseIndex);
   const trace = useMemo(
@@ -245,26 +282,13 @@ export function App(): JSX.Element {
     hasPane: panes.length > 0,
   });
 
-  const styleKey = useMemo(
-    () => dotStyleKey(palette, settings.layout),
-    [palette, settings.layout],
-  );
-  const [debouncedStyleKey, setDebouncedStyleKey] = useState(styleKey);
-
-  useEffect(() => {
-    if (styleKey === debouncedStyleKey) return;
-    const timer = window.setTimeout(() => setDebouncedStyleKey(styleKey), SETTINGS_DOT_DEBOUNCE_MS);
-    return () => window.clearTimeout(timer);
-  }, [styleKey, debouncedStyleKey]);
-
   const scene = useSceneRender({
     panes,
     trace,
     frameIndex: traceIndex,
-    emit: { palette, layout: settings.layout },
-    styleKey: debouncedStyleKey,
+    layout: settings.layout,
     showTerminal: settings.layout.showListTerminal,
-    enabled: panes.length > 0 && !tooLarge && !emptyStage,
+    enabled: settingsLoaded && panes.length > 0 && !tooLarge && !emptyStage,
   });
 
   const rendering = scene.baseDot !== "" && !scene.error;
@@ -274,14 +298,48 @@ export function App(): JSX.Element {
   if (scene.renderedBaseDot === scene.baseDot) renderedViewKey.current = viewKey;
   const fitKey = `${renderedViewKey.current}:${fitCount}`;
 
-  const updateSettings = useCallback((next: Settings) => {
-    setSettings(next);
-    window.clearTimeout(saveTimer.current);
-    saveTimer.current = window.setTimeout(() => {
-      lastSaved.current = JSON.stringify(next);
-      void saveSettings(next);
-    }, 300);
+  const fitGraph = useCallback(() => setFitCount((n) => n + 1), []);
+  const toggleSettings = useCallback(() => {
+    if (shrunkRef.current) {
+      toHost({ channel: PANEL_CHANNEL, type: "setShrunk", shrunk: false });
+      setShowSettings(true);
+      return;
+    }
+    setShowSettings((v) => !v);
   }, []);
+  const closeDrawer = useCallback(() => setShowSettings(false), []);
+  const closePanel = useCallback(() => toHost({ channel: PANEL_CHANNEL, type: "close" }), []);
+  const toggleShrunk = useCallback(
+    () => toHost({ channel: PANEL_CHANNEL, type: "setShrunk", shrunk: !shrunkRef.current }),
+    [],
+  );
+  const movePanel = useCallback((dx: number, dy: number) => toHost({ channel: PANEL_CHANNEL, type: "move", dx, dy }), []);
+  const persistPanel = useCallback(() => toHost({ channel: PANEL_CHANNEL, type: "persist" }), []);
+  const dismissPrivacyNotice = useCallback(() => {
+    setShowPrivacyNotice(false);
+    void savePrivacyNoticeDismissed();
+  }, []);
+
+  const changeCustomValue = useCallback(
+    (i: number, value: string) => updateCustomCase((c) => ({ ...c, draft: setFieldValue(c.draft, i, value) })),
+    [updateCustomCase],
+  );
+  const changeCustomKind = useCallback(
+    (i: number, kind: FieldKind) => updateCustomCase((c) => ({ ...c, draft: setFieldKind(c.draft, i, kind) })),
+    [updateCustomCase],
+  );
+  const pasteCustomValues = useCallback(
+    (i: number, values: string[]) => updateCustomCase((c) => ({ ...c, draft: pasteValues(c.draft, i, values, signature) })),
+    [updateCustomCase, signature],
+  );
+  const addCustomField = useCallback(
+    () => updateCustomCase((c) => ({ ...c, draft: addField(c.draft) })),
+    [updateCustomCase],
+  );
+  const removeCustomField = useCallback(
+    (i: number) => updateCustomCase((c) => ({ ...c, draft: removeField(c.draft, i) })),
+    [updateCustomCase],
+  );
 
   const stageStyle = useMemo(
     () => stageBackgroundStyle(palette.background, palette.backgroundImage),
@@ -290,19 +348,29 @@ export function App(): JSX.Element {
   const panelStyle = useMemo(
     () => ({
       "--stage-bg": palette.background,
-      "--statusbar-height": `${statusbarHeight}px`,
       ...stageInkVars(palette.background, stageImageInk),
     }) as JSX.CSSProperties,
-    [palette.background, stageImageInk, statusbarHeight],
+    [palette.background, stageImageInk],
   );
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = statusbarRef.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(() => setStatusbarHeight(el.getBoundingClientRect().height));
+    const panel = el?.closest<HTMLElement>(".panel");
+    if (!el || !panel || typeof ResizeObserver === "undefined") return;
+    let height = -1;
+    const sync = (): void => {
+      const next = el.offsetHeight;
+      if (next === height) return;
+      height = next;
+      panel.style.setProperty("--statusbar-height", `${next}px`);
+    };
+    sync();
+    const observer = new ResizeObserver(sync);
     observer.observe(el);
     return () => observer.disconnect();
-  }, []);
+  }, [settingsLoaded]);
+
+  if (!settingsLoaded) return null;
 
   return (
     <div
@@ -314,39 +382,22 @@ export function App(): JSX.Element {
         selectedKind={selectedKind}
         detectedKinds={result.detected}
         onKindChange={setKind}
-        onFit={() => setFitCount((n) => n + 1)}
-        onToggleSettings={() => {
-          if (shrunk) {
-            toHost({ channel: PANEL_CHANNEL, type: "setShrunk", shrunk: false });
-            setShowSettings(true);
-            return;
-          }
-          setShowSettings((v) => !v);
-        }}
-        onClose={() => toHost({ channel: PANEL_CHANNEL, type: "close" })}
+        onFit={fitGraph}
+        onToggleSettings={toggleSettings}
+        onClose={closePanel}
         shrunk={shrunk}
-        onToggleShrunk={() => {
-          toHost({ channel: PANEL_CHANNEL, type: "setShrunk", shrunk: !shrunk });
-        }}
-        onDrag={(dx, dy) => toHost({ channel: PANEL_CHANNEL, type: "move", dx, dy })}
-        onDragEnd={() => toHost({ channel: PANEL_CHANNEL, type: "persist" })}
+        onToggleShrunk={toggleShrunk}
+        onDrag={movePanel}
+        onDragEnd={persistPanel}
       />
 
       <div class="stage-wrap">
-        {showPrivacyNotice && (
-          <PrivacyNotice
-            onDismiss={() => {
-              setShowPrivacyNotice(false);
-              void savePrivacyNoticeDismissed();
-            }}
-          />
-        )}
         {showSettings && (
           <SettingsDrawer
             settings={settings}
             activePalette={settings.mode}
             onChange={updateSettings}
-            onClose={() => setShowSettings(false)}
+            onClose={closeDrawer}
           />
         )}
         <div
@@ -360,10 +411,9 @@ export function App(): JSX.Element {
             <GraphView
               svg={scene.svg}
               fitKey={fitKey}
-              nodeBackgroundImage={palette.nodeBackgroundImage}
+              paint={paint}
               traceFrame={trace.frames[traceIndex] ?? null}
               morphFromSvg={scene.morphFromSvg}
-              morph={!!scene.morphFromSvg}
             />
           ) : (
             <>
@@ -383,16 +433,17 @@ export function App(): JSX.Element {
       </div>
 
       <div class="statusbar" ref={statusbarRef}>
+        {showPrivacyNotice && <PrivacyNotice onDismiss={dismissPrivacyNotice} />}
         <CaseTabs count={cases.length} selection={tabSelection} onChange={selectCase} />
         {caseIndex === null && (
           <CustomInput
             fields={fields}
             canAddField={canAddField(customCase.draft, signature)}
-            onValueChange={(i, value) => updateCustomCase((c) => ({ ...c, draft: setFieldValue(c.draft, i, value) }))}
-            onKindChange={(i, kind) => updateCustomCase((c) => ({ ...c, draft: setFieldKind(c.draft, i, kind) }))}
-            onPasteValues={(i, values) => updateCustomCase((c) => ({ ...c, draft: pasteValues(c.draft, i, values, signature) }))}
-            onAddField={() => updateCustomCase((c) => ({ ...c, draft: addField(c.draft) }))}
-            onRemoveField={(i) => updateCustomCase((c) => ({ ...c, draft: removeField(c.draft, i) }))}
+            onValueChange={changeCustomValue}
+            onKindChange={changeCustomKind}
+            onPasteValues={pasteCustomValues}
+            onAddField={addCustomField}
+            onRemoveField={removeCustomField}
             onApply={applyCustomDraft}
             inputRef={customFieldRef}
           />

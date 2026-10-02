@@ -38,9 +38,9 @@ describe("privacy notice", () => {
       render(<PrivacyNotice onDismiss={onDismiss} />, container);
     });
 
-    expect(container.textContent).toContain("Graphy reads LeetCode editor, custom testcase, and Run output locally");
-    expect(container.textContent).toContain("does not send this data to a Graphy server");
-    expect(container.querySelector("button")?.textContent).toBe("Got it");
+    expect(container.textContent).toContain("Graphy reads this page locally.");
+    expect(container.textContent).toContain("Nothing is sent to a Graphy server.");
+    expect(container.querySelector("button")?.textContent).toBe("Dismiss");
     await act(async () => {
       container.querySelector("button")?.dispatchEvent(new dom.Event("click", { bubbles: true }) as unknown as Event);
     });

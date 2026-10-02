@@ -1,3 +1,7 @@
+import { useEffect, useState } from "preact/hooks";
+
+import { objectUrlFor } from "./blobUrl.js";
+
 export const DARK_INK = "#1e1b4b";
 export const LIGHT_INK = "#f8fafc";
 export const NODE_OUTLINE = "#000000";
@@ -101,5 +105,55 @@ export async function luminanceFromDataUrl(url: string): Promise<number> {
 }
 
 export async function inkFromDataUrl(url: string): Promise<string> {
-  return contrastInk(await luminanceFromDataUrl(url));
+  return contrastInk(await luminanceFromDataUrl(objectUrlFor(url)));
+}
+
+const MAX_CACHED_INKS = 16;
+const inks = new Map<string, string | null>();
+const pendingInks = new Map<string, Promise<string | null>>();
+
+export function peekImageInk(url: string): string | null | undefined {
+  return inks.get(url);
+}
+
+export function imageInkOf(url: string, compute: (url: string) => Promise<string> = inkFromDataUrl): Promise<string | null> {
+  if (inks.has(url)) return Promise.resolve(inks.get(url) ?? null);
+  const running = pendingInks.get(url);
+  if (running) return running;
+  const job = compute(url).then(
+    (ink) => ink,
+    () => null,
+  ).then((ink) => {
+    pendingInks.delete(url);
+    inks.set(url, ink);
+    while (inks.size > MAX_CACHED_INKS) {
+      const oldest = inks.keys().next().value;
+      if (oldest === undefined) break;
+      inks.delete(oldest);
+    }
+    return ink;
+  });
+  pendingInks.set(url, job);
+  return job;
+}
+
+export function clearImageInkCache(): void {
+  inks.clear();
+  pendingInks.clear();
+}
+
+export function useImageInk(url: string | null): string | null {
+  const [, setResolved] = useState(0);
+  const ink = url ? peekImageInk(url) : null;
+  useEffect(() => {
+    if (!url || peekImageInk(url) !== undefined) return;
+    let cancelled = false;
+    void imageInkOf(url).then(() => {
+      if (!cancelled) setResolved((n) => n + 1);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [url]);
+  return ink ?? null;
 }

@@ -34,8 +34,8 @@ describe("structure kind labels", () => {
   it("prefers the override, then detection, then the unselected prompt", () => {
     expect(structureKindLabel("matrix", ["binary-tree"])).toBe("Graph");
     expect(structureKindLabel(undefined, ["binary-tree", "linked-list"])).toBe("Binary tree + Linked list");
-    expect(structureKindLabel(undefined, [undefined])).toBe("Choose an Option:");
-    expect(structureKindLabel(undefined)).toBe("Choose an Option:");
+    expect(structureKindLabel(undefined, [undefined])).toBe("Choose a structure");
+    expect(structureKindLabel(undefined)).toBe("Choose a structure");
   });
 
   it("lists explicit kinds in a stable order", () => {

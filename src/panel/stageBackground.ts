@@ -1,5 +1,6 @@
 import type { JSX } from "preact";
 
+import { objectUrlFor } from "./blobUrl.js";
 import { stageOverlayInk } from "./imageInk.js";
 
 export function stageInkVars(
@@ -17,8 +18,8 @@ export function stageBackgroundStyle(
   if (!backgroundImage) return { backgroundColor: background };
   return {
     backgroundColor: background,
-    backgroundImage: `url(${backgroundImage})`,
-    backgroundSize: "100% 100%",
+    backgroundImage: `url("${objectUrlFor(backgroundImage).replace(/["\\\n]/g, "")}")`,
+    backgroundSize: "cover",
     backgroundPosition: "center",
     backgroundRepeat: "no-repeat",
     imageRendering: "auto",

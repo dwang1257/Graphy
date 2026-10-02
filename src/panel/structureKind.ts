@@ -1,6 +1,6 @@
 import { KIND_LABELS, STRUCTURE_KINDS, isStructureKind, type StructureKind } from "../core/types.js";
 
-const UNSELECTED_KIND_LABEL = "Choose an Option:";
+const UNSELECTED_KIND_LABEL = "Choose a structure";
 
 const AUTO_KIND_LABEL = "Auto";
 

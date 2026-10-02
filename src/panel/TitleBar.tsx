@@ -3,6 +3,8 @@ import type { JSX } from "preact";
 import { CloseIcon, ExpandIcon, FitIcon, ShrinkIcon } from "./icons.js";
 import { isStructureKind, type StructureKind } from "../core/types.js";
 import { autoKindLabel, structureKindLabel, structureKindOptions } from "./structureKind.js";
+import { memo } from "./memo.js";
+import { STYLE_DRAWER_ID } from "./styleOptions.js";
 import { pointerDragHandler } from "./usePointerDrag.js";
 
 interface Props {
@@ -19,7 +21,7 @@ interface Props {
   onDragEnd: () => void;
 }
 
-export function TitleBar(props: Props): JSX.Element {
+function TitleBarView(props: Props): JSX.Element {
   const [dragging, setDragging] = useState(false);
 
   const onPointerDown = pointerDragHandler<HTMLDivElement>({
@@ -62,30 +64,34 @@ export function TitleBar(props: Props): JSX.Element {
 
       <span class="spacer" />
 
-      <button class="icon-btn" title="Fit to view" aria-label="Fit to view" onClick={props.onFit}>
+      <button type="button" class="icon-btn" title="Fit to view" aria-label="Fit to view" onClick={props.onFit}>
         <FitIcon />
       </button>
       <button
-        class={`style-btn${props.showSettings ? " active" : ""}`}
-        title="Style your graph"
-        aria-label="Style your graph"
-        aria-pressed={props.showSettings}
+        type="button"
+        class="style-btn"
+        title="Style the graph"
+        aria-haspopup="dialog"
+        aria-expanded={props.showSettings}
+        aria-controls={STYLE_DRAWER_ID}
         onClick={props.onToggleSettings}
       >
         Style
       </button>
       <button
+        type="button"
         class="icon-btn"
         title={props.shrunk ? "Expand" : "Shrink"}
         aria-label={props.shrunk ? "Expand panel" : "Shrink panel"}
-        aria-pressed={props.shrunk}
         onClick={props.onToggleShrunk}
       >
         {props.shrunk ? <ExpandIcon /> : <ShrinkIcon />}
       </button>
-      <button class="icon-btn" title="Close" aria-label="Close panel" onClick={props.onClose}>
+      <button type="button" class="icon-btn" title="Close" aria-label="Close panel" onClick={props.onClose}>
         <CloseIcon />
       </button>
     </div>
   );
 }
+
+export const TitleBar = memo(TitleBarView);

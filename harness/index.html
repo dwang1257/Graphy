@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="color-scheme" content="light dark" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;700;800&display=swap" rel="stylesheet" />
+<title>Graphy Harness</title>
+<style>
+  :root {
+    --page: oklch(97% 0.004 250);
+    --page-dots: oklch(88% 0.006 250);
+    --bar: oklch(100% 0 0);
+    --ink: oklch(22% 0.02 255);
+    --ink-2: oklch(48% 0.016 255);
+    --rule: oklch(88% 0.008 250);
+    --chip: oklch(96% 0.006 250);
+    --chip-hover: oklch(92% 0.01 250);
+    --accent: oklch(46% 0.18 305);
+    --accent-ink: oklch(98% 0.012 305);
+    --focus: oklch(48% 0.2 305);
+    --ok: oklch(52% 0.12 145);
+    --font: "Inter Tight", ui-sans-serif, system-ui, sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  :root[data-page="dark"] {
+    --page: oklch(20% 0.004 250);
+    --page-dots: oklch(30% 0.006 250);
+    --bar: oklch(24% 0.006 250);
+    --ink: oklch(94% 0.006 250);
+    --ink-2: oklch(70% 0.01 250);
+    --rule: oklch(34% 0.008 250);
+    --chip: oklch(29% 0.008 250);
+    --chip-hover: oklch(35% 0.01 250);
+    --accent: oklch(66% 0.16 305);
+    --accent-ink: oklch(18% 0.02 305);
+    --focus: oklch(72% 0.16 305);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background-color: var(--page);
+    background-image: radial-gradient(var(--page-dots) 1px, transparent 1px);
+    background-size: 20px 20px;
+    color: var(--ink);
+    font: 500 12px/1.4 var(--font);
+    overflow: hidden;
+  }
+  .bar {
+    position: fixed;
+    inset: 0 0 auto 0;
+    z-index: 10;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 20px;
+    padding: 8px 16px;
+    background: var(--bar);
+    border-bottom: 1px solid var(--rule);
+  }
+  .group { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+  .group-label {
+    margin-right: 4px;
+    color: var(--ink-2);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .bar button {
+    appearance: none;
+    height: 28px;
+    padding: 0 10px;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    background: var(--chip);
+    color: var(--ink);
+    font: 500 12px/26px var(--font);
+    font-variant-numeric: tabular-nums;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .bar button:hover { background: var(--chip-hover); }
+  .bar button:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+  .bar button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+  .status {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--ink-2);
+    font-variant-numeric: tabular-nums;
+  }
+  .status::before {
+    content: "";
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--rule);
+  }
+  .status[data-ready="true"]::before { background: var(--ok); }
+  .log {
+    position: fixed;
+    right: 16px;
+    bottom: 16px;
+    z-index: 5;
+    width: min(340px, calc(100vw - 32px));
+    max-height: 40vh;
+    overflow: auto;
+    margin: 0;
+    padding: 8px 10px;
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    background: var(--bar);
+    color: var(--ink-2);
+    font: 400 11px/1.5 var(--mono);
+    list-style: none;
+  }
+  .log[hidden] { display: none; }
+  .log li { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .log .in { color: var(--ink); }
+  .shell {
+    position: fixed;
+    z-index: 20;
+    border: 0;
+    border-radius: 12px;
+    overflow: hidden;
+    background: transparent;
+    display: none;
+  }
+  .shell[data-open="true"] { display: block; }
+  .shell iframe {
+    position: absolute;
+    top: 0;
+    left: 0;
+    border: 0;
+    display: block;
+    transform: translateZ(0);
+  }
+  .launcher {
+    position: fixed;
+    right: 20px;
+    bottom: 20px;
+    z-index: 15;
+    height: 36px;
+    padding: 0 14px;
+    border: 1px solid var(--accent);
+    background: var(--accent);
+    color: var(--accent-ink);
+    font: 600 12px/34px var(--font);
+    cursor: pointer;
+  }
+  .launcher[hidden] { display: none; }
+</style>
+</head>
+<body>
+<header class="bar" id="bar">
+  <div class="group" id="sizes"><span class="group-label">Size</span></div>
+  <div class="group" id="samples"><span class="group-label">Sample</span></div>
+  <div class="group" id="actions"><span class="group-label">Panel</span></div>
+  <div class="status" id="status" data-ready="false">waiting</div>
+</header>
+<div class="shell" id="shell" data-open="false">
+  <iframe id="panel" title="Graphy Visualizer"></iframe>
+</div>
+<button class="launcher" id="launcher" type="button" hidden>Graphy</button>
+<ol class="log" id="log" hidden></ol>
+<script type="module" src="/harness/host.ts"></script>
+</body>
+</html>

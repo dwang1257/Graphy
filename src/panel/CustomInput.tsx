@@ -4,6 +4,7 @@ import { useEffect, useId, useRef, useState } from "preact/hooks";
 import { KIND_LABELS, isStructureKind, type StructureKind } from "../core/types.js";
 import { MAX_CUSTOM_FIELDS, splitPastedValues, type CustomField, type FieldKind } from "./customCase.js";
 import { CloseIcon } from "./icons.js";
+import { memo } from "./memo.js";
 import { NONE_KIND_LABEL, autoKindLabel, structureKindOptions } from "./structureKind.js";
 
 interface Props {
@@ -33,7 +34,7 @@ function assignRef<T>(ref: Ref<T> | undefined, value: T | null): void {
   else if (ref) ref.current = value;
 }
 
-export function CustomInput(props: Props): JSX.Element {
+function CustomInputView(props: Props): JSX.Element {
   const { fields } = props;
   const baseId = useId();
   const fieldRefs = useRef<Array<HTMLTextAreaElement | null>>([]);
@@ -152,9 +153,11 @@ export function CustomInput(props: Props): JSX.Element {
           Add input
         </button>
       )}
-      <button class="btn btn-primary custom-input-apply" type="submit">
+      <button class="btn btn-solid custom-input-apply" type="submit">
         Draw
       </button>
     </form>
   );
 }
+
+export const CustomInput = memo(CustomInputView);

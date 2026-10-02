@@ -1,36 +1,31 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useMemo, useRef } from "preact/hooks";
 import type { JSX } from "preact";
 import type { TraceFrame } from "../core/trace.js";
 import { animateGraphMorph, createMorphGeneration } from "./graphMorph.js";
-import { inkFromDataUrl } from "./imageInk.js";
-import { applyNodeBackgroundImage } from "./nodeBackground.js";
-import { applyTraceOverlay, clearTraceOverlay } from "./traceOverlay.js";
+import { memo } from "./memo.js";
+import { paintSvg, tagPaintRoles, type SvgPaint } from "./svgPaint.js";
+import { applyTraceOverlay, clearTraceOverlay, refreshTraceTones } from "./traceOverlay.js";
 import { pointerDragHandler } from "./usePointerDrag.js";
 import { normalizeWheelDelta, zoomAtPoint } from "./zoom.js";
 import type { View } from "./zoom.js";
 import "./trace.css";
 
+export const GESTURE_IDLE_MS = 150;
+export const GESTURE_CLASS = "is-gesturing";
+
 interface Props {
   svg: string;
   fitKey: string;
-  nodeBackgroundImage?: string | null;
+  paint: SvgPaint;
   traceFrame?: TraceFrame | null;
   morphFromSvg?: string | null;
-  morph?: boolean;
 }
 
-interface PreparedSvg {
-  html: string;
-  root: Element | null;
-}
+const XLINK_NS = "http://www.w3.org/1999/xlink";
 
-function prepareSvg(
-  svg: string,
-  nodeBackgroundImage: string | null | undefined,
-  ink?: string,
-): PreparedSvg {
+function prepareSvg(svg: string): Element | null {
   const document = new DOMParser().parseFromString(svg, "image/svg+xml");
-  if (document.querySelector("parsererror")) return { html: "", root: null };
+  if (document.querySelector("parsererror")) return null;
 
   for (const script of document.querySelectorAll("script")) script.remove();
   for (const element of document.querySelectorAll("*")) {
@@ -39,86 +34,62 @@ function prepareSvg(
         element.removeAttribute(attribute.name);
       }
     }
+    tagPaintRoles(element);
   }
 
   for (const anchor of document.querySelectorAll("a")) {
     const href =
       anchor.getAttribute("href") ||
       anchor.getAttribute("xlink:href") ||
-      anchor.getAttributeNS("http://www.w3.org/1999/xlink", "href");
+      anchor.getAttributeNS(XLINK_NS, "href");
     if (href && href.startsWith("graphy://")) {
       anchor.setAttribute("data-graphy-href", href);
       anchor.removeAttribute("href");
       anchor.removeAttribute("xlink:href");
-      anchor.removeAttributeNS("http://www.w3.org/1999/xlink", "href");
+      anchor.removeAttributeNS(XLINK_NS, "href");
     }
   }
 
-  if (nodeBackgroundImage) {
-    applyNodeBackgroundImage(document.documentElement, nodeBackgroundImage, ink);
-  }
-
-  return {
-    html: new XMLSerializer().serializeToString(document.documentElement),
-    root: document.documentElement,
-  };
+  return document.documentElement;
 }
 
-export function GraphView({
-  svg,
-  fitKey,
-  nodeBackgroundImage = null,
-  traceFrame = null,
-  morphFromSvg = null,
-  morph = false,
-}: Props): JSX.Element {
+function viewTransform({ x, y, scale }: View): string {
+  return `translate(${x}px, ${y}px) scale(${scale})`;
+}
+
+function GraphViewImpl({ svg, fitKey, paint, traceFrame = null, morphFromSvg = null }: Props): JSX.Element {
   const stage = useRef<HTMLDivElement>(null);
+  const canvas = useRef<HTMLDivElement>(null);
   const viewport = useRef<HTMLDivElement>(null);
   const view = useRef<View>({ x: 0, y: 0, scale: 1 });
   const paintFrame = useRef<number | null>(null);
+  const resizeFrame = useRef<number | null>(null);
+  const gestureTimer = useRef<number | undefined>(undefined);
+  const userMoved = useRef(false);
   const morphGeneration = useRef(createMorphGeneration());
-  const [panning, setPanning] = useState(false);
-  const [nodeInk, setNodeInk] = useState<string | undefined>(undefined);
+  const latestPaint = useRef(paint);
+  latestPaint.current = paint;
 
-  useEffect(() => {
-    if (!nodeBackgroundImage) {
-      setNodeInk(undefined);
+  const prepared = useMemo(() => prepareSvg(svg), [svg]);
+  const fromRoot = useMemo(
+    () => (morphFromSvg ? prepareSvg(morphFromSvg) : null),
+    [morphFromSvg],
+  );
+
+  useLayoutEffect(() => {
+    const el = viewport.current;
+    if (!el) return;
+    if (!prepared) {
+      el.replaceChildren();
       return;
     }
-    setNodeInk(undefined);
-    let cancelled = false;
-    void inkFromDataUrl(nodeBackgroundImage)
-      .then((ink) => {
-        if (!cancelled) setNodeInk(ink);
-      })
-      .catch(() => {
-        if (!cancelled) setNodeInk(undefined);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [nodeBackgroundImage]);
+    el.replaceChildren(el.ownerDocument.adoptNode(prepared));
+  }, [prepared]);
 
-  const preparedSvg = useMemo(
-    () => prepareSvg(svg, nodeBackgroundImage, nodeInk),
-    [svg, nodeBackgroundImage, nodeInk],
-  );
-  const sanitizedSvg = preparedSvg.html;
-
-  const preparedFrom = useMemo(
-    () =>
-      morph && morphFromSvg
-        ? prepareSvg(morphFromSvg, nodeBackgroundImage, nodeInk)
-        : { html: "", root: null },
-    [morph, morphFromSvg, nodeBackgroundImage, nodeInk],
-  );
-  const fromRoot = preparedFrom.root;
+  const liveSvg = (): Element | null => viewport.current?.querySelector("svg") ?? null;
 
   const paintView = (): void => {
-    const { x, y, scale } = view.current;
-    if (viewport.current) {
-      viewport.current.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
-    }
+    if (viewport.current) viewport.current.style.transform = viewTransform(view.current);
   };
 
   const setView = (next: View, deferPaint = false): void => {
@@ -132,6 +103,15 @@ export function GraphView({
       paintFrame.current = null;
       paintView();
     });
+  };
+
+  const markGesture = (): void => {
+    userMoved.current = true;
+    const el = viewport.current;
+    if (!el) return;
+    el.classList.add(GESTURE_CLASS);
+    window.clearTimeout(gestureTimer.current);
+    gestureTimer.current = window.setTimeout(() => el.classList.remove(GESTURE_CLASS), GESTURE_IDLE_MS);
   };
 
   const fit = (): void => {
@@ -148,41 +128,64 @@ export function GraphView({
     const height = graph.height.baseVal.value || graph.getBBox().height;
     if (!width || !height) return;
     const scale = Math.min((box.width - 24) / width, (boxHeight - 24) / height, 1.6);
+    userMoved.current = false;
     setView({
       scale,
       x: (box.width - width * scale) / 2,
       y: top + (boxHeight - height * scale) / 2,
     });
   };
+  const fitRef = useRef(fit);
+  fitRef.current = fit;
 
   const fittedFor = useRef("");
   useLayoutEffect(() => {
-    if (!sanitizedSvg) return;
+    if (!prepared) return;
     if (fittedFor.current !== fitKey) {
       fittedFor.current = fitKey;
       fit();
     }
-  }, [fitKey, sanitizedSvg]);
+  }, [fitKey, prepared]);
 
   useEffect(() => {
     const el = stage.current;
     if (!el || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(() => fit());
+    const observer = new ResizeObserver(() => {
+      if (userMoved.current || resizeFrame.current !== null) return;
+      resizeFrame.current = requestAnimationFrame(() => {
+        resizeFrame.current = null;
+        if (!userMoved.current) fitRef.current();
+      });
+    });
     observer.observe(el);
-    return () => observer.disconnect();
-  }, [fitKey]);
+    return () => {
+      observer.disconnect();
+      if (resizeFrame.current !== null) {
+        cancelAnimationFrame(resizeFrame.current);
+        resizeFrame.current = null;
+      }
+    };
+  }, []);
+
+  useLayoutEffect(() => {
+    const root = liveSvg();
+    if (!root) return;
+    paintSvg(root, paint);
+    refreshTraceTones(root);
+  }, [prepared, paint]);
 
   useLayoutEffect(() => {
     const generation = morphGeneration.current.next();
-    const root = viewport.current?.querySelector("svg");
+    const root = liveSvg();
     if (!root) return () => { morphGeneration.current.next(); };
 
-    if (morph && fromRoot) {
+    if (fromRoot) {
       const frame = traceFrame;
+      paintSvg(fromRoot, latestPaint.current);
       const handle = animateGraphMorph({ fromRoot, toRoot: root });
       void handle.done.finally(() => {
         if (!morphGeneration.current.isCurrent(generation)) return;
-        const live = viewport.current?.querySelector("svg");
+        const live = liveSvg();
         if (!live) return;
         if (frame) applyTraceOverlay(live, frame);
         else clearTraceOverlay(live);
@@ -193,24 +196,19 @@ export function GraphView({
       };
     }
 
-    if (!traceFrame) {
-      clearTraceOverlay(root);
-      return () => {
-        morphGeneration.current.next();
-      };
-    }
-    applyTraceOverlay(root, traceFrame);
-
+    if (traceFrame) applyTraceOverlay(root, traceFrame);
+    else clearTraceOverlay(root);
     return () => {
       morphGeneration.current.next();
     };
-  }, [sanitizedSvg, fromRoot, morph, traceFrame]);
+  }, [prepared, fromRoot, traceFrame]);
 
   useEffect(() => {
     const el = stage.current;
     if (!el) return;
     const onWheel = (event: WheelEvent): void => {
       event.preventDefault();
+      markGesture();
       const box = el.getBoundingClientRect();
       const px = event.clientX - box.left;
       const py = event.clientY - box.top;
@@ -220,6 +218,7 @@ export function GraphView({
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => {
       el.removeEventListener("wheel", onWheel);
+      window.clearTimeout(gestureTimer.current);
       if (paintFrame.current !== null) {
         cancelAnimationFrame(paintFrame.current);
         paintFrame.current = null;
@@ -227,26 +226,23 @@ export function GraphView({
     };
   }, []);
 
-  const onPointerDown = pointerDragHandler<HTMLDivElement>({
+  const onPointerDown = useMemo(() => pointerDragHandler<HTMLDivElement>({
     coords: "client",
-    onStart: () => setPanning(true),
-    onMove: (dx, dy) =>
-      setView({ ...view.current, x: view.current.x + dx, y: view.current.y + dy }),
-    onEnd: () => setPanning(false),
-  });
+    onStart: () => canvas.current?.classList.add("panning"),
+    onMove: (dx, dy) => {
+      markGesture();
+      setView({ ...view.current, x: view.current.x + dx, y: view.current.y + dy }, true);
+    },
+    onEnd: () => canvas.current?.classList.remove("panning"),
+  }), []);
 
   return (
     <div class="stage" ref={stage}>
-      <div class={`canvas${panning ? " panning" : ""}`} onPointerDown={onPointerDown}>
-        <div
-          class="viewport"
-          ref={viewport}
-          style={{
-            transform: `translate(${view.current.x}px, ${view.current.y}px) scale(${view.current.scale})`,
-          }}
-          dangerouslySetInnerHTML={{ __html: sanitizedSvg }}
-        />
+      <div class="canvas" ref={canvas} onPointerDown={onPointerDown}>
+        <div class="viewport" ref={viewport} />
       </div>
     </div>
   );
 }
+
+export const GraphView = memo(GraphViewImpl);
