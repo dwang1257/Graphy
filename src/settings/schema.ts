@@ -138,7 +138,7 @@ const RETIRED_DARK: Record<PaletteColorKey, readonly string[]> = {
 const PALETTE_COLOR_KEYS = Object.keys(RETIRED_LIGHT) as PaletteColorKey[];
 
 function paletteFrom(stored: unknown, defaults: Palette, retired: Record<PaletteColorKey, readonly string[]>): Palette {
-  const source = record(stored);
+  const source = asRecord(stored);
   const palette: Palette = { ...defaults };
   for (const key of PALETTE_COLOR_KEYS) {
     const value = normalizeCssHex(source[key]);
@@ -180,14 +180,14 @@ function num(v: unknown, fallback: number, min: number, max: number): number {
   return typeof v === "number" && Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : fallback;
 }
 
-function record(value: unknown): Record<string, unknown> {
+export function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : {};
 }
 
 function enumValue<T extends string>(value: unknown, allowed: readonly T[], fallback: T): T {
-  return typeof value === "string" && allowed.includes(value as T) ? value as T : fallback;
+  return allowed.find((option) => option === value) ?? fallback;
 }
 
 function bool(value: unknown, fallback: boolean): boolean {
@@ -200,33 +200,36 @@ function imageUrl(v: unknown, fallback: string | null): string | null {
   return fallback;
 }
 
-export function withDefaults(stored: unknown): Settings {
-  const s = record(stored);
-  const layout = { ...DEFAULT_LAYOUT, ...record(s.layout) };
-  layout.nodeShape = enumValue(layout.nodeShape, NODE_SHAPES, DEFAULT_LAYOUT.nodeShape);
-  layout.edgeStyle = enumValue(layout.edgeStyle, EDGE_STYLES, DEFAULT_LAYOUT.edgeStyle);
-  layout.splines = enumValue(layout.splines, SPLINES, DEFAULT_LAYOUT.splines);
-  layout.rankdir = enumValue(layout.rankdir, RANK_DIRS, DEFAULT_LAYOUT.rankdir);
-  layout.showNullChildren = bool(layout.showNullChildren, DEFAULT_LAYOUT.showNullChildren);
-  layout.showListTerminal = bool(layout.showListTerminal, DEFAULT_LAYOUT.showListTerminal);
-  layout.showMatrixIndices = bool(layout.showMatrixIndices, DEFAULT_LAYOUT.showMatrixIndices);
-  layout.showArrowheads = bool(layout.showArrowheads, DEFAULT_LAYOUT.showArrowheads);
-  layout.fontSize = num(layout.fontSize, DEFAULT_LAYOUT.fontSize, 8, 24);
-  if (layout.fontSize === 13) layout.fontSize = DEFAULT_LAYOUT.fontSize;
-  layout.penWidth = num(layout.penWidth, DEFAULT_LAYOUT.penWidth, 0.5, 4);
-  layout.nodeSep = num(layout.nodeSep, DEFAULT_LAYOUT.nodeSep, 0.1, 1.5);
-  layout.rankSep = num(layout.rankSep, DEFAULT_LAYOUT.rankSep, 0.1, 2);
-  layout.nodeSize = num(layout.nodeSize, DEFAULT_LAYOUT.nodeSize, 0.6, 1.8);
-  layout.fontFamily = DEFAULT_LAYOUT.fontFamily;
-  const light = paletteFrom(s.light, LIGHT, RETIRED_LIGHT);
-  const dark = paletteFrom(s.dark, DARK, RETIRED_DARK);
-  const mode: ThemeMode = enumValue(s.mode, THEME_MODES, DEFAULT_SETTINGS.mode);
+function layoutFrom(stored: unknown): Layout {
+  const source = asRecord(stored);
+  const fontSize = num(source.fontSize, DEFAULT_LAYOUT.fontSize, 8, 24);
   return {
-    ...DEFAULT_SETTINGS,
-    mode,
-    light,
-    dark,
-    layout,
+    ...DEFAULT_LAYOUT,
+    ...source,
+    nodeShape: enumValue(source.nodeShape, NODE_SHAPES, DEFAULT_LAYOUT.nodeShape),
+    edgeStyle: enumValue(source.edgeStyle, EDGE_STYLES, DEFAULT_LAYOUT.edgeStyle),
+    splines: enumValue(source.splines, SPLINES, DEFAULT_LAYOUT.splines),
+    rankdir: enumValue(source.rankdir, RANK_DIRS, DEFAULT_LAYOUT.rankdir),
+    showNullChildren: bool(source.showNullChildren, DEFAULT_LAYOUT.showNullChildren),
+    showListTerminal: bool(source.showListTerminal, DEFAULT_LAYOUT.showListTerminal),
+    showMatrixIndices: bool(source.showMatrixIndices, DEFAULT_LAYOUT.showMatrixIndices),
+    showArrowheads: bool(source.showArrowheads, DEFAULT_LAYOUT.showArrowheads),
+    fontSize: fontSize === 13 ? DEFAULT_LAYOUT.fontSize : fontSize,
+    penWidth: num(source.penWidth, DEFAULT_LAYOUT.penWidth, 0.5, 4),
+    nodeSep: num(source.nodeSep, DEFAULT_LAYOUT.nodeSep, 0.1, 1.5),
+    rankSep: num(source.rankSep, DEFAULT_LAYOUT.rankSep, 0.1, 2),
+    nodeSize: num(source.nodeSize, DEFAULT_LAYOUT.nodeSize, 0.6, 1.8),
+    fontFamily: DEFAULT_LAYOUT.fontFamily,
+  };
+}
+
+export function withDefaults(stored: unknown): Settings {
+  const s = asRecord(stored);
+  return {
+    mode: enumValue(s.mode, THEME_MODES, DEFAULT_SETTINGS.mode),
+    light: paletteFrom(s.light, LIGHT, RETIRED_LIGHT),
+    dark: paletteFrom(s.dark, DARK, RETIRED_DARK),
+    layout: layoutFrom(s.layout),
     autoOpen: bool(s.autoOpen, DEFAULT_SETTINGS.autoOpen),
   };
 }

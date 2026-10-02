@@ -8,6 +8,12 @@ describe("run stdout extraction", () => {
     expect(extractRunStdout({ std_output: "x".repeat(MAX_STDOUT_LENGTH + 1) })).toBeUndefined();
   });
 
+  it("bounds joined stdout lines including separators", () => {
+    const half = "x".repeat(MAX_STDOUT_LENGTH / 2);
+    expect(extractRunStdout({ code_output: [half, half.slice(1)] })).toHaveLength(MAX_STDOUT_LENGTH);
+    expect(extractRunStdout({ code_output: [half, half] })).toBeUndefined();
+  });
+
   it("rejects oversized stdout case arrays", () => {
     expect(extractRunStdoutByCase({
       std_output_list: Array.from({ length: MAX_STDOUT_CASES + 1 }, () => "ok"),

@@ -1,10 +1,11 @@
-import { DEFAULT_SETTINGS, withDefaults, type Settings } from "./schema.js";
-import { extractImages, mergeImages, sameImages, sanitizeImageAssets, settingsFromStores, stripImages, type ImageAssets } from "./split.js";
+import { DEFAULT_SETTINGS, asRecord, withDefaults, type Settings } from "./schema.js";
+import { extractImages, mergeImages, sameImages, sanitizeImageAssets, stripImages, type ImageAssets } from "./split.js";
 import { isStructureKind, type StructureKind } from "../core/types.js";
 
 const SYNC_KEY = "graphy.settings";
 const LOCAL_KEY = "graphy.panel";
 const IMAGES_KEY = "graphy.images";
+const OVERRIDE_KEY = "graphy.overrides";
 const PRIVACY_NOTICE_KEY = "graphy.privacyNoticeDismissed";
 
 export interface PanelState {
@@ -29,8 +30,8 @@ function finiteNumber(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
-export function sanitizePanelState(stored: unknown): PanelState {
-  const raw = stored && typeof stored === "object" ? (stored as Record<string, unknown>) : {};
+function sanitizePanelState(stored: unknown): PanelState {
+  const raw = asRecord(stored);
   return {
     x: finiteNumber(raw.x, DEFAULT_PANEL.x),
     y: finiteNumber(raw.y, DEFAULT_PANEL.y),
@@ -64,11 +65,17 @@ function compactJson(settings: Settings): string {
   return JSON.stringify(stripImages(settings));
 }
 
+async function settle(write: () => Promise<void>): Promise<boolean> {
+  try {
+    await write();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function writeMetaOf(stored: unknown): WriteMeta | null {
-  if (!stored || typeof stored !== "object") return null;
-  const meta = (stored as Record<string, unknown>).meta;
-  if (!meta || typeof meta !== "object") return null;
-  const { writer, rev: written } = meta as Record<string, unknown>;
+  const { writer, rev: written } = asRecord(asRecord(stored).meta);
   if (typeof writer !== "string" || typeof written !== "number" || !Number.isFinite(written)) return null;
   return { writer, rev: written };
 }
@@ -79,10 +86,12 @@ export async function loadSettings(): Promise<Settings> {
       chrome.storage.sync.get(SYNC_KEY),
       chrome.storage.local.get(IMAGES_KEY),
     ]);
-    const hasImages = Object.prototype.hasOwnProperty.call(localBag, IMAGES_KEY);
-    if (hasImages) storedImages = sanitizeImageAssets(localBag[IMAGES_KEY]);
-    const settings = settingsFromStores(syncBag[SYNC_KEY], localBag[IMAGES_KEY], hasImages);
-    if (Object.prototype.hasOwnProperty.call(syncBag, SYNC_KEY)) lastSyncJson = compactJson(settings);
+    let settings = withDefaults(syncBag[SYNC_KEY]);
+    if (Object.hasOwn(localBag, IMAGES_KEY)) {
+      storedImages = sanitizeImageAssets(localBag[IMAGES_KEY]);
+      settings = mergeImages(settings, storedImages);
+    }
+    if (Object.hasOwn(syncBag, SYNC_KEY)) lastSyncJson = compactJson(settings);
     return settings;
   } catch {
     return DEFAULT_SETTINGS;
@@ -98,41 +107,27 @@ export async function loadAutoOpen(): Promise<boolean> {
   }
 }
 
-function writeImages(images: ImageAssets): Promise<void> | null {
-  if (storedImages && sameImages(storedImages, images)) return null;
+async function writeImages(images: ImageAssets): Promise<void> {
+  if (storedImages && sameImages(storedImages, images)) return;
   const previous = storedImages;
   storedImages = images;
-  return settle(() => chrome.storage.local.set({ [IMAGES_KEY]: images })).then((ok) => {
-    if (!ok && storedImages === images) storedImages = previous;
-  });
+  const ok = await settle(() => chrome.storage.local.set({ [IMAGES_KEY]: images }));
+  if (!ok && storedImages === images) storedImages = previous;
 }
 
-function writeStyle(settings: Settings): Promise<void> | null {
+async function writeStyle(settings: Settings): Promise<void> {
   const compact = stripImages(settings);
   const json = JSON.stringify(compact);
-  if (json === lastSyncJson) return null;
+  if (json === lastSyncJson) return;
   lastSyncJson = json;
   rev += 1;
   const meta: WriteMeta = { writer: WRITER_ID, rev };
-  return settle(() => chrome.storage.sync.set({ [SYNC_KEY]: { ...compact, meta } })).then((ok) => {
-    if (!ok && lastSyncJson === json) lastSyncJson = null;
-  });
+  const ok = await settle(() => chrome.storage.sync.set({ [SYNC_KEY]: { ...compact, meta } }));
+  if (!ok && lastSyncJson === json) lastSyncJson = null;
 }
 
 export async function saveSettings(settings: Settings): Promise<void> {
-  const writes = [writeImages(extractImages(settings)), writeStyle(settings)].filter(
-    (write): write is Promise<void> => write !== null,
-  );
-  await Promise.all(writes);
-}
-
-async function settle(write: () => Promise<void>): Promise<boolean> {
-  try {
-    await write();
-    return true;
-  } catch {
-    return false;
-  }
+  await Promise.all([writeImages(extractImages(settings)), writeStyle(settings)]);
 }
 
 function isFreshRemote(meta: WriteMeta | null): boolean {
@@ -163,12 +158,8 @@ export function onSettingsChanged(handler: (update: SettingsUpdate) => void): ()
     if (!isFreshRemote(writeMetaOf(value))) return;
     const incoming = withDefaults(value);
     lastSyncJson = compactJson(incoming);
-    if (storedImages) {
-      handler((prev) => mergeImages(incoming, extractImages(prev)));
-      return;
-    }
-    const legacy = settingsFromStores(value, undefined, false);
-    handler(() => legacy);
+    if (storedImages) handler((prev) => mergeImages(incoming, extractImages(prev)));
+    else handler(() => incoming);
   };
   chrome.storage.onChanged.addListener(listener);
   return () => chrome.storage.onChanged.removeListener(listener);
@@ -179,15 +170,13 @@ export async function loadPanelState(): Promise<PanelState> {
     const bag = await chrome.storage.local.get(LOCAL_KEY);
     return sanitizePanelState(bag[LOCAL_KEY]);
   } catch {
-    return DEFAULT_PANEL;
+    return { ...DEFAULT_PANEL };
   }
 }
 
 export async function savePanelState(state: PanelState): Promise<void> {
   await settle(() => chrome.storage.local.set({ [LOCAL_KEY]: state }));
 }
-
-const OVERRIDE_KEY = "graphy.overrides";
 
 export interface Override {
   kind?: StructureKind;
@@ -202,11 +191,9 @@ export async function loadOverrides(): Promise<Record<string, Override>> {
   }
 }
 
-export function sanitizeOverrides(stored: unknown): Record<string, Override> {
-  if (!stored || typeof stored !== "object" || Array.isArray(stored)) return {};
+function sanitizeOverrides(stored: unknown): Record<string, Override> {
   const out: Record<string, Override> = {};
-  const entries: Array<[string, unknown]> = Object.entries(stored);
-  for (const [slug, raw] of entries) {
+  for (const [slug, raw] of Object.entries(asRecord(stored))) {
     if (!slug || slug.length > 128 || !raw || typeof raw !== "object" || Array.isArray(raw)) continue;
     const kind = "kind" in raw ? raw.kind : undefined;
     if (isStructureKind(kind)) out[slug] = { kind };

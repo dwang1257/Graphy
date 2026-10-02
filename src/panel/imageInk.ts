@@ -120,10 +120,7 @@ export function imageInkOf(url: string, compute: (url: string) => Promise<string
   if (inks.has(url)) return Promise.resolve(inks.get(url) ?? null);
   const running = pendingInks.get(url);
   if (running) return running;
-  const job = compute(url).then(
-    (ink) => ink,
-    () => null,
-  ).then((ink) => {
+  const job = compute(url).catch(() => null).then((ink) => {
     pendingInks.delete(url);
     inks.set(url, ink);
     while (inks.size > MAX_CACHED_INKS) {

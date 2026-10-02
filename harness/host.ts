@@ -19,6 +19,7 @@ import {
   clipAnimation,
   shellClipPath,
 } from "../src/content/shellLayout.js";
+import { queuePanelMessage } from "../src/content/host.js";
 
 installChromeShim();
 
@@ -45,7 +46,7 @@ const status = element("status", HTMLDivElement);
 const logList = element("log", HTMLOListElement);
 
 const log: LogEntry[] = [];
-const pending = new Map<"content" | "shrunk", ToPanel>();
+const pending = new Map<string, ToPanel>();
 let lastContent: ToPanel | null = null;
 let ready = false;
 let readyWaiters: Array<() => void> = [];
@@ -69,24 +70,17 @@ function topInset(): number {
   return bar.getBoundingClientRect().bottom;
 }
 
-function viewport(): { width: number; height: number } {
-  return { width: window.innerWidth, height: window.innerHeight };
-}
-
 function clamp(): void {
   const top = topInset();
   const box = clampPanelBox(
     { x: state.x, y: state.y - top, width: state.width, height: state.height },
-    { width: viewport().width, height: viewport().height - top },
+    { width: window.innerWidth, height: window.innerHeight - top },
   );
   state = { ...state, x: box.x, y: box.y + top };
 }
 
 function paint(settle: boolean, clipPath?: string): void {
-  applyShellStyles(shell, frame, state, {
-    settle,
-    ...(clipPath === undefined ? {} : { clipPath }),
-  });
+  applyShellStyles(shell, frame, state, { settle, clipPath });
   launcher.hidden = state.open;
   renderStatus();
 }
@@ -124,7 +118,7 @@ function renderStatus(): void {
 function post(message: ToPanel): void {
   if (message.type !== "shrunk") lastContent = message;
   if (!ready) {
-    pending.set(message.type === "shrunk" ? "shrunk" : "content", message);
+    queuePanelMessage(pending, message);
     return;
   }
   record("out", message);
@@ -136,9 +130,9 @@ function setShrunk(shrunk: boolean): void {
     post({ channel: PANEL_CHANNEL, type: "shrunk", shrunk });
     return;
   }
-  const from = shellClipPath(state.height, state.shrunk);
-  state = { ...state, shrunk };
+  const from = shellClipPath(state.height, !shrunk);
   const to = shellClipPath(state.height, shrunk);
+  state = { ...state, shrunk };
   clip?.cancel();
   paint(false, from);
   const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -168,28 +162,29 @@ function setOpen(open: boolean): void {
 function reloadPanel(): void {
   ready = false;
   pending.clear();
-  if (lastContent) pending.set("content", lastContent);
+  if (lastContent) queuePanelMessage(pending, lastContent);
   renderStatus();
   frame.src = "/harness/panel.html";
 }
 
-function sendSnapshot(input: SampleName | Snapshot): Snapshot {
-  const payload = typeof input === "string" ? SAMPLES[input].build() : input;
-  activeSample = typeof input === "string" ? input : null;
+function setActiveSample(name: SampleName | null): void {
+  activeSample = name;
   const url = new URL(location.href);
-  if (activeSample) url.searchParams.set("sample", activeSample);
+  if (name) url.searchParams.set("sample", name);
   else url.searchParams.delete("sample");
   history.replaceState(null, "", url);
+}
+
+function sendSnapshot(input: SampleName | Snapshot): Snapshot {
+  const payload = typeof input === "string" ? SAMPLES[input].build() : input;
+  setActiveSample(typeof input === "string" ? input : null);
   post({ channel: PANEL_CHANNEL, type: "snapshot", payload });
   renderStatus();
   return payload;
 }
 
 function clear(): void {
-  activeSample = null;
-  const url = new URL(location.href);
-  url.searchParams.delete("sample");
-  history.replaceState(null, "", url);
+  setActiveSample(null);
   post({ channel: PANEL_CHANNEL, type: "clear" });
   renderStatus();
 }
@@ -205,9 +200,7 @@ function setPage(theme: "light" | "dark"): void {
   document.documentElement.dataset.page = theme;
   try {
     localStorage.setItem("graphyHarness:page", theme);
-  } catch {
-    return;
-  }
+  } catch {}
   renderStatus();
 }
 

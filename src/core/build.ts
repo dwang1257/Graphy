@@ -2,7 +2,7 @@ import { detectRole, structureKindOf, type Role } from "./detect.js";
 import { parseBinaryTree } from "./parse/binaryTree.js";
 import { parseLinkedLists } from "./parse/linkedList.js";
 import { parseMatrix } from "./parse/matrix.js";
-import { isArray, isNestedArray, parseInputResult, type LCValue } from "./parse/value.js";
+import { isArray, isNestedArray, isStringGrid, parseInputResult, type LCValue } from "./parse/value.js";
 import { NODE_LIMIT } from "../settings/schema.js";
 import type { Signature } from "./signature.js";
 import { KIND_LABELS, paneId, type GraphModel, type KindChoice, type ParseResult, type StructureKind } from "./types.js";
@@ -46,8 +46,11 @@ export function buildPanes(
       result.failures.push({ paramName: title, reason: `${title} is not a valid ${KIND_LABELS[kind].toLowerCase()}.` });
       return;
     }
+    if (nodeCount(kind, value) > NODE_LIMIT) {
+      result.failures.push({ paramName: title, reason: `Input exceeds the ${NODE_LIMIT}-node limit.` });
+      return;
+    }
     try {
-      assertNodeLimit(kind, value);
       const pos = kind === "linked-list" && !isNestedArray(value) ? cyclePos : undefined;
       result.panes.push({ id, title, model: modelFor(kind, value, title, id, pos, options.showIndices !== false) });
       if (pos !== undefined) cyclePos = undefined;
@@ -56,7 +59,10 @@ export function buildPanes(
     }
   });
 
-  return withFallback(result);
+  if (result.panes.length === 0 && result.failures.length === 0) {
+    result.failures.push({ paramName: "input", reason: "Choose a data structure from the dropdown." });
+  }
+  return result;
 }
 
 export function detectKinds(values: readonly string[], signature: Signature | null): Array<StructureKind | undefined> {
@@ -104,39 +110,10 @@ function modelFor(
   }
 }
 
-function assertNodeLimit(kind: StructureKind, value: LCValue): void {
-  if (nodeCount(kind, value) > NODE_LIMIT) {
-    throw new Error(`Input exceeds the ${NODE_LIMIT}-node limit.`);
-  }
-}
-
 function nodeCount(kind: StructureKind, value: LCValue): number {
   if (!isArray(value)) return 0;
-  switch (kind) {
-    case "binary-tree":
-      return value.filter((entry) => entry !== null).length;
-    case "linked-list":
-      return isNestedArray(value) ? value.reduce((total, list) => total + list.length, 0) : value.length;
-    case "matrix":
-      return matrixItemCount(value);
-  }
-}
-
-function matrixItemCount(value: LCValue[]): number {
+  if (kind === "binary-tree") return value.filter((entry) => entry !== null).length;
   if (isNestedArray(value)) return value.reduce((total, row) => total + row.length, 0);
-  const first = value[0];
-  if (typeof first === "string" && first.length > 0 && value.every((entry) => typeof entry === "string" && entry.length === first.length)) {
-    return value.length * first.length;
-  }
+  if (kind === "matrix" && isStringGrid(value)) return value.length * (value[0]?.length ?? 0);
   return value.length;
-}
-
-function withFallback(result: ParseResult): ParseResult {
-  if (result.panes.length === 0 && result.failures.length === 0) {
-    result.failures.push({
-      paramName: "input",
-      reason: "Choose a data structure from the dropdown.",
-    });
-  }
-  return result;
 }

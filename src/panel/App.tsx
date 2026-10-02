@@ -6,9 +6,7 @@ import { traceTextForCase } from "../core/traceCases.js";
 import { buildPanes } from "../core/build.js";
 import { parseSignature, type Signature } from "../core/signature.js";
 import { EMPTY_TRACE, buildTrace } from "../core/trace.js";
-import { EMPTY_CUSTOM_COPY, EMPTY_STAGE_COPY, isEmptyStage, isTooLarge, tooLargeCopy } from "./emptyStage.js";
 import { visibleNodeCount, type StructureKind } from "../core/types.js";
-import { useStructureKind } from "./useStructureKind.js";
 import { DEFAULT_SETTINGS, type Settings } from "../settings/schema.js";
 import { extractImages, mergeImages, sameImages, sameSettings } from "../settings/split.js";
 import {
@@ -26,8 +24,9 @@ import {
 import { PANEL_CHANNEL, isToPanel, type FromPanel, type Snapshot } from "../shared/protocol.js";
 
 import { objectUrlFor } from "./blobUrl.js";
+import { EMPTY_CUSTOM_COPY, EMPTY_STAGE_COPY, isEmptyStage, isTooLarge, tooLargeCopy } from "./emptyStage.js";
 import { GraphView } from "./GraphView.js";
-import { SettingsDrawer } from "./SettingsDrawer.js";
+import { SettingsDrawer, type SettingsUpdate } from "./SettingsDrawer.js";
 import { PrivacyNotice } from "./privacyNotice.js";
 import { CUSTOM_CASE, CaseTabs, caseTabId, type CaseSelection, type CaseTabActivation } from "./CaseTabs.js";
 import { CustomInput } from "./CustomInput.js";
@@ -43,6 +42,7 @@ import {
   setFieldKind,
   setFieldValue,
   type CustomCase,
+  type CustomDraft,
   type FieldKind,
 } from "./customCase.js";
 import { useImageInk } from "./imageInk.js";
@@ -52,6 +52,7 @@ import { svgPaint } from "./svgPaint.js";
 import { TitleBar } from "./TitleBar.js";
 import { TracePlayback } from "./TracePlayback.js";
 import { useSceneRender } from "./useSceneRender.js";
+import { useStructureKind } from "./useStructureKind.js";
 import { preload } from "./graphviz.js";
 import { detectParentOrigin, isAllowedParentOrigin } from "./parentOrigin.js";
 
@@ -66,8 +67,6 @@ function toHost(message: FromPanel): void {
   if (!PARENT_ORIGIN) return;
   parent.postMessage(message, PARENT_ORIGIN);
 }
-
-export type SettingsInput = Settings | ((prev: Settings) => Settings);
 
 export const SETTINGS_SAVE_DELAY_MS = 300;
 
@@ -107,7 +106,7 @@ export function App(): JSX.Element | null {
     void saveSettings(settingsRef.current);
   }, []);
 
-  const updateSettings = useCallback((update: SettingsInput) => {
+  const updateSettings = useCallback((update: SettingsUpdate) => {
     const prev = settingsRef.current;
     const next = typeof update === "function" ? update(prev) : update;
     if (next === prev) return;
@@ -181,8 +180,8 @@ export function App(): JSX.Element | null {
   const cases = snapshot?.cases ?? [];
   const customCase = customCases[slug] ?? EMPTY_CUSTOM_CASE;
   const caseIndex = activeCase === CUSTOM_CASE ? null : clampCaseIndex(activeCase, cases.length);
-  const tabSelection: CaseSelection | null =
-    caseIndex === null ? CUSTOM_CASE : cases.length > 0 ? caseIndex : null;
+  let tabSelection: CaseSelection | null = CUSTOM_CASE;
+  if (caseIndex !== null) tabSelection = cases.length > 0 ? caseIndex : null;
 
   useEffect(() => {
     if (slug === lastSlug.current) return;
@@ -287,7 +286,6 @@ export function App(): JSX.Element | null {
     trace,
     frameIndex: traceIndex,
     layout: settings.layout,
-    showTerminal: settings.layout.showListTerminal,
     enabled: settingsLoaded && panes.length > 0 && !tooLarge && !emptyStage,
   });
 
@@ -320,25 +318,26 @@ export function App(): JSX.Element | null {
     void savePrivacyNoticeDismissed();
   }, []);
 
-  const changeCustomValue = useCallback(
-    (i: number, value: string) => updateCustomCase((c) => ({ ...c, draft: setFieldValue(c.draft, i, value) })),
+  const updateCustomDraft = useCallback(
+    (update: (draft: CustomDraft) => CustomDraft) => updateCustomCase((c) => ({ ...c, draft: update(c.draft) })),
     [updateCustomCase],
+  );
+  const changeCustomValue = useCallback(
+    (i: number, value: string) => updateCustomDraft((draft) => setFieldValue(draft, i, value)),
+    [updateCustomDraft],
   );
   const changeCustomKind = useCallback(
-    (i: number, kind: FieldKind) => updateCustomCase((c) => ({ ...c, draft: setFieldKind(c.draft, i, kind) })),
-    [updateCustomCase],
+    (i: number, kind: FieldKind) => updateCustomDraft((draft) => setFieldKind(draft, i, kind)),
+    [updateCustomDraft],
   );
   const pasteCustomValues = useCallback(
-    (i: number, values: string[]) => updateCustomCase((c) => ({ ...c, draft: pasteValues(c.draft, i, values, signature) })),
-    [updateCustomCase, signature],
+    (i: number, values: string[]) => updateCustomDraft((draft) => pasteValues(draft, i, values, signature)),
+    [updateCustomDraft, signature],
   );
-  const addCustomField = useCallback(
-    () => updateCustomCase((c) => ({ ...c, draft: addField(c.draft) })),
-    [updateCustomCase],
-  );
+  const addCustomField = useCallback(() => updateCustomDraft(addField), [updateCustomDraft]);
   const removeCustomField = useCallback(
-    (i: number) => updateCustomCase((c) => ({ ...c, draft: removeField(c.draft, i) })),
-    [updateCustomCase],
+    (i: number) => updateCustomDraft((draft) => removeField(draft, i)),
+    [updateCustomDraft],
   );
 
   const stageStyle = useMemo(
@@ -471,6 +470,14 @@ interface PlaceholderProps {
   failures: string[];
 }
 
+function placeholderMessages(props: PlaceholderProps): { messages: string[]; error: boolean } {
+  if (props.captureError) return { messages: [props.captureError], error: true };
+  if (props.tooLarge) return { messages: [tooLargeCopy(props.nodeCount)], error: true };
+  if (props.emptyStage) return { messages: [props.emptyCopy], error: false };
+  if (props.failures.length > 0) return { messages: props.failures, error: false };
+  return { messages: ["This input does not look like a graph structure."], error: false };
+}
+
 function Placeholder(props: PlaceholderProps): JSX.Element {
   if (props.error) {
     return (
@@ -481,18 +488,7 @@ function Placeholder(props: PlaceholderProps): JSX.Element {
     );
   }
 
-  let messages = props.failures.length > 0 ? props.failures : ["This input does not look like a graph structure."];
-  let error = false;
-  if (props.captureError) {
-    messages = [props.captureError];
-    error = true;
-  } else if (props.tooLarge) {
-    messages = [tooLargeCopy(props.nodeCount)];
-    error = true;
-  } else if (props.emptyStage) {
-    messages = [props.emptyCopy];
-  }
-
+  const { messages, error } = placeholderMessages(props);
   return (
     <div class={error ? "placeholder error" : "placeholder"}>
       {messages.map((message) => <p key={message}>{message}</p>)}

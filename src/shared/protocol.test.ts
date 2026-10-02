@@ -14,7 +14,6 @@ import {
   PAGE_CHANNEL,
   isPageControlMessage,
   isPageMessage,
-  isPageTraceMessage,
   isPanelMessage,
   isToPanel,
   pageClearMessage,
@@ -124,8 +123,9 @@ describe("snapshot validation", () => {
 
 describe("page trace messages", () => {
   it("accepts a boolean trace flag and does not treat it as a snapshot", () => {
-    expect(isPageTraceMessage(pageTraceMessage(true))).toBe(true);
-    expect(isPageTraceMessage({ channel: PAGE_CHANNEL, type: "trace", enabled: false })).toBe(true);
+    expect(isPageControlMessage(pageTraceMessage(true))).toBe(true);
+    expect(isPageControlMessage({ channel: PAGE_CHANNEL, type: "trace", enabled: false })).toBe(true);
+    expect(isPageControlMessage({ channel: PAGE_CHANNEL, type: "trace", enabled: "yes" })).toBe(false);
     expect(isPageMessage(pageTraceMessage(false))).toBe(false);
   });
 });

@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import { deflateRawSync } from "node:zlib";
 
 const ROOT_FILES = new Set(["injected.js", "manifest.json", "service-worker-loader.js", "src/panel/index.html"]);
@@ -45,29 +46,29 @@ export function collectReleaseFiles(distDirectory) {
     if (!TEXT_PATTERN.test(filePath)) continue;
     const source = readFileSync(join(distDirectory, filePath), "utf8");
     for (const reference of runtimeReferences(source, filePath)) {
-      if (!reference.includes("*") && !FILE_REFERENCE_PATTERN.test(reference)) continue;
-      const matchingCandidates = reference.includes("*")
-        ? [...candidates].filter((candidate) => matchesWildcard(reference, candidate))
-        : candidates.has(reference) ? [reference] : [];
-      if (reference.includes("*")) {
-        if (matchingCandidates.length === 0) {
-          throw new Error(`Missing local runtime file "${reference}" referenced by ${filePath}`);
-        }
-      } else {
-        if (!existsSync(join(distDirectory, reference))) {
-          throw new Error(`Missing local runtime file "${reference}" referenced by ${filePath}`);
-        }
-        if (!candidates.has(reference)) {
-          throw new Error(`Local runtime file "${reference}" referenced by ${filePath} is outside deterministic release candidates`);
-        }
-      }
-      for (const candidate of matchingCandidates) {
-        if (!selected.has(candidate)) pending.push(candidate);
-      }
+      pending.push(...referencedCandidates(distDirectory, candidates, reference, filePath));
     }
   }
 
   return [...selected].sort();
+}
+
+function referencedCandidates(distDirectory, candidates, reference, filePath) {
+  if (reference.includes("*")) {
+    const matches = [...candidates].filter((candidate) => matchesWildcard(reference, candidate));
+    if (matches.length === 0) throw missingReference(reference, filePath);
+    return matches;
+  }
+  if (!FILE_REFERENCE_PATTERN.test(reference)) return [];
+  if (!existsSync(join(distDirectory, reference))) throw missingReference(reference, filePath);
+  if (!candidates.has(reference)) {
+    throw new Error(`Local runtime file "${reference}" referenced by ${filePath} is outside deterministic release candidates`);
+  }
+  return [reference];
+}
+
+function missingReference(reference, filePath) {
+  return new Error(`Missing local runtime file "${reference}" referenced by ${filePath}`);
 }
 
 function matchesWildcard(reference, candidate) {
@@ -187,7 +188,7 @@ export function createReleaseZip(distDirectory, outputPath) {
   return { outputPath, files };
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === resolve(new URL(import.meta.url).pathname)) {
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const distDirectory = resolve("dist");
   const packagePath = resolve("release", `graphy-v${JSON.parse(readFileSync("package.json", "utf8")).version}.zip`);
   const result = createReleaseZip(distDirectory, packagePath);

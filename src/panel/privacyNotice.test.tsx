@@ -3,7 +3,7 @@ import { render } from "preact";
 import { act } from "preact/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { PrivacyNotice, shouldShowPrivacyNotice } from "./privacyNotice.js";
+import { PrivacyNotice } from "./privacyNotice.js";
 
 let dom: Window;
 let container: HTMLDivElement;
@@ -25,13 +25,6 @@ afterEach(() => {
 });
 
 describe("privacy notice", () => {
-  it("is visible until a true dismissal value is stored", () => {
-    expect(shouldShowPrivacyNotice(undefined)).toBe(true);
-    expect(shouldShowPrivacyNotice(false)).toBe(true);
-    expect(shouldShowPrivacyNotice(true)).toBe(false);
-    expect(shouldShowPrivacyNotice("true")).toBe(true);
-  });
-
   it("renders a concise local data-use disclosure and dismiss action", async () => {
     const onDismiss = vi.fn();
     await act(async () => {

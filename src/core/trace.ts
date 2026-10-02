@@ -1,6 +1,6 @@
 import { cellId, childrenOf, initialTopology, layoutKeyOf, visibleIds, type NodeKind, type SceneNode, type SceneTopology } from "./scene.js";
 import { TRACE_SENTINEL, traceLines } from "./traceWire.js";
-import type { Links, Pane } from "./types.js";
+import type { Links, NodeLinks, Pane } from "./types.js";
 
 export const MAX_TRACE_TEXT = 256 * 1024;
 export const MAX_TRACE_FRAMES = 4_000;
@@ -189,6 +189,15 @@ function cellValid(ref: string, panes: readonly Pane[]): boolean {
   return row?.[Number(c)] !== undefined;
 }
 
+function linkField(kind: NodeKind, side: "<" | ">"): keyof NodeLinks | undefined {
+  if (kind === "list") return side === ">" ? "next" : undefined;
+  return side === "<" ? "left" : "right";
+}
+
+function sameIds(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((id, i) => id === right[i]);
+}
+
 interface WorkTopology {
   order: string[];
   nodes: Record<string, SceneNode>;
@@ -242,7 +251,7 @@ class Player {
   }
 
   private known(ref: string): boolean {
-    return this.topology.nodes[ref] !== undefined || (ref.includes(".") && cellValid(ref, this.panes));
+    return this.isNode(ref) || (ref.includes(".") && cellValid(ref, this.panes));
   }
 
   private isNode(ref: string): boolean {
@@ -287,7 +296,7 @@ class Player {
 
   private editFrontier(edit: (list: string[]) => string[]): void {
     const next = edit(this.frontier);
-    if (next.length === this.frontier.length && next.every((id, i) => id === this.frontier[i])) return;
+    if (sameIds(next, this.frontier)) return;
     this.frontier = next;
     this.changed = true;
   }
@@ -318,7 +327,7 @@ class Player {
     switch (op.t) {
       case "visit":
         if (!this.known(op.ref)) return;
-        if (this.isNode(op.ref)) this.revive(op.ref);
+        this.revive(op.ref);
         this.addVisit(op.ref);
         return;
       case "value":
@@ -338,14 +347,14 @@ class Player {
         return;
       }
       case "pointer":
-        if (op.to !== null && !this.known(op.to)) return;
-        if (op.to !== null && this.isNode(op.to)) this.revive(op.to);
-        if (op.name === null) {
-          if (op.to !== null) this.setCurrent(op.to);
+        if (op.to === null) {
+          if (op.name !== null) this.editPointers(op.name, null);
           return;
         }
-        this.editPointers(op.name, op.to);
-        if (op.to !== null) this.setCurrent(op.to);
+        if (!this.known(op.to)) return;
+        this.revive(op.to);
+        if (op.name !== null) this.editPointers(op.name, op.to);
+        this.setCurrent(op.to);
         return;
       case "front":
         if (!this.isNode(op.ref)) return;
@@ -381,7 +390,7 @@ class Player {
     const node = this.topology.nodes[ref];
     if (!node) return;
     if (to !== null && !this.isNode(to)) return;
-    const field = node.kind === "list" ? (side === ">" ? "next" : undefined) : side === "<" ? "left" : "right";
+    const field = linkField(node.kind, side);
     if (!field) return;
     this.revive(ref);
     if (to !== null) this.revive(to);
@@ -410,10 +419,9 @@ class Player {
       this.setCurrent(ref);
     }
     const dimmed = visible.filter((id) => !reached.has(id));
-    if (dimmed.length !== this.dimmed.length || dimmed.some((id, i) => id !== this.dimmed[i])) {
-      this.dimmed = dimmed;
-      this.changed = true;
-    }
+    if (sameIds(dimmed, this.dimmed)) return;
+    this.dimmed = dimmed;
+    this.changed = true;
   }
 }
 

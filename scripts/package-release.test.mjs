@@ -1,10 +1,19 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 
 import { collectReleaseFiles, selectReleaseFiles } from "./package-release.mjs";
+
+function createDist(manifest, files = {}) {
+  const distDirectory = mkdtempSync(join(tmpdir(), "graphy-release-"));
+  for (const [filePath, contents] of Object.entries({ "manifest.json": JSON.stringify(manifest), ...files })) {
+    mkdirSync(dirname(join(distDirectory, filePath)), { recursive: true });
+    writeFileSync(join(distDirectory, filePath), contents);
+  }
+  return distDirectory;
+}
 
 test("selectReleaseFiles keeps only deterministic extension runtime files", () => {
   const selected = selectReleaseFiles([
@@ -37,25 +46,25 @@ test("selectReleaseFiles keeps only deterministic extension runtime files", () =
 });
 
 test("collectReleaseFiles follows runtime references and excludes stale assets", () => {
-  const distDirectory = mkdtempSync(join(tmpdir(), "graphy-release-"));
-  mkdirSync(join(distDirectory, "assets"));
-  mkdirSync(join(distDirectory, "icons"));
-  mkdirSync(join(distDirectory, "src", "panel"), { recursive: true });
-  writeFileSync(join(distDirectory, "manifest.json"), JSON.stringify({
-    icons: { 16: "icons/icon16.png" },
-    content_scripts: [{ js: ["assets/content-loader.js"] }],
-    background: { service_worker: "service-worker-loader.js" },
-    web_accessible_resources: [{ resources: ["src/panel/index.html"] }],
-  }));
-  writeFileSync(join(distDirectory, "service-worker-loader.js"), "import './assets/worker.js';");
-  writeFileSync(join(distDirectory, "assets", "content-loader.js"), "import './content.js';");
-  writeFileSync(join(distDirectory, "assets", "content.js"), "import './protocol.js';");
-  writeFileSync(join(distDirectory, "assets", "worker.js"), "self.oninstall = () => {};" );
-  writeFileSync(join(distDirectory, "assets", "protocol.js"), "export const protocol = true;");
-  writeFileSync(join(distDirectory, "assets", "stale.js"), "export const stale = true;");
-  writeFileSync(join(distDirectory, "assets", "panel.js"), "export const panel = true;");
-  writeFileSync(join(distDirectory, "src", "panel", "index.html"), "<script type=\"module\" src=\"/assets/panel.js\"></script>");
-  writeFileSync(join(distDirectory, "icons", "icon16.png"), "icon");
+  const distDirectory = createDist(
+    {
+      icons: { 16: "icons/icon16.png" },
+      content_scripts: [{ js: ["assets/content-loader.js"] }],
+      background: { service_worker: "service-worker-loader.js" },
+      web_accessible_resources: [{ resources: ["src/panel/index.html"] }],
+    },
+    {
+      "service-worker-loader.js": "import './assets/worker.js';",
+      "assets/content-loader.js": "import './content.js';",
+      "assets/content.js": "import './protocol.js';",
+      "assets/worker.js": "self.oninstall = () => {};",
+      "assets/protocol.js": "export const protocol = true;",
+      "assets/stale.js": "export const stale = true;",
+      "assets/panel.js": "export const panel = true;",
+      "src/panel/index.html": "<script type=\"module\" src=\"/assets/panel.js\"></script>",
+      "icons/icon16.png": "icon",
+    },
+  );
 
   assert.deepEqual(collectReleaseFiles(distDirectory), [
     "assets/content-loader.js",
@@ -71,20 +80,17 @@ test("collectReleaseFiles follows runtime references and excludes stale assets",
 });
 
 test("collectReleaseFiles follows font references from stylesheets", () => {
-  const distDirectory = mkdtempSync(join(tmpdir(), "graphy-release-"));
-  mkdirSync(join(distDirectory, "assets"));
-  mkdirSync(join(distDirectory, "src", "panel"), { recursive: true });
-  writeFileSync(join(distDirectory, "manifest.json"), JSON.stringify({
-    web_accessible_resources: [{ resources: ["src/panel/index.html"] }],
-  }));
-  writeFileSync(join(distDirectory, "src", "panel", "index.html"), "<link rel=\"stylesheet\" href=\"/assets/panel.css\">");
-  writeFileSync(
-    join(distDirectory, "assets", "panel.css"),
-    "@font-face{src:url(/assets/inter-latin.woff2) format(\"woff2\")}@font-face{src:url(./mono-latin.woff2)}",
+  const distDirectory = createDist(
+    { web_accessible_resources: [{ resources: ["src/panel/index.html"] }] },
+    {
+      "src/panel/index.html": "<link rel=\"stylesheet\" href=\"/assets/panel.css\">",
+      "assets/panel.css":
+        "@font-face{src:url(/assets/inter-latin.woff2) format(\"woff2\")}@font-face{src:url(./mono-latin.woff2)}",
+      "assets/inter-latin.woff2": Buffer.from([0x77, 0x4f, 0x46, 0x32, 0x00, 0xff]),
+      "assets/mono-latin.woff2": Buffer.from([0x77, 0x4f, 0x46, 0x32, 0x00, 0xfe]),
+      "assets/unused.woff2": Buffer.from([0x77, 0x4f, 0x46, 0x32]),
+    },
   );
-  writeFileSync(join(distDirectory, "assets", "inter-latin.woff2"), Buffer.from([0x77, 0x4f, 0x46, 0x32, 0x00, 0xff]));
-  writeFileSync(join(distDirectory, "assets", "mono-latin.woff2"), Buffer.from([0x77, 0x4f, 0x46, 0x32, 0x00, 0xfe]));
-  writeFileSync(join(distDirectory, "assets", "unused.woff2"), Buffer.from([0x77, 0x4f, 0x46, 0x32]));
 
   assert.deepEqual(collectReleaseFiles(distDirectory), [
     "assets/inter-latin.woff2",
@@ -99,43 +105,32 @@ test("collectReleaseFiles rejects missing local references from manifest HTML an
   const cases = [
     {
       manifest: { content_scripts: [{ js: ["assets/missing.js"] }] },
-      files: [],
       source: "manifest.json",
     },
     {
       manifest: { web_accessible_resources: [{ resources: ["src/panel/index.html"] }] },
-      files: [["src/panel/index.html", "<script src=\"/assets/missing.js\"></script>"]],
+      files: { "src/panel/index.html": "<script src=\"/assets/missing.js\"></script>" },
       source: "src/panel/index.html",
     },
     {
       manifest: { background: { service_worker: "service-worker-loader.js" } },
-      files: [["service-worker-loader.js", "import './assets/missing.js';"]],
+      files: { "service-worker-loader.js": "import './assets/missing.js';" },
       source: "service-worker-loader.js",
     },
     {
       manifest: { web_accessible_resources: [{ resources: ["src/panel/missing.js"] }] },
-      files: [],
       reference: "src/panel/missing.js",
       source: "manifest.json",
     },
     {
       manifest: { icons: { 16: "icons/missing.svg" } },
-      files: [],
       reference: "icons/missing.svg",
       source: "manifest.json",
     },
   ];
 
   for (const testCase of cases) {
-    const distDirectory = mkdtempSync(join(tmpdir(), "graphy-release-"));
-    mkdirSync(join(distDirectory, "assets"));
-    mkdirSync(join(distDirectory, "src", "panel"), { recursive: true });
-    writeFileSync(join(distDirectory, "manifest.json"), JSON.stringify(testCase.manifest));
-    for (const [filePath, source] of testCase.files) {
-      mkdirSync(join(distDirectory, filePath, ".."), { recursive: true });
-      writeFileSync(join(distDirectory, filePath), source);
-    }
-
+    const distDirectory = createDist(testCase.manifest, testCase.files);
     assert.throws(
       () => collectReleaseFiles(distDirectory),
       new RegExp(`missing local runtime file.*${testCase.reference ?? "assets/missing.js"}.*${testCase.source}`, "i"),
@@ -144,12 +139,10 @@ test("collectReleaseFiles rejects missing local references from manifest HTML an
 });
 
 test("collectReleaseFiles rejects existing local references outside release candidates", () => {
-  const distDirectory = mkdtempSync(join(tmpdir(), "graphy-release-"));
-  mkdirSync(join(distDirectory, "assets"));
-  writeFileSync(join(distDirectory, "manifest.json"), JSON.stringify({
-    web_accessible_resources: [{ resources: ["assets/feature.test.js"] }],
-  }));
-  writeFileSync(join(distDirectory, "assets", "feature.test.js"), "export const feature = true;");
+  const distDirectory = createDist(
+    { web_accessible_resources: [{ resources: ["assets/feature.test.js"] }] },
+    { "assets/feature.test.js": "export const feature = true;" },
+  );
 
   assert.throws(
     () => collectReleaseFiles(distDirectory),
@@ -158,43 +151,33 @@ test("collectReleaseFiles rejects existing local references outside release cand
 });
 
 test("collectReleaseFiles ignores external and data runtime references", () => {
-  const distDirectory = mkdtempSync(join(tmpdir(), "graphy-release-"));
-  mkdirSync(join(distDirectory, "src", "panel"), { recursive: true });
-  writeFileSync(join(distDirectory, "manifest.json"), JSON.stringify({
+  const distDirectory = createDist({
     web_accessible_resources: [{ resources: ["https://cdn.example.com/assets/missing.js", "data:text/javascript,assets/missing.js"] }],
-  }));
+  });
 
   assert.deepEqual(collectReleaseFiles(distDirectory), ["manifest.json"]);
 });
 
 test("collectReleaseFiles ignores non-file relative runtime tokens", () => {
-  const distDirectory = mkdtempSync(join(tmpdir(), "graphy-release-"));
-  mkdirSync(join(distDirectory, "assets"));
-  writeFileSync(join(distDirectory, "manifest.json"), JSON.stringify({
-    content_scripts: [{ js: ["assets/runtime.js"] }],
-  }));
-  writeFileSync(join(distDirectory, "assets", "runtime.js"), "const program = './this.program';");
+  const distDirectory = createDist(
+    { content_scripts: [{ js: ["assets/runtime.js"] }] },
+    { "assets/runtime.js": "const program = './this.program';" },
+  );
 
   assert.deepEqual(collectReleaseFiles(distDirectory), ["assets/runtime.js", "manifest.json"]);
 });
 
 test("collectReleaseFiles follows wildcard references that match release candidates", () => {
-  const distDirectory = mkdtempSync(join(tmpdir(), "graphy-release-"));
-  mkdirSync(join(distDirectory, "assets"));
-  writeFileSync(join(distDirectory, "manifest.json"), JSON.stringify({
-    web_accessible_resources: [{ resources: ["assets/*.js"] }],
-  }));
-  writeFileSync(join(distDirectory, "assets", "runtime.js"), "export const runtime = true;");
+  const distDirectory = createDist(
+    { web_accessible_resources: [{ resources: ["assets/*.js"] }] },
+    { "assets/runtime.js": "export const runtime = true;" },
+  );
 
   assert.deepEqual(collectReleaseFiles(distDirectory), ["assets/runtime.js", "manifest.json"]);
 });
 
 test("collectReleaseFiles rejects wildcard references without a release candidate", () => {
-  const distDirectory = mkdtempSync(join(tmpdir(), "graphy-release-"));
-  mkdirSync(join(distDirectory, "assets"));
-  writeFileSync(join(distDirectory, "manifest.json"), JSON.stringify({
-    web_accessible_resources: [{ resources: ["assets/*.js"] }],
-  }));
+  const distDirectory = createDist({ web_accessible_resources: [{ resources: ["assets/*.js"] }] });
 
   assert.throws(
     () => collectReleaseFiles(distDirectory),

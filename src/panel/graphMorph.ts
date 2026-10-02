@@ -37,12 +37,7 @@ export function nodePositions(svgRoot: Element): Map<string, Point> {
 
 function shapeCenter(shape: Element): Point | null {
   const tag = shape.tagName.toLowerCase();
-  if (tag === "ellipse") {
-    const cx = Number(shape.getAttribute("cx"));
-    const cy = Number(shape.getAttribute("cy"));
-    if (Number.isFinite(cx) && Number.isFinite(cy)) return { x: cx, y: cy };
-  }
-  if (tag === "circle") {
+  if (tag === "ellipse" || tag === "circle") {
     const cx = Number(shape.getAttribute("cx"));
     const cy = Number(shape.getAttribute("cy"));
     if (Number.isFinite(cx) && Number.isFinite(cy)) return { x: cx, y: cy };
@@ -173,5 +168,3 @@ export function animateGraphMorph(options: MorphOptions): MorphHandle {
     },
   };
 }
-
-export { MORPH_MS };

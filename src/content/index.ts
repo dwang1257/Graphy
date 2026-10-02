@@ -43,10 +43,8 @@ function syncPageWork(): void {
 
 function mount(): void {
   if (host) return;
-  host = new PanelHost(chrome.runtime.getURL("src/panel/index.html"), {
-    onOpenChange: () => syncPageWork(),
-  });
-  const created = host;
+  const created = new PanelHost(chrome.runtime.getURL("src/panel/index.html"), { onOpenChange: syncPageWork });
+  host = created;
   void Promise.all([created.restored, loadAutoOpen()]).then(([, autoOpen]) => {
     if (host !== created) return;
     if (autoOpen && !created.isOpen) created.open();

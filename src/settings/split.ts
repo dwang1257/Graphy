@@ -1,4 +1,4 @@
-import { withDefaults, type Settings } from "./schema.js";
+import { asRecord, type Settings } from "./schema.js";
 
 export interface ImageAssets {
   light: { backgroundImage: string | null; nodeBackgroundImage: string | null };
@@ -15,7 +15,7 @@ function asImage(value: unknown): string | null {
 }
 
 function paletteImages(raw: unknown): ImageAssets["light"] {
-  const o = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  const o = asRecord(raw);
   return {
     backgroundImage: asImage(o.backgroundImage),
     nodeBackgroundImage: asImage(o.nodeBackgroundImage),
@@ -57,24 +57,11 @@ export function mergeImages(settings: Settings, images: ImageAssets): Settings {
 }
 
 export function sanitizeImageAssets(stored: unknown): ImageAssets {
-  if (!stored || typeof stored !== "object") {
-    return { light: { ...EMPTY_IMAGES.light }, dark: { ...EMPTY_IMAGES.dark } };
-  }
-  const raw = stored as Record<string, unknown>;
+  const raw = asRecord(stored);
   return {
     light: paletteImages(raw.light),
     dark: paletteImages(raw.dark),
   };
-}
-
-export function settingsFromStores(
-  syncStored: unknown,
-  localImages: unknown,
-  hasLocalImages: boolean,
-): Settings {
-  const compact = withDefaults(syncStored);
-  if (!hasLocalImages) return compact;
-  return mergeImages(compact, sanitizeImageAssets(localImages));
 }
 
 export function sameSettings(a: Settings, b: Settings): boolean {

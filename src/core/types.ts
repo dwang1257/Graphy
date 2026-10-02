@@ -19,8 +19,6 @@ export interface NodeLinks {
 
 export type Links = Record<string, NodeLinks>;
 
-export type TreeLinks = Links;
-
 export type KindChoice = StructureKind | "none";
 
 export const PANE_IDS = "abcdefghijklmnopqrstuvwxy";

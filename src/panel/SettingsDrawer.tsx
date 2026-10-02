@@ -4,6 +4,7 @@ import { CANVAS_PRESETS, EDGE_PRESETS, NODE_FILL_PRESETS, normalizeCssHex, type 
 import {
   DARK,
   LIGHT,
+  THEME_MODES,
   type EdgeStyle,
   type Layout,
   type NodeShape,
@@ -14,20 +15,18 @@ import {
 import { CloseIcon, PlusIcon } from "./icons.js";
 import { memo } from "./memo.js";
 import { STYLE_DRAWER_ID } from "./styleOptions.js";
-import { readImageDataUrl, type ImageSlot } from "./imageUpload.js";
+import { UPLOAD_ERROR, readImageDataUrl, type ImageSlot } from "./imageUpload.js";
 
 export type SettingsUpdate = Settings | ((prev: Settings) => Settings);
 
-type PaletteMode = "light" | "dark";
+type ChangeSettings = (update: SettingsUpdate) => void;
 
 interface Props {
   settings: Settings;
-  activePalette: PaletteMode;
-  onChange: (update: SettingsUpdate) => void;
+  activePalette: ThemeMode;
+  onChange: ChangeSettings;
   onClose: () => void;
 }
-
-type ChangeSettings = Props["onChange"];
 
 interface SegmentItem<T extends string> {
   value: T;
@@ -38,14 +37,14 @@ export const DRAWER_EXIT_MS = 120;
 
 const UNDO_MS = 8000;
 
-const THEME_LABELS: Record<PaletteMode, string> = { light: "Light", dark: "Dark" };
+const THEME_LABELS: Record<ThemeMode, string> = { light: "Light", dark: "Dark" };
 
-const DEFAULT_PALETTES: Record<PaletteMode, Palette> = { light: LIGHT, dark: DARK };
+const DEFAULT_PALETTES: Record<ThemeMode, Palette> = { light: LIGHT, dark: DARK };
 
-const THEME_ITEMS: ReadonlyArray<SegmentItem<ThemeMode>> = [
-  { value: "light", label: THEME_LABELS.light },
-  { value: "dark", label: THEME_LABELS.dark },
-];
+const THEME_ITEMS: ReadonlyArray<SegmentItem<ThemeMode>> = THEME_MODES.map((value) => ({
+  value,
+  label: THEME_LABELS[value],
+}));
 
 const SHAPE_ITEMS: ReadonlyArray<SegmentItem<NodeShape>> = [
   { value: "circle", label: "Circle" },
@@ -71,7 +70,7 @@ function setLayout<K extends keyof Layout>(key: K, value: Layout[K]): (prev: Set
   return (prev) => (prev.layout[key] === value ? prev : { ...prev, layout: { ...prev.layout, [key]: value } });
 }
 
-function setPalette<K extends keyof Palette>(mode: PaletteMode, key: K, value: Palette[K]): (prev: Settings) => Settings {
+function setPalette<K extends keyof Palette>(mode: ThemeMode, key: K, value: Palette[K]): (prev: Settings) => Settings {
   return (prev) => (prev[mode][key] === value ? prev : { ...prev, [mode]: { ...prev[mode], [key]: value } });
 }
 
@@ -246,7 +245,7 @@ const ThemeToggle = memo(function ThemeToggle(props: { mode: ThemeMode; onChange
 });
 
 const NodesSection = memo(function NodesSection(props: {
-  mode: PaletteMode;
+  mode: ThemeMode;
   shape: NodeShape;
   fill: string;
   image: string | null;
@@ -283,7 +282,7 @@ const NodesSection = memo(function NodesSection(props: {
 });
 
 const EdgesSection = memo(function EdgesSection(props: {
-  mode: PaletteMode;
+  mode: ThemeMode;
   shape: NodeShape;
   edgeStyle: EdgeStyle;
   color: string;
@@ -320,7 +319,7 @@ const EdgesSection = memo(function EdgesSection(props: {
 });
 
 const CanvasSection = memo(function CanvasSection(props: {
-  mode: PaletteMode;
+  mode: ThemeMode;
   color: string;
   image: string | null;
   onChange: ChangeSettings;
@@ -380,12 +379,12 @@ const DisplaySection = memo(function DisplaySection(props: {
 });
 
 const DrawerFooter = memo(function DrawerFooter(props: {
-  mode: PaletteMode;
+  mode: ThemeMode;
   palette: Palette;
   onChange: ChangeSettings;
 }): JSX.Element {
   const { mode, palette, onChange } = props;
-  const [undo, setUndo] = useState<{ mode: PaletteMode; palette: Palette } | null>(null);
+  const [undo, setUndo] = useState<{ mode: ThemeMode; palette: Palette } | null>(null);
   const undoTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const defaults = DEFAULT_PALETTES[mode];
   const atDefaults = samePalette(palette, defaults);
@@ -627,6 +626,8 @@ function ImageRow(props: {
   const [upload, setUpload] = useState<UploadState>({ status: "idle" });
   const loading = upload.status === "loading";
   const errorId = `${props.id}-error`;
+  let fileLabel = props.image ? "Replace" : "Add image";
+  if (loading) fileLabel = "Reading…";
 
   const onFile = async (input: HTMLInputElement): Promise<void> => {
     const file = input.files?.[0];
@@ -639,7 +640,7 @@ function ImageRow(props: {
     } catch (cause) {
       setUpload({
         status: "error",
-        message: cause instanceof Error ? cause.message : "Graphy could not read that image. Try another image file.",
+        message: cause instanceof Error ? cause.message : UPLOAD_ERROR,
       });
     }
   };
@@ -655,7 +656,7 @@ function ImageRow(props: {
             aria-busy={loading}
           >
             {props.image ? null : <PlusIcon />}
-            {loading ? "Reading…" : props.image ? "Replace" : "Add image"}
+            {fileLabel}
             <input
               id={props.id}
               type="file"
@@ -670,7 +671,7 @@ function ImageRow(props: {
           {props.image && !loading ? (
             <button
               type="button"
-              class="icon-btn icon-btn-quiet"
+              class="icon-btn"
               aria-label={`Remove ${props.subject} image`}
               title="Remove image"
               onClick={() => {

@@ -38,15 +38,15 @@ export function parseSignature(code: string, lang: string): Signature | null {
 
   for (const candidate of candidates) {
     if (SKIP_METHODS.has(candidate.method)) continue;
-    const params = candidate.params.filter((p) => IDENTIFIER.test(p.name) && p.name !== "self");
-    if (params.length === 0 || params.length !== candidate.params.filter((p) => p.name !== "self").length) continue;
+    const params = candidate.params.filter((p) => p.name !== "self");
+    if (params.length === 0 || !params.every((p) => IDENTIFIER.test(p.name))) continue;
     return { method: candidate.method, params: withJsDocTypes(params, code) };
   }
   return null;
 }
 
 function signatureCandidates(source: string, lang: Lang): Signature[] {
-  const patterns = PATTERNS[lang] ?? PATTERNS.cpp ?? [];
+  const patterns = PATTERNS[lang] ?? [C_STYLE];
   const out: Signature[] = [];
   for (const pattern of patterns) {
     for (const match of source.matchAll(pattern)) {
@@ -58,28 +58,28 @@ function signatureCandidates(source: string, lang: Lang): Signature[] {
   return out;
 }
 
+const C_STYLE = /(?:^|\s)([A-Za-z_]\w*)\s*\(([^)]*)\)\s*\{/gm;
+const JAVA_STYLE = /(?:public|private|protected)?\s*(?:static\s+)?[\w<>,\[\]\s?]+?\s+(\w+)\s*\(([^)]*)\)\s*\{/gm;
+const DEF = /def\s+(\w+)\s*\(([^)]*)\)/gm;
+const FUNC = /func\s+(\w+)\s*\(([^)]*)\)/gm;
+const FUNCTION = /function\s+(\w+)\s*\(([^)]*)\)/gm;
+
 const PATTERNS: Partial<Record<Lang, RegExp[]>> = {
-  cpp: [/(?:^|\s)([A-Za-z_]\w*)\s*\(([^)]*)\)\s*\{/gm],
-  c: [/(?:^|\s)([A-Za-z_]\w*)\s*\(([^)]*)\)\s*\{/gm],
-  java: [/(?:public|private|protected)?\s*(?:static\s+)?[\w<>,\[\]\s?]+?\s+(\w+)\s*\(([^)]*)\)\s*\{/gm],
-  csharp: [/(?:public|private|protected)?\s*(?:static\s+)?[\w<>,\[\]\s?]+?\s+(\w+)\s*\(([^)]*)\)\s*\{/gm],
+  cpp: [C_STYLE],
+  c: [C_STYLE],
+  java: [JAVA_STYLE],
+  csharp: [JAVA_STYLE],
   kotlin: [/fun\s+(\w+)\s*\(([^)]*)\)/gm],
-  swift: [/func\s+(\w+)\s*\(([^)]*)\)/gm],
-  scala: [/def\s+(\w+)\s*\(([^)]*)\)/gm],
-  python: [/def\s+(\w+)\s*\(([^)]*)\)/gm],
-  python3: [/def\s+(\w+)\s*\(([^)]*)\)/gm],
-  ruby: [/def\s+(\w+)\s*\(([^)]*)\)/gm],
-  php: [/function\s+(\w+)\s*\(([^)]*)\)/gm],
-  golang: [/func\s+(\w+)\s*\(([^)]*)\)/gm],
+  swift: [FUNC],
+  scala: [DEF],
+  python: [DEF],
+  python3: [DEF],
+  ruby: [DEF],
+  php: [FUNCTION],
+  golang: [FUNC],
   rust: [/fn\s+(\w+)\s*\(([^)]*)\)/gm],
-  typescript: [
-    /function\s+(\w+)\s*\(([^)]*)\)/gm,
-    /(?:var|const|let)\s+(\w+)\s*(?::[^=]+)?=\s*(?:function\s*)?\(([^)]*)\)/gm,
-  ],
-  javascript: [
-    /(?:var|const|let)\s+(\w+)\s*=\s*function\s*\(([^)]*)\)/gm,
-    /function\s+(\w+)\s*\(([^)]*)\)/gm,
-  ],
+  typescript: [FUNCTION, /(?:var|const|let)\s+(\w+)\s*(?::[^=]+)?=\s*(?:function\s*)?\(([^)]*)\)/gm],
+  javascript: [/(?:var|const|let)\s+(\w+)\s*=\s*function\s*\(([^)]*)\)/gm, FUNCTION],
 };
 
 function splitParams(list: string): string[] {
@@ -102,11 +102,12 @@ function splitParams(list: string): string[] {
 
 const TRAILING_NAME = /([A-Za-z_]\w*)\s*$/;
 
+const COLON_TYPED = new Set<Lang>(["python", "python3", "typescript", "swift", "kotlin", "scala", "rust"]);
+
 function splitTypeAndName(param: string, lang: Lang): SigParam {
   const text = param.replace(/=.*$/, "").trim();
 
-  if (lang === "python" || lang === "python3" || lang === "typescript" ||
-      lang === "swift" || lang === "kotlin" || lang === "scala" || lang === "rust") {
+  if (COLON_TYPED.has(lang)) {
     const colon = text.indexOf(":");
     if (colon === -1) return { type: "", name: text.replace(/^[&*]|^mut\s+/, "").trim() };
     const name = text.slice(0, colon).trim().split(/\s+/).pop() ?? "";

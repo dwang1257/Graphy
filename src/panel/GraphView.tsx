@@ -6,8 +6,7 @@ import { memo } from "./memo.js";
 import { paintSvg, tagPaintRoles, type SvgPaint } from "./svgPaint.js";
 import { applyTraceOverlay, clearTraceOverlay, refreshTraceTones } from "./traceOverlay.js";
 import { pointerDragHandler } from "./usePointerDrag.js";
-import { normalizeWheelDelta, zoomAtPoint } from "./zoom.js";
-import type { View } from "./zoom.js";
+import { normalizeWheelDelta, zoomAtPoint, type View } from "./zoom.js";
 import "./trace.css";
 
 export const GESTURE_IDLE_MS = 150;

@@ -1,9 +1,12 @@
-import type { Settings } from "../settings/schema.js";
+import { THEME_MODES, type Settings } from "../settings/schema.js";
 
 export const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 export const MAX_IMAGE_DIMENSION = 4096;
+export const UPLOAD_ERROR = "Graphy could not read that image. Try another image file.";
 
-export type ImageSlot = "backgroundImage" | "nodeBackgroundImage";
+const IMAGE_SLOTS = ["backgroundImage", "nodeBackgroundImage"] as const;
+
+export type ImageSlot = (typeof IMAGE_SLOTS)[number];
 
 export interface ImageBudget {
   dimension: number;
@@ -30,8 +33,6 @@ export interface ImageUploadPlatform {
   toBlob: (dataUrl: string) => Promise<Blob>;
 }
 
-const uploadError = "Graphy could not read that image. Try another image file.";
-
 function readBlob(file: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -39,11 +40,11 @@ function readBlob(file: Blob): Promise<string> {
       if (typeof reader.result === "string") {
         resolve(reader.result);
       } else {
-        reject(new Error(uploadError));
+        reject(new Error(UPLOAD_ERROR));
       }
     };
-    reader.onerror = () => reject(new Error(uploadError));
-    reader.onabort = () => reject(new Error(uploadError));
+    reader.onerror = () => reject(new Error(UPLOAD_ERROR));
+    reader.onabort = () => reject(new Error(UPLOAD_ERROR));
     reader.readAsDataURL(file);
   });
 }
@@ -66,7 +67,7 @@ const browserPlatform: ImageUploadPlatform = {
     try {
       const canvas = new OffscreenCanvas(size.width, size.height);
       const ctx = canvas.getContext("2d");
-      if (!ctx) throw new Error(uploadError);
+      if (!ctx) throw new Error(UPLOAD_ERROR);
       ctx.drawImage(bitmap, 0, 0);
       return await readBlob(await canvas.convertToBlob({ type: "image/webp", quality }));
     } finally {
@@ -106,7 +107,7 @@ async function fitImage(
       if (encoded.length <= budget.chars) return encoded;
     }
     const longest = Math.max(size.width, size.height);
-    if (longest <= MIN_DIMENSION) throw new Error(uploadError);
+    if (longest <= MIN_DIMENSION) throw new Error(UPLOAD_ERROR);
     size = scaledTo(size, Math.max(MIN_DIMENSION, Math.floor(longest / 2)));
   }
 }
@@ -127,7 +128,7 @@ export async function readImageDataUrl(
   try {
     dimensions = await platform.decode(file as Blob);
   } catch {
-    throw new Error(uploadError);
+    throw new Error(UPLOAD_ERROR);
   }
   if (
     dimensions.width > MAX_IMAGE_DIMENSION ||
@@ -141,7 +142,7 @@ export async function readImageDataUrl(
   try {
     return await fitImage(file as Blob, dimensions, IMAGE_BUDGETS[slot], platform);
   } catch {
-    throw new Error(uploadError);
+    throw new Error(UPLOAD_ERROR);
   }
 }
 
@@ -161,8 +162,8 @@ export async function compactSettingsImages(
   platform: ImageUploadPlatform = browserPlatform,
 ): Promise<Settings> {
   let next = settings;
-  for (const mode of ["light", "dark"] as const) {
-    for (const slot of ["backgroundImage", "nodeBackgroundImage"] as const) {
+  for (const mode of THEME_MODES) {
+    for (const slot of IMAGE_SLOTS) {
       const url = next[mode][slot];
       if (!url) continue;
       let compacted: string;

@@ -20,6 +20,15 @@ const CLOSE_DELIMITERS: Record<string, string> = {
   ")": "(",
 };
 
+const PYTHON_LITERALS: ReadonlyArray<readonly [string, string]> = [
+  ["None", "null"],
+  ["True", "true"],
+  ["False", "false"],
+];
+
+const INVALID_VALUE = "Invalid structured value.";
+const VALUE_TOO_LARGE = `Input value is too large. Maximum is ${MAX_VALUE_LENGTH} characters.`;
+
 function isEscapedQuote(raw: string, index: number): boolean {
   let backslashes = 0;
   for (let i = index - 1; i >= 0 && raw[i] === "\\"; i -= 1) {
@@ -67,21 +76,10 @@ function normalizeLiteral(raw: string): string {
       continue;
     }
 
-    if (c === "N" && raw.startsWith("None", i) && isWordBoundary(raw, i, 4)) {
-      result += "null";
-      i += 3;
-      continue;
-    }
-
-    if (c === "T" && raw.startsWith("True", i) && isWordBoundary(raw, i, 4)) {
-      result += "true";
-      i += 3;
-      continue;
-    }
-
-    if (c === "F" && raw.startsWith("False", i) && isWordBoundary(raw, i, 5)) {
-      result += "false";
-      i += 4;
+    const literal = PYTHON_LITERALS.find(([word]) => raw.startsWith(word, i) && isWordBoundary(raw, i, word.length));
+    if (literal) {
+      result += literal[1];
+      i += literal[0].length - 1;
       continue;
     }
 
@@ -97,26 +95,18 @@ function normalizeLiteral(raw: string): string {
   return result;
 }
 
-interface LenientValue {
-  value: LCValue;
-}
-
-interface LenientError {
-  error: string;
-}
-
-function lenient(raw: string): LenientValue | LenientError {
+function parseJson(text: string): { value: unknown } | undefined {
   try {
-    const value: unknown = JSON.parse(raw);
-    return isLCValue(value) ? { value } : { error: "Invalid structured value." };
+    return { value: JSON.parse(text) };
   } catch {
-    try {
-      const value: unknown = JSON.parse(normalizeLiteral(raw));
-      return isLCValue(value) ? { value } : { error: "Invalid structured value." };
-    } catch {
-      return /^[\[{(]/.test(raw) ? { error: "Invalid structured value." } : { value: raw };
-    }
+    return undefined;
   }
+}
+
+function lenient(raw: string): { value: LCValue } | { error: string } {
+  const parsed = parseJson(raw) ?? parseJson(normalizeLiteral(raw));
+  if (!parsed) return /^[\[{(]/.test(raw) ? { error: INVALID_VALUE } : { value: raw };
+  return isLCValue(parsed.value) ? { value: parsed.value } : { error: INVALID_VALUE };
 }
 
 export function scanInputValues(input: string): { values: string[]; error?: string } {
@@ -148,83 +138,38 @@ export function scanInputValues(input: string): { values: string[]; error?: stri
     const c = normalized[i]!;
 
     if (inString) {
-      current += c;
-      if (current.length > MAX_VALUE_LENGTH) {
-        error = `Input value is too large. Maximum is ${MAX_VALUE_LENGTH} characters.`;
-        return { values, error };
-      }
-      if (c === quote && !isEscapedQuote(normalized, i)) {
-        inString = false;
-        quote = "";
-      }
-      continue;
-    }
-
-    if (c === '"' || c === "'") {
+      if (c === quote && !isEscapedQuote(normalized, i)) inString = false;
+    } else if (c === '"' || c === "'") {
       inString = true;
       quote = c;
-      current += c;
-      if (current.length > MAX_VALUE_LENGTH) {
-        error = `Input value is too large. Maximum is ${MAX_VALUE_LENGTH} characters.`;
-        return { values, error };
-      }
-      continue;
-    }
-
-    if (c in OPEN_DELIMITERS) {
+    } else if (c in OPEN_DELIMITERS) {
       if (stack.length >= MAX_VALUE_DEPTH) {
         return { values, error: `Input is too deeply nested. Maximum depth is ${MAX_VALUE_DEPTH}.` };
       }
       stack.push(c);
       current += c;
       continue;
-    }
-
-    if (c in CLOSE_DELIMITERS) {
-      const expected = CLOSE_DELIMITERS[c]!;
-      if (stack.length > 0 && stack[stack.length - 1] === expected) {
-        stack.pop();
-      } else if (!error) {
-        error = `Mismatched delimiter '${c}'.`;
-      }
+    } else if (c in CLOSE_DELIMITERS) {
+      if (stack.at(-1) === CLOSE_DELIMITERS[c]) stack.pop();
+      else error ??= `Mismatched delimiter '${c}'.`;
       current += c;
       continue;
-    }
-
-    if (c === "\n" && stack.length === 0) {
+    } else if (c === "\n" && stack.length === 0) {
       if (!push()) return { values, error };
       continue;
     }
 
     current += c;
-    if (current.length > MAX_VALUE_LENGTH) {
-      return {
-        values,
-        error: `Input value is too large. Maximum is ${MAX_VALUE_LENGTH} characters.`,
-      };
-    }
+    if (current.length > MAX_VALUE_LENGTH) return { values, error: VALUE_TOO_LARGE };
   }
 
   if (!push()) return { values, error };
 
-  if (!error && inString) {
-    error = "Unclosed string.";
-  }
-
-  if (!error && stack.length > 0) {
-    const unclosed = stack[stack.length - 1]!;
-    error = `Unclosed delimiter '${unclosed}'.`;
-  }
+  if (inString) error ??= "Unclosed string.";
+  const unclosed = stack.at(-1);
+  if (unclosed !== undefined) error ??= `Unclosed delimiter '${unclosed}'.`;
 
   return error ? { values, error } : { values };
-}
-
-export function splitInputValues(input: string): string[] {
-  return scanInputValues(input).values;
-}
-
-export function parseInput(input: string): LCValue[] {
-  return parseInputResult(input).values;
 }
 
 export interface ParsedInput {
@@ -267,6 +212,11 @@ export function isArray(v: LCValue): v is LCValue[] {
 
 export function isNestedArray(v: LCValue): v is LCValue[][] {
   return isArray(v) && v.length > 0 && v.every(isArray);
+}
+
+export function isStringGrid(v: readonly LCValue[]): v is string[] {
+  const first = v[0];
+  return typeof first === "string" && first.length > 0 && v.every((row) => typeof row === "string" && row.length === first.length);
 }
 
 export function scalarText(v: LCValue): string {

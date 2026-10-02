@@ -15,7 +15,6 @@ export interface SceneRenderOptions {
   trace: Trace;
   frameIndex: number;
   layout: Layout;
-  showTerminal: boolean;
   enabled: boolean;
 }
 
@@ -64,9 +63,9 @@ export class SvgCache {
   }
 }
 
-function dotFor(panes: readonly Pane[], topology: SceneTopology, layout: Layout, showTerminal: boolean): string {
+function dotFor(panes: readonly Pane[], topology: SceneTopology, layout: Layout): string {
   try {
-    return emitDot(sceneModel(panes, topology, { showTerminal }), { layout });
+    return emitDot(sceneModel(panes, topology, { showTerminal: layout.showListTerminal }), { layout });
   } catch {
     return "";
   }
@@ -112,12 +111,12 @@ function useEngine(enabled: boolean): { ready: boolean; error: string | null } {
 }
 
 export function useSceneRender(options: SceneRenderOptions): SceneRender {
-  const { panes, trace, frameIndex, layout, showTerminal, enabled } = options;
+  const { panes, trace, frameIndex, layout, enabled } = options;
   const base = useMemo(() => initialTopology(panes), [panes]);
   const baseKey = useMemo(() => layoutKeyOf(base), [base]);
   const baseDot = useMemo(
-    () => (enabled ? dotFor(panes, base, layout, showTerminal) : ""),
-    [enabled, panes, base, layout, showTerminal],
+    () => (enabled ? dotFor(panes, base, layout) : ""),
+    [enabled, panes, base, layout],
   );
 
   const engine = useEngine(baseDot !== "");
@@ -151,7 +150,7 @@ export function useSceneRender(options: SceneRenderOptions): SceneRender {
       const running = inflight.get(key);
       if (running) return running;
       const topology = frames.find((frame) => frame.layoutKey === key)?.topology;
-      const dot = topology ? dotFor(panes, topology, layout, showTerminal) : "";
+      const dot = topology ? dotFor(panes, topology, layout) : "";
       if (!dot) return undefined;
       const job = renderDot(dot).then((svg) => {
         svgs.set(key, svg);

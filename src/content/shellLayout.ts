@@ -1,38 +1,30 @@
 export const TITLEBAR_PX = 40;
 export const SHELL_RADIUS_PX = 12;
-export const TITLEBAR_ICON_PX = 28;
-export const TITLEBAR_PAD_PX = 12;
-export const TITLEBAR_GAP_PX = 12;
-export const ICON_SLOP_PX = 6;
-
-export function shrinkHitOffset(): { top: number; right: number; width: number; height: number } {
-  const padY = (TITLEBAR_PX - TITLEBAR_ICON_PX) / 2;
-  const right = TITLEBAR_PAD_PX + TITLEBAR_ICON_PX + TITLEBAR_GAP_PX - ICON_SLOP_PX;
-  const size = TITLEBAR_ICON_PX + ICON_SLOP_PX * 2;
-  return { top: padY - ICON_SLOP_PX, right, width: size, height: size };
-}
-
-export function shrinkHitPosition(state: { x: number; y: number; width: number }): { left: number; top: number } {
-  const hit = shrinkHitOffset();
-  return {
-    left: state.x + state.width - hit.right - hit.width,
-    top: state.y + hit.top,
-  };
-}
-
-export interface ShellBox {
-  width: number;
-  height: number;
-}
-
-export interface ShellGeometry {
-  shell: ShellBox;
-  iframe: ShellBox;
-  clipPath: string;
-}
-
 export const SHRINK_MS = 160;
 export const SHRINK_EASE = "cubic-bezier(0.16, 1, 0.3, 1)";
+export const MIN_PANEL_WIDTH = 280;
+export const MIN_PANEL_HEIGHT = 180;
+export const RESIZE_HIT_PX = 16;
+
+const TITLEBAR_ICON_PX = 28;
+const TITLEBAR_PAD_PX = 12;
+const TITLEBAR_GAP_PX = 12;
+const ICON_SLOP_PX = 6;
+
+export const SHRINK_HIT = {
+  top: (TITLEBAR_PX - TITLEBAR_ICON_PX) / 2 - ICON_SLOP_PX,
+  right: TITLEBAR_PAD_PX + TITLEBAR_ICON_PX + TITLEBAR_GAP_PX - ICON_SLOP_PX,
+  width: TITLEBAR_ICON_PX + ICON_SLOP_PX * 2,
+  height: TITLEBAR_ICON_PX + ICON_SLOP_PX * 2,
+};
+
+export type Box = { x: number; y: number; width: number; height: number };
+type Size = { width: number; height: number };
+type Point = { left: number; top: number };
+
+export type ResizeCorner = "nw" | "ne" | "sw" | "se";
+
+export const RESIZE_CORNERS: ResizeCorner[] = ["nw", "ne", "sw", "se"];
 
 export type StyleWriter = (el: HTMLElement, styles: Record<string, string>) => void;
 
@@ -56,10 +48,11 @@ export function createStyleWriter(): StyleWriter {
   };
 }
 
-export interface ApplyShellOptions {
-  settle?: boolean;
-  clipPath?: string | false;
-  write?: StyleWriter;
+export function shrinkHitPosition(box: Box): Point {
+  return {
+    left: box.x + box.width - SHRINK_HIT.right - SHRINK_HIT.width,
+    top: box.y + SHRINK_HIT.top,
+  };
 }
 
 export function clipAnimation(from: string, to: string): Keyframe[] {
@@ -67,81 +60,36 @@ export function clipAnimation(from: string, to: string): Keyframe[] {
 }
 
 export function shellClipPath(height: number, shrunk: boolean, settle = false): string {
-  const radius = `round ${SHELL_RADIUS_PX}px`;
   const bottom = !shrunk || settle ? 0 : Math.max(0, height - TITLEBAR_PX);
-  return `inset(0px 0px ${bottom}px 0px ${radius})`;
+  return `inset(0px 0px ${bottom}px 0px round ${SHELL_RADIUS_PX}px)`;
 }
-
-export function resizeHitHidden(
-  state: { open: boolean; shrunk: boolean },
-  clipSettled: boolean,
-): boolean {
-  return !state.open || state.shrunk || !clipSettled;
-}
-
-export function shellGeometry(
-  state: { width: number; height: number; shrunk: boolean },
-  settle = false,
-): ShellGeometry {
-  const iframe = { width: state.width, height: state.height };
-  return {
-    iframe,
-    shell: {
-      width: state.width,
-      height: state.shrunk && settle ? TITLEBAR_PX : state.height,
-    },
-    clipPath: shellClipPath(state.height, state.shrunk, settle),
-  };
-}
-
-type ShellLayoutState = {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  open: boolean;
-  shrunk: boolean;
-};
 
 export function applyShellStyles(
   shell: HTMLElement,
   frame: HTMLElement,
-  state: ShellLayoutState,
-  options: ApplyShellOptions = {},
+  state: Box & { open: boolean; shrunk: boolean },
+  options: { settle?: boolean; clipPath?: string | false; write?: StyleWriter } = {},
 ): void {
   const settle = options.settle === true;
   const write = options.write ?? writeStylesDirect;
-  const { shell: box, iframe, clipPath } = shellGeometry(state, settle);
   const open = String(state.open);
   if (shell.dataset.open !== open) shell.dataset.open = open;
-  const next: Record<string, string> = {
+  const styles: Record<string, string> = {
     left: `${state.x}px`,
     top: `${state.y}px`,
-    width: `${box.width}px`,
-    height: `${box.height}px`,
+    width: `${state.width}px`,
+    height: `${state.shrunk && settle ? TITLEBAR_PX : state.height}px`,
   };
   if (options.clipPath !== false) {
-    next["clip-path"] = settle ? clipPath : (options.clipPath ?? clipPath);
+    styles["clip-path"] = settle || options.clipPath === undefined
+      ? shellClipPath(state.height, state.shrunk, settle)
+      : options.clipPath;
   }
-  write(shell, next);
-  write(frame, {
-    width: `${iframe.width}px`,
-    height: `${iframe.height}px`,
-  });
+  write(shell, styles);
+  write(frame, { width: `${state.width}px`, height: `${state.height}px` });
 }
 
-export const MIN_PANEL_WIDTH = 280;
-export const MIN_PANEL_HEIGHT = 180;
-export const RESIZE_HIT_PX = 16;
-
-export type ResizeCorner = "nw" | "ne" | "sw" | "se";
-
-export const RESIZE_CORNERS: ResizeCorner[] = ["nw", "ne", "sw", "se"];
-
-export function clampPanelBox(
-  box: { x: number; y: number; width: number; height: number },
-  viewport: { width: number; height: number },
-): { x: number; y: number; width: number; height: number } {
+export function clampPanelBox(box: Box, viewport: Size): Box {
   const width = Math.min(Math.max(MIN_PANEL_WIDTH, box.width), Math.max(MIN_PANEL_WIDTH, viewport.width));
   const height = Math.min(Math.max(MIN_PANEL_HEIGHT, box.height), Math.max(MIN_PANEL_HEIGHT, viewport.height));
   return {
@@ -152,13 +100,10 @@ export function clampPanelBox(
   };
 }
 
-export function resizeHitPosition(
-  state: { x: number; y: number; width: number; height: number },
-  corner: ResizeCorner = "se",
-): { left: number; top: number } {
+export function resizeHitPosition(box: Box, corner: ResizeCorner): Point {
   return {
-    left: corner.includes("w") ? state.x : state.x + state.width - RESIZE_HIT_PX,
-    top: corner.includes("n") ? state.y : state.y + state.height - RESIZE_HIT_PX,
+    left: corner.includes("w") ? box.x : box.x + box.width - RESIZE_HIT_PX,
+    top: corner.includes("n") ? box.y : box.y + box.height - RESIZE_HIT_PX,
   };
 }
 
@@ -187,20 +132,18 @@ function clampResizeAxis(
 }
 
 export function liveResizeRect(
-  start: { x: number; y: number; width: number; height: number },
+  start: Box,
   corner: ResizeCorner,
   pointer: { dx: number; dy: number },
-  viewport: { width: number; height: number },
-): { x: number; y: number; width: number; height: number } {
+  viewport: Size,
+): Box {
   const west = corner.includes("w");
   const north = corner.includes("n");
   const right = start.x + start.width;
   const bottom = start.y + start.height;
-  let x = west ? start.x + pointer.dx : start.x;
-  let y = north ? start.y + pointer.dy : start.y;
-  let width = west ? right - x : start.width + pointer.dx;
-  let height = north ? bottom - y : start.height + pointer.dy;
-  ({ pos: x, size: width } = clampResizeAxis(x, width, MIN_PANEL_WIDTH, viewport.width, west, right));
-  ({ pos: y, size: height } = clampResizeAxis(y, height, MIN_PANEL_HEIGHT, viewport.height, north, bottom));
-  return { x, y, width, height };
+  const x = west ? start.x + pointer.dx : start.x;
+  const y = north ? start.y + pointer.dy : start.y;
+  const horizontal = clampResizeAxis(x, west ? right - x : start.width + pointer.dx, MIN_PANEL_WIDTH, viewport.width, west, right);
+  const vertical = clampResizeAxis(y, north ? bottom - y : start.height + pointer.dy, MIN_PANEL_HEIGHT, viewport.height, north, bottom);
+  return { x: horizontal.pos, y: vertical.pos, width: horizontal.size, height: vertical.size };
 }

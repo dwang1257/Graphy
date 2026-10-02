@@ -393,13 +393,11 @@ function outgoingRun<T>(body: T): T | string {
   return rewritten;
 }
 
-function captureInitRun(init: RequestInit | undefined): { sequence: number | undefined; init: RequestInit | undefined } {
+function prepareRun<T>(body: T): { sequence: number | undefined; body: T | string } {
   try {
-    const sequence = captureRun(init?.body);
-    const body = outgoingRun(init?.body);
-    return { sequence, init: body !== init?.body && init ? { ...init, body } : init };
+    return { sequence: captureRun(body), body: outgoingRun(body) };
   } catch {
-    return { sequence: undefined, init };
+    return { sequence: undefined, body };
   }
 }
 
@@ -421,24 +419,17 @@ async function fetchRequestRun(
   } catch {
     text = undefined;
   }
-  let sequence: number | undefined;
-  let body: unknown = text;
-  try {
-    sequence = captureRun(text);
-    body = outgoingRun(text);
-  } catch {
-    body = text;
-  }
+  const run = prepareRun(text);
   let request: Promise<Response> | undefined;
-  if (typeof body === "string" && body !== text) {
+  if (typeof run.body === "string" && run.body !== text) {
     try {
-      request = nativeFetch.call(self, new Request(input, { body }), init);
+      request = nativeFetch.call(self, new Request(input, { body: run.body }), init);
     } catch {
       request = undefined;
     }
   }
   request ??= nativeFetch.call(self, input, init);
-  rememberRun(request, sequence);
+  rememberRun(request, run.sequence);
   return request;
 }
 
@@ -448,9 +439,9 @@ function fetchRun(
   init: RequestInit | undefined,
 ): Promise<Response> {
   if (input instanceof Request && init?.body === undefined) return fetchRequestRun(self, input, init);
-  const captured = captureInitRun(init);
-  const request = nativeFetch.call(self, input, captured.init);
-  rememberRun(request, captured.sequence);
+  const run = prepareRun(init?.body);
+  const request = nativeFetch.call(self, input, run.body !== init?.body && init ? { ...init, body: run.body } : init);
+  rememberRun(request, run.sequence);
   return request;
 }
 
@@ -478,10 +469,6 @@ async function fetchCheck(
   let body: Record<string, unknown> | null;
   try {
     body = parseObject(await response.clone().text());
-  } catch {
-    return response;
-  }
-  try {
     completeRun(url, body);
   } catch {
     return response;
@@ -584,25 +571,18 @@ function patchNetwork(): void {
 
   XMLHttpRequest.prototype.send = function send(this: XMLHttpRequest, body?: Document | XMLHttpRequestBodyInit | null) {
     const url = xhrUrls.get(this) ?? "";
-    if (CHECK_URL.test(url) && (hooksActive || instrumented)) stripXhr(this);
+    const isCheck = CHECK_URL.test(url);
+    if (isCheck && (hooksActive || instrumented)) stripXhr(this);
     if (!hooksActive) return nativeSend.call(this, body);
-    let nextBody = body;
-    let sequence: number | undefined;
-    try {
-      if (RUN_URL.test(url)) {
-        sequence = captureRun(body);
-        nextBody = outgoingRun(body);
-      }
-    } catch {
-      nextBody = body;
-    }
+    const isRun = RUN_URL.test(url);
+    const run = isRun ? prepareRun(body) : { sequence: undefined, body };
 
-    if (RUN_URL.test(url) || CHECK_URL.test(url)) {
+    if (isRun || isCheck) {
       this.addEventListener("load", () => {
         try {
           const parsed = xhrBody(this);
-          if (RUN_URL.test(url)) {
-            if (sequence !== undefined) rememberInterpretId(parsed, sequence);
+          if (isRun) {
+            if (run.sequence !== undefined) rememberInterpretId(parsed, run.sequence);
           } else {
             completeRun(url, parsed);
           }
@@ -611,7 +591,7 @@ function patchNetwork(): void {
         }
       }, { once: true });
     }
-    return nativeSend.call(this, nextBody ?? null);
+    return nativeSend.call(this, run.body ?? null);
   };
   networkPatched = true;
 }

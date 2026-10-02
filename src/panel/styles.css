@@ -141,7 +141,8 @@ button {
   pointer-events: none;
 }
 
-.kind-select {
+.kind-select,
+.custom-kind-select {
   appearance: none;
   -webkit-appearance: none;
   position: absolute;
@@ -554,21 +555,6 @@ button {
   text-overflow: ellipsis;
   white-space: nowrap;
   pointer-events: none;
-}
-
-.custom-kind-select {
-  appearance: none;
-  -webkit-appearance: none;
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  padding: 0;
-  border: 0;
-  opacity: 0;
-  background: transparent;
-  font-size: var(--text-sm);
-  cursor: pointer;
 }
 
 .custom-kind:has(.custom-kind-select:focus-visible) {
@@ -1154,8 +1140,6 @@ label.style-row-label { cursor: pointer; }
   object-fit: cover;
   box-shadow: 0 0 0 1px var(--color-swatch-edge);
 }
-
-.image-field > .text-btn.file-btn:first-child { margin-left: calc(var(--space-2xs) * -1); }
 
 .image-field > .icon-btn { margin-left: auto; }
 

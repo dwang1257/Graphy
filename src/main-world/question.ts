@@ -1,7 +1,7 @@
 import {
-  MAX_PARAM_FIELD_LENGTH,
   MAX_SNAPSHOT_CASES,
   MAX_SNAPSHOT_PARAMS,
+  isSnapshotParam,
   type SnapshotParam,
 } from "../shared/protocol.js";
 
@@ -44,25 +44,13 @@ function normalizeCase(text: string): string {
   return normalizeLines(text.trim().split(/\r?\n/));
 }
 
-function isParam(value: unknown): value is SnapshotParam {
-  const param = asObject(value);
-  return (
-    typeof param?.name === "string" &&
-    param.name.length > 0 &&
-    param.name.length <= MAX_PARAM_FIELD_LENGTH &&
-    typeof param.type === "string" &&
-    param.type.length > 0 &&
-    param.type.length <= MAX_PARAM_FIELD_LENGTH
-  );
-}
-
 export function parseMetaData(metaData: unknown): Pick<Question, "lineCount" | "params"> | null {
   const meta = asObject(parseJson(metaData));
   if (!meta) return null;
   if (meta.systemdesign === true) return { lineCount: 2 };
   const params = meta.params;
   if (!Array.isArray(params) || params.length === 0 || params.length > MAX_SNAPSHOT_PARAMS) return null;
-  if (!params.every(isParam)) return null;
+  if (!params.every(isSnapshotParam)) return null;
   return {
     lineCount: params.length,
     params: params.map(({ name, type }) => ({ name, type })),
@@ -95,16 +83,19 @@ export function questionFromNextData(nextData: unknown, slug: string): QuestionD
     const key = query?.queryKey;
     if (!Array.isArray(key) || key[0] !== "questionDetail") continue;
     if (asObject(key[1])?.titleSlug !== slug) continue;
-    const question = asObject(asObject(asObject(query?.state)?.data)?.question);
-    if (question) return { exampleTestcaseList: question.exampleTestcaseList, metaData: question.metaData };
+    const question = questionData(asObject(asObject(query?.state)?.data)?.question);
+    if (question) return question;
   }
   return null;
 }
 
 export function questionFromGraphql(body: unknown): QuestionData | null {
-  const question = asObject(asObject(asObject(body)?.data)?.question);
-  if (!question) return null;
-  return { exampleTestcaseList: question.exampleTestcaseList, metaData: question.metaData };
+  return questionData(asObject(asObject(body)?.data)?.question);
+}
+
+function questionData(value: unknown): QuestionData | null {
+  const question = asObject(value);
+  return question ? { exampleTestcaseList: question.exampleTestcaseList, metaData: question.metaData } : null;
 }
 
 export function editCacheKey(slug: string): string {

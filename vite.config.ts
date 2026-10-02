@@ -1,12 +1,8 @@
-/// <reference types="vitest/config" />
+import { crx } from "@crxjs/vite-plugin";
+import { buildSync } from "esbuild";
 import { defineConfig } from "vite";
 import type { Plugin, PluginOption } from "vite";
-import { crx } from "@crxjs/vite-plugin";
 import manifest from "./manifest.config.js";
-// @ts-expect-error no declaration file for the .mjs helper
-import { bundlePageWorld as bundlePageWorldJs } from "./scripts/bundle-page-world.mjs";
-
-const bundlePageWorld: () => void = bundlePageWorldJs;
 
 /**
  * The page-world script must be a standalone IIFE served from
@@ -16,7 +12,16 @@ function pageWorldBundle(): Plugin {
   return {
     name: "graphy:page-world",
     buildStart() {
-      bundlePageWorld();
+      buildSync({
+        entryPoints: ["src/main-world/inject.ts"],
+        outfile: "public/injected.js",
+        bundle: true,
+        format: "iife",
+        target: "chrome110",
+        minify: process.env.NODE_ENV === "production",
+        legalComments: "none",
+        logLevel: "warning",
+      });
     },
   };
 }
@@ -33,15 +38,6 @@ export default defineConfig(async ({ command }) => {
     plugins,
     oxc: {
       jsx: { runtime: "automatic" as const, importSource: "preact" },
-    },
-    test: {
-      exclude: [
-        "**/node_modules/**",
-        "**/node_modules.nosync/**",
-        "**/node_modules.icloud-trash/**",
-        "**/dist/**",
-        "**/.worktrees/**",
-      ],
     },
     build: {
       target: "chrome110",

@@ -63,8 +63,8 @@ export type FromPanel =
   | { channel: typeof PANEL_CHANNEL; type: "persist" }
   | { channel: typeof PANEL_CHANNEL; type: "setShrunk"; shrunk: boolean };
 
-function onChannel(data: unknown, channel: string): data is { channel: string; type: unknown } {
-  return typeof data === "object" && data !== null && (data as { channel?: unknown }).channel === channel;
+function onChannel(data: unknown, channel: string): data is Record<string, unknown> {
+  return typeof data === "object" && data !== null && (data as Record<string, unknown>).channel === channel;
 }
 
 function isBoundedString(value: unknown, max: number, nonEmpty = false): value is string {
@@ -75,16 +75,14 @@ function isStringArray(value: unknown, maxItems: number, maxLength: number): val
   return Array.isArray(value) && value.length <= maxItems && value.every((entry) => isBoundedString(entry, maxLength));
 }
 
+export function isSnapshotParam(value: unknown): value is SnapshotParam {
+  if (typeof value !== "object" || value === null) return false;
+  const param = value as Record<string, unknown>;
+  return isBoundedString(param.name, MAX_PARAM_FIELD_LENGTH, true) && isBoundedString(param.type, MAX_PARAM_FIELD_LENGTH, true);
+}
+
 function isParams(value: unknown): value is SnapshotParam[] {
-  return (
-    Array.isArray(value) &&
-    value.length <= MAX_SNAPSHOT_PARAMS &&
-    value.every((entry) => {
-      if (typeof entry !== "object" || entry === null) return false;
-      const param = entry as Record<string, unknown>;
-      return isBoundedString(param.name, MAX_PARAM_FIELD_LENGTH, true) && isBoundedString(param.type, MAX_PARAM_FIELD_LENGTH, true);
-    })
-  );
+  return Array.isArray(value) && value.length <= MAX_SNAPSHOT_PARAMS && value.every(isSnapshotParam);
 }
 
 function isSnapshot(payload: unknown): payload is Snapshot {
@@ -110,39 +108,29 @@ function isSnapshot(payload: unknown): payload is Snapshot {
 
 export function isPageMessage(data: unknown): data is PageMessage {
   if (!onChannel(data, PAGE_CHANNEL)) return false;
-  const m = data as { type?: unknown; payload?: unknown };
-  if (m.type === "clear") return true;
-  return m.type === "snapshot" && isSnapshot(m.payload);
-}
-
-export function isPageTraceMessage(data: unknown): data is PageTraceMessage {
-  if (!onChannel(data, PAGE_CHANNEL)) return false;
-  const m = data as { type?: unknown; enabled?: unknown };
-  return m.type === "trace" && typeof m.enabled === "boolean";
+  return data.type === "clear" || (data.type === "snapshot" && isSnapshot(data.payload));
 }
 
 export function isPageControlMessage(data: unknown): data is PageControlMessage {
   if (!onChannel(data, PAGE_CHANNEL)) return false;
-  const m = data as { type?: unknown; enabled?: unknown };
-  return (m.type === "trace" || m.type === "hooks") && typeof m.enabled === "boolean";
+  return (data.type === "trace" || data.type === "hooks") && typeof data.enabled === "boolean";
 }
 
 export function isPanelMessage(data: unknown): data is FromPanel {
   if (!onChannel(data, PANEL_CHANNEL)) return false;
-  const m = data as Record<string, unknown>;
-  switch (m.type) {
+  switch (data.type) {
     case "ready":
     case "close":
     case "persist":
       return true;
     case "setShrunk":
-      return typeof m.shrunk === "boolean";
+      return typeof data.shrunk === "boolean";
     case "move":
       return (
-        typeof m.dx === "number" &&
-        Number.isFinite(m.dx) &&
-        typeof m.dy === "number" &&
-        Number.isFinite(m.dy)
+        typeof data.dx === "number" &&
+        Number.isFinite(data.dx) &&
+        typeof data.dy === "number" &&
+        Number.isFinite(data.dy)
       );
     default:
       return false;
@@ -151,9 +139,14 @@ export function isPanelMessage(data: unknown): data is FromPanel {
 
 export function isToPanel(data: unknown): data is ToPanel {
   if (!onChannel(data, PANEL_CHANNEL)) return false;
-  const m = data as Record<string, unknown>;
-  if (m.type === "snapshot") return isSnapshot(m.payload);
-  if (m.type === "clear") return true;
-  if (m.type === "shrunk") return typeof m.shrunk === "boolean";
-  return false;
+  switch (data.type) {
+    case "snapshot":
+      return isSnapshot(data.payload);
+    case "clear":
+      return true;
+    case "shrunk":
+      return typeof data.shrunk === "boolean";
+    default:
+      return false;
+  }
 }

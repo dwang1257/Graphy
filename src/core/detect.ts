@@ -1,6 +1,6 @@
 import { isStructureKind, type StructureKind } from "./types.js";
 import type { SigParam } from "./signature.js";
-import { isArray, isNestedArray, type LCValue } from "./parse/value.js";
+import { isArray, isNestedArray, isStringGrid, type LCValue } from "./parse/value.js";
 
 export type Role =
   | { kind: StructureKind }
@@ -54,19 +54,8 @@ export function isScalarType(type: string): boolean {
 
 function fromShape(value: LCValue): Role {
   if (!isArray(value)) return IGNORE;
-
-  if (isNestedArray(value)) {
-    if (new Set(value.map((row) => row.length)).size === 1) return { kind: "matrix" };
-    return IGNORE;
-  }
-
+  if (isNestedArray(value)) return new Set(value.map((row) => row.length)).size === 1 ? { kind: "matrix" } : IGNORE;
   if (value.some((v) => v === null)) return { kind: "binary-tree" };
-  const first = value[0];
-  if (
-    value.length > 1
-    && typeof first === "string"
-    && first.length > 1
-    && value.every((v) => typeof v === "string" && v.length === first.length)
-  ) return { kind: "matrix" };
+  if (value.length > 1 && isStringGrid(value) && (value[0]?.length ?? 0) > 1) return { kind: "matrix" };
   return IGNORE;
 }

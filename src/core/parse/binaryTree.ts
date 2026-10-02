@@ -5,40 +5,36 @@ export function parseBinaryTree(value: LCValue, title: string | undefined, paneI
   const links: Links = {};
   const model: GraphModel = { ...emptyModel("binary-tree", title), links };
   if (!isArray(value) || value.length === 0) return model;
-  if (value[0] === null || value[0] === undefined) {
-    if (value.slice(1).some((raw) => raw !== null && raw !== undefined)) {
-      throw new Error("Binary-tree input contains an unreachable value.");
-    }
-    return model;
-  }
 
-  const rootId = `${paneId}0`;
-  model.nodes.push({ id: rootId, label: scalarText(value[0]), role: "root" });
-  links[rootId] = {};
-
-  const queue: string[] = [rootId];
   let cursor = 1;
-  let head = 0;
+  const rootValue = value[0];
+  if (rootValue !== undefined && rootValue !== null) {
+    const rootId = `${paneId}0`;
+    model.nodes.push({ id: rootId, label: scalarText(rootValue), role: "root" });
+    links[rootId] = {};
 
-  while (head < queue.length && cursor < value.length) {
-    const parentId = queue[head++]!;
-    const parentLinks = links[parentId] ?? (links[parentId] = {});
+    const queue: string[] = [rootId];
+    let head = 0;
+    while (head < queue.length && cursor < value.length) {
+      const parentId = queue[head++]!;
+      const parentLinks = links[parentId] ?? (links[parentId] = {});
 
-    for (const side of ["left", "right"] as const) {
-      if (cursor >= value.length) break;
-      const raw = value[cursor];
-      const childId = `${paneId}${cursor}`;
-      cursor += 1;
-      if (raw === null || raw === undefined) continue;
+      for (const side of ["left", "right"] as const) {
+        if (cursor >= value.length) break;
+        const raw = value[cursor];
+        const childId = `${paneId}${cursor}`;
+        cursor += 1;
+        if (raw === null || raw === undefined) continue;
 
-      model.nodes.push({ id: childId, label: scalarText(raw), role: "normal" });
-      links[childId] = {};
-      parentLinks[side] = childId;
-      queue.push(childId);
+        model.nodes.push({ id: childId, label: scalarText(raw), role: "normal" });
+        links[childId] = {};
+        parentLinks[side] = childId;
+        queue.push(childId);
+      }
     }
   }
 
-  if (value.slice(cursor).some((raw) => raw !== null && raw !== undefined)) {
+  if (value.slice(cursor).some((raw) => raw !== null)) {
     throw new Error("Binary-tree input contains an unreachable value.");
   }
 

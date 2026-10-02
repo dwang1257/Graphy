@@ -45,7 +45,6 @@ function Probe(props: { frameIndex: number; layout: Layout; panes: Pane[] }) {
     trace,
     frameIndex: props.frameIndex,
     layout: props.layout,
-    showTerminal: true,
     enabled: true,
   });
   return null;
