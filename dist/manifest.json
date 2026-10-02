@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Graphy",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Renders LeetCode custom test cases as interactive graphs.",
   "permissions": [
     "storage"
@@ -22,7 +22,7 @@
   "content_scripts": [
     {
       "js": [
-        "assets/index.ts-loader-Dh_Falaf.js"
+        "assets/index.ts-loader-D9deO-aB.js"
       ],
       "matches": [
         "https://leetcode.com/*",
@@ -40,8 +40,8 @@
       "resources": [
         "injected.js",
         "src/panel/index.html",
-        "assets/protocol-Bj6fm7vz.js",
-        "assets/index.ts-BdNkW932.js"
+        "assets/protocol-BlOzJiD5.js",
+        "assets/index.ts-DPywxHBI.js"
       ],
       "use_dynamic_url": false
     }
