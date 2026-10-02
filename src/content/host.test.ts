@@ -100,11 +100,10 @@ async function openHost(state: Partial<PanelState> = {}) {
   const ctx = await readyHost();
   const layer = ctx.find<HTMLDivElement>(".layer");
   const shell = ctx.find<HTMLDivElement>(".shell");
-  const shrinkHit = ctx.find<HTMLButtonElement>(".shrink-hit");
   const resizeHit = (corner: string) => ctx.find<HTMLButtonElement>(`.resize-hit[data-corner="${corner}"]`);
   const move = (dx: number, dy: number) => ctx.fromPanel({ channel: PANEL_CHANNEL, type: "move", dx, dy });
   const persist = () => ctx.fromPanel({ channel: PANEL_CHANNEL, type: "persist" });
-  return { ...ctx, layer, shell, shrinkHit, resizeHit, move, persist };
+  return { ...ctx, layer, shell, resizeHit, move, persist };
 }
 
 function spyStyleWrites(...elements: HTMLElement[]): Array<[string, string]> {
@@ -154,12 +153,12 @@ test("queues shrink state separately from panel content", () => {
 });
 
 test("drags the shell with one transform per frame and commits left and top on persist", async () => {
-  const { host, layer, shell, shrinkHit, move, persist } = await openHost();
+  const { host, layer, shell, resizeHit, move, persist } = await openHost();
   expect(shell.style.left).toBe("100px");
   expect(shell.style.top).toBe("120px");
-  const shrinkLeft = shrinkHit.style.left;
+  const cornerLeft = resizeHit("ne").style.left;
 
-  const writes = spyStyleWrites(layer, shell, shrinkHit);
+  const writes = spyStyleWrites(layer, shell, resizeHit("ne"));
   move(5, 3);
   move(7, 2);
   expect(writes).toEqual([]);
@@ -169,14 +168,14 @@ test("drags the shell with one transform per frame and commits left and top on p
   expect(writes).toEqual([["transform", "translate3d(12px, 5px, 0px)"]]);
   expect(shell.style.left).toBe("100px");
   expect(shell.style.top).toBe("120px");
-  expect(shrinkHit.style.left).toBe(shrinkLeft);
+  expect(resizeHit("ne").style.left).toBe(cornerLeft);
 
   writes.length = 0;
   persist();
   expect(shell.style.left).toBe("112px");
   expect(shell.style.top).toBe("125px");
   expect(layer.style.transform).toBe("");
-  expect(shrinkHit.style.left).toBe(`${Number.parseFloat(shrinkLeft) + 12}px`);
+  expect(resizeHit("ne").style.left).toBe(`${Number.parseFloat(cornerLeft) + 12}px`);
   expect(writes.map(([prop]) => prop).sort()).toEqual(["left", "left", "top", "top", "transform"]);
   host.destroy();
 });
@@ -206,9 +205,9 @@ test("clamps drag moves to the viewport", async () => {
 });
 
 test("skips style and attribute writes when nothing changed", async () => {
-  const { host, layer, shell, frame, shrinkHit, resizeHit, persist } = await openHost();
-  const writes = spyStyleWrites(layer, shell, frame, shrinkHit, resizeHit("se"));
-  const setAttribute = vi.spyOn(shrinkHit, "setAttribute");
+  const { host, layer, shell, frame, resizeHit, persist } = await openHost();
+  const writes = spyStyleWrites(layer, shell, frame, resizeHit("se"));
+  const setAttribute = vi.spyOn(resizeHit("se"), "setAttribute");
   persist();
   window.dispatchEvent(new dom.Event("resize") as unknown as Event);
   expect(writes).toEqual([]);
@@ -258,14 +257,25 @@ test("a cancelled resize keeps the last tracked pointer position", async () => {
   host.destroy();
 });
 
-test("keeps hit areas labelled and positioned over the shell", async () => {
-  const { host, shrinkHit, resizeHit } = await openHost();
-  expect(shrinkHit.hidden).toBe(false);
-  expect(shrinkHit.getAttribute("aria-label")).toBe("Shrink panel");
-  expect(shrinkHit.getAttribute("aria-pressed")).toBe("false");
-  expect(resizeHit("se").style.left).toBe(`${100 + 460 - 16}px`);
-  expect(resizeHit("se").style.top).toBe(`${120 + 520 - 16}px`);
+test("keeps resize hit areas labelled and positioned over the shell", async () => {
+  const { host, root, resizeHit } = await openHost();
+  expect(root.querySelector(".shrink-hit")).toBeNull();
+  expect(resizeHit("se").style.left).toBe(`${100 + 460 - 4}px`);
+  expect(resizeHit("se").style.top).toBe(`${120 + 520 - 4}px`);
+  expect(resizeHit("nw").style.left).toBe(`${100 - 12}px`);
+  expect(resizeHit("nw").style.top).toBe(`${120 - 12}px`);
   expect(resizeHit("nw").getAttribute("aria-label")).toBe("Resize panel from top left");
+  host.destroy();
+});
+
+test("shrinks through the panel's own titlebar button", async () => {
+  const { host, delivered, fromPanel, signalReady } = await openHost();
+  signalReady();
+  delivered.length = 0;
+  fromPanel({ channel: PANEL_CHANNEL, type: "setShrunk", shrunk: true });
+  expect(delivered).toEqual([{ channel: PANEL_CHANNEL, type: "shrunk", shrunk: true }]);
+  await dom.happyDOM.waitUntilComplete();
+  expect(storage.saved.at(-1)).toMatchObject({ shrunk: true });
   host.destroy();
 });
 

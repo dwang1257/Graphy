@@ -5,18 +5,7 @@ export const SHRINK_EASE = "cubic-bezier(0.16, 1, 0.3, 1)";
 export const MIN_PANEL_WIDTH = 280;
 export const MIN_PANEL_HEIGHT = 180;
 export const RESIZE_HIT_PX = 16;
-
-const TITLEBAR_ICON_PX = 28;
-const TITLEBAR_PAD_PX = 12;
-const TITLEBAR_GAP_PX = 12;
-const ICON_SLOP_PX = 6;
-
-export const SHRINK_HIT = {
-  top: (TITLEBAR_PX - TITLEBAR_ICON_PX) / 2 - ICON_SLOP_PX,
-  right: TITLEBAR_PAD_PX + TITLEBAR_ICON_PX + TITLEBAR_GAP_PX - ICON_SLOP_PX,
-  width: TITLEBAR_ICON_PX + ICON_SLOP_PX * 2,
-  height: TITLEBAR_ICON_PX + ICON_SLOP_PX * 2,
-};
+export const RESIZE_HIT_INSET_PX = 4;
 
 export type Box = { x: number; y: number; width: number; height: number };
 type Size = { width: number; height: number };
@@ -45,13 +34,6 @@ export function createStyleWriter(): StyleWriter {
       known.set(prop, value);
       el.style.setProperty(prop, value);
     }
-  };
-}
-
-export function shrinkHitPosition(box: Box): Point {
-  return {
-    left: box.x + box.width - SHRINK_HIT.right - SHRINK_HIT.width,
-    top: box.y + SHRINK_HIT.top,
   };
 }
 
@@ -102,8 +84,8 @@ export function clampPanelBox(box: Box, viewport: Size): Box {
 
 export function resizeHitPosition(box: Box, corner: ResizeCorner): Point {
   return {
-    left: corner.includes("w") ? box.x : box.x + box.width - RESIZE_HIT_PX,
-    top: corner.includes("n") ? box.y : box.y + box.height - RESIZE_HIT_PX,
+    left: corner.includes("w") ? box.x + RESIZE_HIT_INSET_PX - RESIZE_HIT_PX : box.x + box.width - RESIZE_HIT_INSET_PX,
+    top: corner.includes("n") ? box.y + RESIZE_HIT_INSET_PX - RESIZE_HIT_PX : box.y + box.height - RESIZE_HIT_INSET_PX,
   };
 }
 

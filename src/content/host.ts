@@ -3,7 +3,6 @@ import { DEFAULT_PANEL, loadPanelState, savePanelState, type PanelState } from "
 import {
   RESIZE_CORNERS,
   RESIZE_HIT_PX,
-  SHRINK_HIT,
   SHELL_RADIUS_PX,
   SHRINK_EASE,
   SHRINK_MS,
@@ -14,7 +13,6 @@ import {
   createStyleWriter,
   liveResizeRect,
   resizeHitPosition,
-  shrinkHitPosition,
   shellClipPath,
   type Box,
   type ResizeCorner,
@@ -76,7 +74,6 @@ const STYLE = `
   display: block;
   transform: translateZ(0);
 }
-.shrink-hit,
 .resize-hit {
   appearance: none;
   -webkit-appearance: none;
@@ -86,20 +83,12 @@ const STYLE = `
   border: 0;
   background: transparent;
   touch-action: none;
-}
-.shrink-hit {
-  width: ${SHRINK_HIT.width}px;
-  height: ${SHRINK_HIT.height}px;
-  cursor: pointer;
-}
-.resize-hit {
   width: ${RESIZE_HIT_PX}px;
   height: ${RESIZE_HIT_PX}px;
   cursor: nwse-resize;
 }
 .resize-hit[data-corner="ne"],
 .resize-hit[data-corner="sw"] { cursor: nesw-resize; }
-.shrink-hit[hidden],
 .resize-hit[hidden] { display: none; }
 .launcher {
   appearance: none;
@@ -158,10 +147,6 @@ function makeResizeHit(corner: ResizeCorner): HTMLButtonElement {
   return hit;
 }
 
-function setAttr(el: HTMLElement, name: string, value: string): void {
-  if (el.getAttribute(name) !== value) el.setAttribute(name, value);
-}
-
 function setHidden(el: HTMLElement, hidden: boolean): void {
   if (el.hidden !== hidden) el.hidden = hidden;
 }
@@ -173,7 +158,6 @@ export class PanelHost {
   private readonly layer = makeDiv("layer");
   private readonly shell = makeDiv("shell");
   private readonly frame = document.createElement("iframe");
-  private readonly shrinkHit = makeButton("shrink-hit", "Shrink panel");
   private readonly resizeHits: Record<ResizeCorner, HTMLButtonElement> = {
     nw: makeResizeHit("nw"),
     ne: makeResizeHit("ne"),
@@ -214,12 +198,11 @@ export class PanelHost {
     this.shell.dataset.open = "false";
     this.frame.setAttribute("title", "Graphy visualizer");
     this.shell.appendChild(this.frame);
-    this.shrinkHit.addEventListener("click", this.onShrinkClick);
     for (const hit of Object.values(this.resizeHits)) hit.addEventListener("pointerdown", this.onResizePointerDown);
     this.launcher.textContent = "Graphy";
     this.launcher.addEventListener("click", () => this.open());
 
-    this.layer.append(this.shell, this.shrinkHit, ...RESIZE_CORNERS.map((corner) => this.resizeHits[corner]));
+    this.layer.append(this.shell, ...RESIZE_CORNERS.map((corner) => this.resizeHits[corner]));
     this.root.append(style, this.layer, this.launcher);
     window.addEventListener("message", this.onMessage);
     window.addEventListener("resize", this.clamp);
@@ -267,10 +250,6 @@ export class PanelHost {
     this.clipSettled = true;
     this.layout();
   }
-
-  private onShrinkClick = (): void => {
-    this.setShrunk(!this.state.shrunk);
-  };
 
   private setShrunk(shrunk: boolean): void {
     if (this.state.shrunk === shrunk) {
@@ -329,12 +308,6 @@ export class PanelHost {
   }
 
   private syncHits(box: Box): void {
-    const shrink = shrinkHitPosition(box);
-    this.write(this.shrinkHit, { left: `${shrink.left}px`, top: `${shrink.top}px` });
-    setHidden(this.shrinkHit, !this.state.open);
-    setAttr(this.shrinkHit, "aria-label", this.state.shrunk ? "Expand panel" : "Shrink panel");
-    setAttr(this.shrinkHit, "aria-pressed", String(this.state.shrunk));
-
     const hidden = !this.state.open || this.state.shrunk || !this.clipSettled;
     for (const corner of RESIZE_CORNERS) {
       const pos = resizeHitPosition(box, corner);

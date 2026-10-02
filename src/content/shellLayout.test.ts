@@ -4,10 +4,14 @@ import { describe, expect, it, vi } from "vitest";
 import {
   MIN_PANEL_HEIGHT,
   MIN_PANEL_WIDTH,
+  RESIZE_CORNERS,
+  RESIZE_HIT_INSET_PX,
+  RESIZE_HIT_PX,
   TITLEBAR_PX,
   applyShellStyles,
   clampPanelBox,
   createStyleWriter,
+  resizeHitPosition,
 } from "./shellLayout.js";
 
 describe("clampPanelBox", () => {
@@ -33,6 +37,18 @@ describe("clampPanelBox", () => {
     expect(next.x).toBe(0);
     expect(next.y).toBe(0);
     expect(next.y + TITLEBAR_PX).toBeLessThanOrEqual(300);
+  });
+});
+
+describe("resizeHitPosition", () => {
+  it("overlaps the panel only in the corner gutter outside the titlebar and statusbar controls", () => {
+    const box = { x: 100, y: 120, width: 460, height: 520 };
+    for (const corner of RESIZE_CORNERS) {
+      const { left, top } = resizeHitPosition(box, corner);
+      const overlapX = Math.min(left + RESIZE_HIT_PX, box.x + box.width) - Math.max(left, box.x);
+      const overlapY = Math.min(top + RESIZE_HIT_PX, box.y + box.height) - Math.max(top, box.y);
+      expect([corner, overlapX, overlapY]).toEqual([corner, RESIZE_HIT_INSET_PX, RESIZE_HIT_INSET_PX]);
+    }
   });
 });
 
