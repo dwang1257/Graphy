@@ -70,6 +70,31 @@ test("collectReleaseFiles follows runtime references and excludes stale assets",
   ]);
 });
 
+test("collectReleaseFiles follows font references from stylesheets", () => {
+  const distDirectory = mkdtempSync(join(tmpdir(), "graphy-release-"));
+  mkdirSync(join(distDirectory, "assets"));
+  mkdirSync(join(distDirectory, "src", "panel"), { recursive: true });
+  writeFileSync(join(distDirectory, "manifest.json"), JSON.stringify({
+    web_accessible_resources: [{ resources: ["src/panel/index.html"] }],
+  }));
+  writeFileSync(join(distDirectory, "src", "panel", "index.html"), "<link rel=\"stylesheet\" href=\"/assets/panel.css\">");
+  writeFileSync(
+    join(distDirectory, "assets", "panel.css"),
+    "@font-face{src:url(/assets/inter-latin.woff2) format(\"woff2\")}@font-face{src:url(./mono-latin.woff2)}",
+  );
+  writeFileSync(join(distDirectory, "assets", "inter-latin.woff2"), Buffer.from([0x77, 0x4f, 0x46, 0x32, 0x00, 0xff]));
+  writeFileSync(join(distDirectory, "assets", "mono-latin.woff2"), Buffer.from([0x77, 0x4f, 0x46, 0x32, 0x00, 0xfe]));
+  writeFileSync(join(distDirectory, "assets", "unused.woff2"), Buffer.from([0x77, 0x4f, 0x46, 0x32]));
+
+  assert.deepEqual(collectReleaseFiles(distDirectory), [
+    "assets/inter-latin.woff2",
+    "assets/mono-latin.woff2",
+    "assets/panel.css",
+    "manifest.json",
+    "src/panel/index.html",
+  ]);
+});
+
 test("collectReleaseFiles rejects missing local references from manifest HTML and JavaScript", () => {
   const cases = [
     {

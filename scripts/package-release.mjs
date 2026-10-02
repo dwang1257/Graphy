@@ -5,9 +5,10 @@ import { deflateRawSync } from "node:zlib";
 const ROOT_FILES = new Set(["injected.js", "manifest.json", "service-worker-loader.js", "src/panel/index.html"]);
 const ICON_PATTERN = /^icons\/icon(?:16|32|48|128)\.png$/;
 const WORKER_PATTERN = /^service-worker\.ts-[^/]+\.js$/;
-const ASSET_PATTERN = /^assets\/[^/]+\.(?:css|js|wasm)$/;
+const ASSET_PATTERN = /^assets\/[^/]+\.(?:css|js|wasm|woff2?|ttf|otf)$/;
 const DEVELOPMENT_PATTERN = /(?:^|[._-])(?:test|spec)(?:[._-]|$)/i;
-const FILE_REFERENCE_PATTERN = /^[A-Za-z0-9._/-]+\.(?:css|html|js|json|png|svg|wasm)$/i;
+const FILE_REFERENCE_PATTERN = /^[A-Za-z0-9._/-]+\.(?:css|html|js|json|png|svg|wasm|woff2?|ttf|otf)$/i;
+const TEXT_PATTERN = /\.(?:css|html|js|json)$/i;
 
 function normalizePath(filePath) {
   return filePath.split(sep).join("/").replace(/^\.\//, "");
@@ -41,6 +42,7 @@ export function collectReleaseFiles(distDirectory) {
     const filePath = pending.pop();
     if (!filePath || selected.has(filePath) || !candidates.has(filePath)) continue;
     selected.add(filePath);
+    if (!TEXT_PATTERN.test(filePath)) continue;
     const source = readFileSync(join(distDirectory, filePath), "utf8");
     for (const reference of runtimeReferences(source, filePath)) {
       if (!reference.includes("*") && !FILE_REFERENCE_PATTERN.test(reference)) continue;
