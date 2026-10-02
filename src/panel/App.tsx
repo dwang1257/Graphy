@@ -47,7 +47,7 @@ import {
 } from "./customCase.js";
 import { useImageInk } from "./imageInk.js";
 import { compactSettingsImages } from "./imageUpload.js";
-import { stageBackgroundStyle, stageInkVars } from "./stageBackground.js";
+import { stageBackdropStyle, stageInkVars, useImageAspect } from "./stageBackground.js";
 import { svgPaint } from "./svgPaint.js";
 import { TitleBar } from "./TitleBar.js";
 import { TracePlayback } from "./TracePlayback.js";
@@ -340,9 +340,10 @@ export function App(): JSX.Element | null {
     [updateCustomDraft],
   );
 
-  const stageStyle = useMemo(
-    () => stageBackgroundStyle(palette.background, palette.backgroundImage),
-    [palette.background, palette.backgroundImage],
+  const stageImageAspect = useImageAspect(palette.backgroundImage);
+  const backdropStyle = useMemo(
+    () => stageBackdropStyle(palette.backgroundImage, stageImageAspect),
+    [palette.backgroundImage, stageImageAspect],
   );
   const panelStyle = useMemo(
     () => ({
@@ -404,8 +405,13 @@ export function App(): JSX.Element | null {
           id="graphy-case-panel"
           role={tabSelection === null ? undefined : "tabpanel"}
           aria-labelledby={tabSelection === null ? undefined : caseTabId(tabSelection)}
-          style={stageStyle}
         >
+          {backdropStyle && (
+            <div class="stage-backdrop" style={backdropStyle} aria-hidden="true">
+              <div class="stage-backdrop-fill" />
+              <div class="stage-backdrop-image" />
+            </div>
+          )}
           {scene.svg ? (
             <GraphView
               svg={scene.svg}

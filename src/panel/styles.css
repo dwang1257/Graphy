@@ -223,6 +223,35 @@ button {
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
+  background-color: var(--stage-bg);
+}
+
+.stage-backdrop {
+  position: absolute;
+  inset: var(--titlebar-height) 0 var(--statusbar-height, 0px);
+  overflow: hidden;
+  container-type: size;
+  pointer-events: none;
+}
+
+.stage-backdrop-fill {
+  position: absolute;
+  inset: 0;
+  background: var(--stage-image) center / cover no-repeat;
+  filter: blur(var(--space-md)) saturate(1.1);
+  transform: scale(1.2);
+}
+
+.stage-backdrop-image {
+  --cover-width: max(100cqw, 100cqh * var(--stage-image-aspect));
+  --contain-width: min(100cqw, 100cqh * var(--stage-image-aspect));
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: min(var(--cover-width), var(--contain-width) * 1.25);
+  aspect-ratio: var(--stage-image-aspect);
+  translate: -50% -50%;
+  background: var(--stage-image) center / 100% 100% no-repeat;
 }
 
 .stage {
