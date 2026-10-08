@@ -83,7 +83,8 @@ Other languages can print `#graphy` lines to drive the same playback.
 | --- | --- |
 | Binary tree | `[3,9,20,null,null,15,7]` |
 | Linked list | `[1,2,3,4]`, `pos = 1` |
-| Graph | `["11110","10001"]`, `[[1,1,0],[1,1,0],[0,0,1]]` |
+| Grid | `["11110","10001"]`, `[[2,1,1],[1,1,0],[0,1,1]]` |
+| Graph | `[[1,0],[2,1]]` (edge list), `[[1,2],[3],[3],[]]` (adjacency list), `[[1,1,0],[1,1,0],[0,0,1]]` (adjacency matrix) |
 
 Graphy detects the structure of each input from the problem's signature.
 Use the dropdown in the panel's title bar to override it, or pick **Auto** to go back to detection.
@@ -120,8 +121,9 @@ Click the Graphy icon in the toolbar to show or hide the panel.
 ### Privacy and data use
 
 Graphy reads the LeetCode editor, custom testcase inputs, and Run output locally in your browser to draw and trace graphs.
-Graphy stores visual settings in Chrome sync storage, and stores panel geometry, selected images, and the privacy-notice dismissal in local storage.
+Graphy stores visual settings in Chrome sync storage, and stores panel geometry and selected images in local storage.
 Graphy does not send this data to a Graphy server.
+If you send a suggestion from the panel, Graphy sends your text, the extension version, and the problem slug to the developer through Google Forms.
 Fonts ship inside the extension, so the panel makes no requests to Google Fonts or any other third party.
 See [PRIVACY.md](PRIVACY.md) for the complete policy.
 
@@ -159,6 +161,9 @@ Python solutions are traced automatically when you hit **Run**, so you do not ne
 Graphy keeps its trace data out of LeetCode's stdout, so the output you see is only what your code prints.
 Use the play, step, and scrubber controls under the graph to move through the run.
 Very long runs are cut off, and the playback bar shows how many steps were kept.
+
+On grids, cells show the values your code writes, queued cells are dashed, and the coordinate pairs your code indexes with, such as `r,c` and `nr,nc`, are outlined and listed above the playback bar.
+On graphs, node variables such as `node` or `nei` are labelled above their nodes, the edge between them is highlighted, queues and stacks are dashed, visited sets are shaded, and per-node values such as `indeg` or `dist` are written beside each node.
 
 In other languages, print lines that start with `#graphy` followed by one or more verbs and node references:
 
@@ -215,6 +220,8 @@ See the [open issues][issues-url] for a full list of proposed features and known
 ## Contact
 
 Dylan Wang - dwang2022@gmail.com
+
+You can also send a suggestion or bug report from the lightbulb button in the panel's title bar.
 
 LinkedIn: [https://www.linkedin.com/in/dylanwang1/](https://www.linkedin.com/in/dylanwang1/)
 
