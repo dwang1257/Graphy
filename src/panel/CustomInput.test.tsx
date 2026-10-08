@@ -103,6 +103,7 @@ describe("CustomInput", () => {
       "None",
       "Binary tree",
       "Linked list",
+      "Grid",
       "Graph",
     ]);
     expect([...selects[1]!.options][0]?.textContent).toBe("Auto");
@@ -112,7 +113,7 @@ describe("CustomInput", () => {
       "Auto (Binary tree)",
       "Auto",
       "None",
-      "Graph",
+      "Grid",
     ]);
   });
 

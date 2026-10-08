@@ -287,11 +287,13 @@ function sceneKind(topology: SceneTopology, visible: Set<string>, panes: readonl
     if (kind === "list") list = true;
   }
   if (list) return "linked-list";
+  if (panes.some((pane) => pane.model.kind === "graph")) return "graph";
   return panes.find((pane) => pane.model.kind === "matrix") ? "matrix" : panes[0]?.model.kind ?? "binary-tree";
 }
 
 function isEmptyPane(pane: Pane): boolean {
   if (pane.model.kind === "matrix") return !pane.model.matrix || pane.model.matrix.rows.length === 0;
+  if (pane.model.kind === "graph") return pane.model.nodes.length === 0;
   return !pane.model.nodes.some((node) => node.role === "root" || node.role === "normal");
 }
 
@@ -336,8 +338,9 @@ export function sceneModel(
 
   const headedPanes = new Set(heads.filter((id) => topology.nodes[id]!.root).map(paneOf));
   const grids = panes.filter((pane) => pane.model.kind === "matrix" && !isEmptyPane(pane));
+  const graphs = panes.filter((pane) => pane.model.kind === "graph" && !isEmptyPane(pane));
   const empties = panes.filter((pane) => pane.model.kind !== "matrix" && isEmptyPane(pane));
-  const components = headedPanes.size + grids.length + empties.length;
+  const components = headedPanes.size + grids.length + graphs.length + empties.length;
   if (components >= 2) {
     for (const pane of panes) build.titles.set(pane.id, pane.title);
   }
@@ -362,6 +365,16 @@ export function sceneModel(
     const node: GNode = { id, label: "", role: "normal", matrix: pane.model.matrix };
     model.nodes.push(node);
     titleFor(build, pane.id, id);
+  }
+
+  if (graphs.length > 0 && visible.size === 0 && grids.length === 0 && graphs.every((pane) => !pane.model.directed)) {
+    model.engine = "neato";
+  }
+  for (const pane of graphs) {
+    model.nodes.push(...pane.model.nodes.map((node) => ({ ...node })));
+    model.edges.push(...pane.model.edges.map((edge) => ({ ...edge })));
+    const first = pane.model.nodes[0];
+    if (first) titleFor(build, pane.id, first.id);
   }
 
   if (components >= 2) {

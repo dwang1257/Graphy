@@ -78,7 +78,7 @@ describe("TitleBar kind picker", () => {
   it("shows the override while keeping detection in the auto option", async () => {
     const { select, value } = await mount("matrix", ["binary-tree"]);
 
-    expect(value.textContent).toBe("Graph");
+    expect(value.textContent).toBe("Grid");
     expect(select.value).toBe("matrix");
     expect(select.options[0]?.textContent).toBe("Auto (Binary tree)");
   });

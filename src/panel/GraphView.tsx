@@ -52,6 +52,13 @@ function prepareSvg(svg: string): Element | null {
   return document.documentElement;
 }
 
+function overlay(root: Element, frame: TraceFrame | null, paint: SvgPaint): void {
+  if (frame) applyTraceOverlay(root, frame);
+  else clearTraceOverlay(root);
+  paintSvg(root, paint);
+  refreshTraceTones(root);
+}
+
 function viewTransform({ x, y, scale }: View): string {
   return `translate(${x}px, ${y}px) scale(${scale})`;
 }
@@ -185,9 +192,7 @@ function GraphViewImpl({ svg, fitKey, paint, traceFrame = null, morphFromSvg = n
       void handle.done.finally(() => {
         if (!morphGeneration.current.isCurrent(generation)) return;
         const live = liveSvg();
-        if (!live) return;
-        if (frame) applyTraceOverlay(live, frame);
-        else clearTraceOverlay(live);
+        if (live) overlay(live, frame, latestPaint.current);
       });
       return () => {
         handle.cancel();
@@ -195,8 +200,7 @@ function GraphViewImpl({ svg, fitKey, paint, traceFrame = null, morphFromSvg = n
       };
     }
 
-    if (traceFrame) applyTraceOverlay(root, traceFrame);
-    else clearTraceOverlay(root);
+    overlay(root, traceFrame, latestPaint.current);
     return () => {
       morphGeneration.current.next();
     };

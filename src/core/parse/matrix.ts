@@ -12,9 +12,13 @@ export function parseMatrix(value: LCValue, title?: string, showIndices = true):
   return model;
 }
 
+export function isFilledText(text: string): boolean {
+  return !FALSY.has(text.toLowerCase());
+}
+
 function toCell(raw: LCValue): MatrixCell {
   const text = scalarText(raw);
-  return { text, filled: !FALSY.has(text.toLowerCase()) };
+  return { text, filled: isFilledText(text) };
 }
 
 function normalize(value: LCValue): LCValue[][] | null {

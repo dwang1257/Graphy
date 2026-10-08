@@ -1,9 +1,10 @@
 export type StructureKind =
   | "binary-tree"
   | "linked-list"
-  | "matrix";
+  | "matrix"
+  | "graph";
 
-export const STRUCTURE_KINDS: readonly StructureKind[] = ["binary-tree", "linked-list", "matrix"];
+export const STRUCTURE_KINDS: readonly StructureKind[] = ["binary-tree", "linked-list", "matrix", "graph"];
 
 export function isStructureKind(value: unknown): value is StructureKind {
   return typeof value === "string" && STRUCTURE_KINDS.includes(value as StructureKind);
@@ -43,6 +44,7 @@ export interface GEdge {
   to: string;
   label?: string;
   role: EdgeRole;
+  undirected?: boolean;
 }
 
 export interface MatrixCell {
@@ -69,12 +71,14 @@ export interface GraphModel {
   matrix?: MatrixData;
   links?: Links;
   listGroups?: string[][];
+  engine?: "neato";
 }
 
 export const KIND_LABELS: Record<StructureKind, string> = {
   "binary-tree": "Binary tree",
   "linked-list": "Linked list",
-  matrix: "Graph",
+  matrix: "Grid",
+  graph: "Graph",
 };
 
 export function visibleNodeCount(model: GraphModel): number {

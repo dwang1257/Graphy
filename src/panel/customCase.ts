@@ -141,6 +141,7 @@ function placeholderFor(param: SigParam | undefined): string {
   if (!param) return "[1,2,3,null,4]";
   const depth = param.type.match(ARRAY_MARK)?.length ?? 0;
   const kind = structureKindOf(detectRole(param, []));
+  if (kind === "graph") return "[[0,1],[1,2]]";
   if (kind === "matrix" || depth > 1) return "[[1,0],[0,1]]";
   if (kind && depth === 1) return "[[1,4],[2,3]]";
   if (kind === "binary-tree") return "[1,2,3,null,4]";

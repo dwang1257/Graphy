@@ -6,6 +6,7 @@ import { autoKindLabel, structureKindLabel, structureKindOptions } from "./struc
 import { memo } from "./memo.js";
 import { STYLE_DRAWER_ID } from "./styleOptions.js";
 import { pointerDragHandler } from "./usePointerDrag.js";
+import { ReviewLink } from "./ReviewLink.js";
 
 interface Props {
   showSettings: boolean;
@@ -25,7 +26,7 @@ function TitleBarView(props: Props): JSX.Element {
   const [dragging, setDragging] = useState(false);
 
   const onPointerDown = pointerDragHandler<HTMLDivElement>({
-    ignore: "button, select, label",
+    ignore: "button, select, label, a, .review-prompt",
     onStart: () => setDragging(true),
     onMove: props.onDrag,
     onEnd: () => {
@@ -61,6 +62,7 @@ function TitleBarView(props: Props): JSX.Element {
           ))}
         </select>
       </label>
+      <ReviewLink shrunk={props.shrunk} />
 
       <span class="spacer" />
 

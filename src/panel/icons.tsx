@@ -83,3 +83,11 @@ export function StepForwardIcon(): JSX.Element {
     </svg>
   );
 }
+
+export function StarIcon(): JSX.Element {
+  return (
+    <svg {...base}>
+      <path d="M8 2.2l1.75 3.6 3.95.55-2.87 2.77.7 3.93L8 11.2l-3.53 1.85.7-3.93L2.3 6.35l3.95-.55z" />
+    </svg>
+  );
+}

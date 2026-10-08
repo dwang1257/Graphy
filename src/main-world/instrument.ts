@@ -1,9 +1,12 @@
+import { COUNT_NAMES, EDGE_NAMES, GRAPH_NAMES } from "../core/parse/graph.js";
 import { PYTHON_SENTINEL } from "../core/traceWire.js";
 import { NODE_LIMIT } from "../settings/schema.js";
 
 export const GRAPHY_TRACE_MARK = "GRAPHY_TRACE_V2";
 export const MAX_TRACE_OPS = 4000;
 export const MAX_TRACE_LINES = 100_000;
+
+const py = (names: readonly string[]): string => JSON.stringify(names);
 
 export const PYTHON_TRACER = `
 # ${GRAPHY_TRACE_MARK}
@@ -23,20 +26,30 @@ def __graphy_install(G):
     WATCH = frozenset(("val", "left", "right", "next"))
     LINKS = ("left", "right", "next")
     TREE = {"left": "<", "right": ">"}
-    PAIRS = (("r", "c"), ("i", "j"), ("row", "col"), ("x", "y"))
+    AXES = (("row", "col"), ("r", "c"), ("i", "j"), ("x", "y"))
+    DELTAS = frozenset(("d", "dd", "delta", "off", "offset", "dir", "step", "move"))
+    STEPS = frozenset(("d", "dir", "dirs", "direction", "directions", "delta", "deltas", "moves", "offsets", "steps", "neighbors", "neighbours", "nbrs", "adj"))
+    HEAP = frozenset(("heappush", "heappop", "heappushpop", "heapreplace", "heapify"))
+    PREFIXES = frozenset(("", "n", "nn", "new", "next", "nxt", "s", "src", "start", "e", "end", "dst", "t", "target", "cur", "curr", "prev", "p", "old", "mid", "top", "bot", "bottom"))
+    EDGES = frozenset(${py(EDGE_NAMES)})
+    GRAPHS = frozenset(${py(GRAPH_NAMES)})
+    COUNTS = frozenset(${py(COUNT_NAMES)})
     TR = {9: 95, 10: 95, 11: 95, 12: 95, 13: 95, 32: 95, 44: 95}
     MISSING = object()
+    NONE = frozenset()
     FN = type(__graphy_install)
     HOME = __graphy_install.__code__
     FILE = HOME.co_filename
     FIRST = HOME.co_firstlineno
     SKIP = set()
+    METHODS = []
     raw = object.__getattribute__
 
     class State(object):
         pass
 
     st = State()
+    st.ast = None
     st.on = False
     st.busy = False
     st.depth = 0
@@ -61,10 +74,18 @@ def __graphy_install(G):
         st.lastf = None
         st.linked = False
         st.mutated = False
-        st.grid = None
-        st.gpane = ""
-        st.gsnap = None
-        st.cell = None
+        st.grids = []
+        st.pgrid = {}
+        st.gnames = {}
+        st.graphed = False
+        st.glabels = set()
+        st.nsnap = {}
+        st.cshown = {}
+        st.chold = {}
+        st.ccur = None
+        st.cframe = None
+        st.cline = None
+        st.heaps = {}
         st.closing = False
         st.top = None
         st.args = args
@@ -158,13 +179,67 @@ def __graphy_install(G):
         if type(first) is str:
             w = len(first)
             return w > 0 and all(type(r) is str and len(r) == w for r in a)
-        return type(first) is list and all(type(r) is list for r in a)
+        if type(first) is not list:
+            return False
+        w = len(first)
+        return all(type(r) is list and len(r) == w for r in a)
 
-    def tag_args(args):
+    def graphish(name, a):
+        if type(a) is not list or not all(type(r) is list for r in a):
+            return False
+        if name in EDGES:
+            return all(2 <= len(r) <= 3 for r in a)
+        if name in GRAPHS:
+            n = len(a)
+            return all(type(x) is int and 0 <= x <= n for r in a for x in r)
+        return ragged(a)
+
+    def ragged(a):
+        if type(a) is not list or len(a) < 2 or not all(type(r) is list for r in a):
+            return False
+        if len(set(len(r) for r in a)) < 2:
+            return False
+        n = len(a)
+        return all(type(x) is int and 0 <= x <= n for r in a for x in r)
+
+    def tag_graph(o):
+        q = deque([o])
+        n = 0
+        while q:
+            x = q.popleft()
+            if id(x) in st.ids:
+                continue
+            d = dict_of(x) or {}
+            lb = label(d.get("val", MISSING))
+            st.ids[id(x)] = "$" + lb
+            st.keep.append(x)
+            st.glabels.add(lb)
+            n += 1
+            if n > MAX_INPUT:
+                return False
+            for y in d.get("neighbors") or ():
+                if id(y) not in st.ids:
+                    q.append(y)
+        return True
+
+    def graph_labels(name, a):
+        edges = name in EDGES
+        for i in range(len(a)):
+            row = a[i]
+            if not edges:
+                st.glabels.add(str(i))
+            if type(row) is not list:
+                continue
+            for x in (row[:2] if edges else row):
+                if type(x) is int or type(x) is str:
+                    st.glabels.add(label(x))
+
+    def tag_args(args, names):
         total = 0
         for i in range(1, min(len(args), len(LET) + 1)):
             a = args[i]
             p = LET[i - 1] if i > 1 else ""
+            name = names[i] if i < len(names) else ""
             k = shape(a)
             if k == "t":
                 if id(a) not in st.ids:
@@ -177,13 +252,38 @@ def __graphy_install(G):
                     if e is not None:
                         k, n = tag_chain(e, p, k)
                         total += n
-            elif st.grid is None and is_grid(a) and sum(len(r) for r in a) <= MAX_INPUT:
-                st.grid = a
-                st.gpane = p
-                st.gsnap = [r[:] if type(r) is list else r for r in a]
+            elif type(a) is not list and "neighbors" in (dict_of(a) or ()):
+                if not tag_graph(a):
+                    return False
+                st.graphed = True
+            elif graphish(name, a):
+                if len(a) <= MAX_INPUT * 4:
+                    graph_labels(name, a)
+                    st.graphed = True
+            elif is_grid(a) and sum(len(r) for r in a) <= MAX_INPUT:
+                g = grid_of(a, p)
+                st.grids.append(g)
+                st.gnames[name] = g
             if total > MAX_INPUT:
                 return False
+        if st.graphed:
+            for i in range(1, min(len(args), len(names))):
+                v = args[i]
+                if names[i] in COUNTS and type(v) is int and 0 <= v <= MAX_INPUT:
+                    st.glabels.update(str(x) for x in range(v + 1))
         return True
+
+    def prepare():
+        if st.ast is None:
+            st.ast = analyze()
+        for key, bases in st.ast.bases.items():
+            best = None
+            for nm, cnt in bases.items():
+                g = st.gnames.get(nm)
+                if g is not None and (best is None or cnt > best[0]):
+                    best = (cnt, g)
+            if best is not None:
+                st.pgrid[key] = best[1]
 
     def names_node(fn):
         try:
@@ -435,8 +535,15 @@ def __graphy_install(G):
             return
         loc = f.f_locals
         ids = st.ids
+        gridded = bool(st.grids)
+        graphed = st.graphed
+        if gridded:
+            diff()
+        A = st.ast if gridded or graphed else None
         M = {}
         fr = set()
+        seen = set()
+        heap = None
         for k, v in loc.items():
             r = ids.get(id(v))
             if r is not None:
@@ -444,10 +551,31 @@ def __graphy_install(G):
                     M[k] = r
                 continue
             t = type(v)
+            if graphed and (t is int or t is str) and k in A.nodes:
+                lb = label(v)
+                if lb in st.glabels and within(A, k, f.f_lineno):
+                    M[k] = "$" + lb
+                continue
             if (t is list or t is deque or t is set or t is tuple) and id(v) not in st.inputs:
                 found = contents(v)
                 if found:
                     fr |= found
+                elif graphed:
+                    if t is set:
+                        seen |= nodeset(v, False) or NONE
+                    elif t is list and flags(v, seen):
+                        pass
+                    elif t is deque or (t is list and k in A.popped):
+                        if heap is None:
+                            heap = heapy(f.f_code)
+                        fr |= nodeset(v, heap) or NONE
+                elif gridded:
+                    if t is set:
+                        seen |= cellset(v, False) or NONE
+                    elif not (t is list and marks(v, seen)) and k.lower() not in STEPS:
+                        if heap is None:
+                            heap = heapy(f.f_code)
+                        fr |= cellset(v, heap) or NONE
         lost = False
         shown = st.shown
         if M != shown:
@@ -461,8 +589,13 @@ def __graphy_install(G):
                 news = set(M.values())
                 lost = any(r not in news for r in shown.values())
                 st.shown = M
-        if st.grid is not None:
-            grid(loc)
+        for c in sorted(seen - st.visited):
+            st.visited.add(c)
+            emit(c)
+        if gridded:
+            cells(loc, f)
+        if graphed:
+            notes(loc)
         if fr or f is st.fframe:
             front = st.front
             if fr != front:
@@ -479,30 +612,360 @@ def __graphy_install(G):
             liveness(f, None)
         flush()
 
-    def grid(loc):
-        g = st.grid
-        snap = st.gsnap
-        p = st.gpane
-        for ri in range(min(len(g), len(snap))):
-            row = g[ri]
-            old = snap[ri]
-            if row == old:
+    def within(A, k, line):
+        spans = A.scoped.get(k)
+        return spans is None or any(a <= line <= b for a, b in spans)
+
+    def grid_of(a, p):
+        g = State()
+        g.obj = a
+        g.pane = p
+        g.snap = [r[:] if type(r) is list else r for r in a]
+        return g
+
+    def cid(g, r, c):
+        return g.pane + str(r) + "." + str(c)
+
+    def diff():
+        for g in st.grids:
+            obj = g.obj
+            snap = g.snap
+            for ri in range(min(len(obj), len(snap))):
+                row = obj[ri]
+                old = snap[ri]
+                if row == old:
+                    continue
+                for ci in range(min(len(row), len(old))):
+                    if row[ci] != old[ci]:
+                        c = cid(g, ri, ci)
+                        emit(c + "=" + label(row[ci]))
+                        if c not in st.visited:
+                            st.visited.add(c)
+                            emit(c)
+                snap[ri] = row[:] if type(row) is list else row
+
+    def inside(g, r, c):
+        snap = g.snap
+        return type(r) is int and type(c) is int and 0 <= r < len(snap) and 0 <= c < len(snap[r])
+
+    def heapy(code):
+        h = st.heaps.get(code)
+        if h is None:
+            h = not HEAP.isdisjoint(code.co_names)
+            st.heaps[code] = h
+        return h
+
+    def cellset(v, heap):
+        n = len(v)
+        if n == 0 or n > MAX_SCAN:
+            return None
+        g = st.grids[0]
+        snap = g.snap
+        width = len(snap[0]) if snap else 0
+        out = set()
+        m = None
+        for e in v:
+            t = type(e)
+            if t is not tuple and t is not list:
+                return None
+            if m is None:
+                m = len(e)
+                if m < 2 or m > 4 or (t is list and n == len(snap) and m == width):
+                    return None
+            elif len(e) != m:
+                return None
+            r, c = (e[m - 2], e[m - 1]) if heap and m > 2 else (e[0], e[1])
+            if not inside(g, r, c):
+                return None
+            out.add(cid(g, r, c))
+        return out
+
+    def marks(v, out):
+        g = st.grids[0]
+        snap = g.snap
+        if not v or len(v) != len(snap) or type(v[0]) is not list or not v[0] or type(v[0][0]) is not bool:
+            return False
+        for ri in range(len(v)):
+            row = v[ri]
+            if type(row) is not list:
+                return False
+            for ci in range(min(len(row), len(snap[ri]))):
+                if row[ci] is True:
+                    out.add(cid(g, ri, ci))
+        return True
+
+    def nodeset(v, heap):
+        n = len(v)
+        if n == 0 or n > MAX_SCAN:
+            return None
+        ids = st.ids
+        out = set()
+        for e in v:
+            r = ids.get(id(e))
+            if r is None:
+                t = type(e)
+                if t is tuple or t is list:
+                    if not e:
+                        return None
+                    e = e[-1] if heap else e[0]
+                    t = type(e)
+                    r = ids.get(id(e))
+                if r is None:
+                    if t is not int and t is not str:
+                        return None
+                    lb = label(e)
+                    if lb not in st.glabels:
+                        return None
+                    r = "$" + lb
+            out.add(r)
+        return out
+
+    def flags(v, out):
+        if not v or type(v[0]) is not bool or len(v) > MAX_SCAN:
+            return False
+        for i in range(len(v)):
+            if v[i] is True:
+                lb = str(i)
+                if lb in st.glabels:
+                    out.add("$" + lb)
+        return True
+
+    def notes(loc):
+        snaps = st.nsnap
+        for k in st.ast.keyed:
+            v = loc.get(k)
+            if v is None or id(v) in st.inputs:
                 continue
-            for ci in range(min(len(row), len(old))):
-                if row[ci] != old[ci]:
-                    cid = p + str(ri) + "." + str(ci)
-                    if cid not in st.visited:
-                        st.visited.add(cid)
-                        emit(cid)
-            snap[ri] = row[:] if type(row) is list else row
-        for a, b in PAIRS:
+            if type(v) is list:
+                if len(v) > MAX_SCAN or (v and type(v[0]) is bool):
+                    continue
+                items = enumerate(v)
+            elif isinstance(v, dict):
+                if len(v) > MAX_SCAN:
+                    continue
+                items = v.items()
+            else:
+                continue
+            cur = {}
+            for key, val in items:
+                tv = type(val)
+                if tv is not int and tv is not float and tv is not str:
+                    cur = None
+                    break
+                tk = type(key)
+                if tk is int or tk is str:
+                    lb = label(key)
+                    if lb in st.glabels:
+                        cur[lb] = label(val)
+            if cur is None:
+                continue
+            old = snaps.get(k)
+            if old == cur:
+                continue
+            old = old or {}
+            for lb, s in cur.items():
+                if old.get(lb) != s:
+                    emit("%" + k + ":$" + lb + "=" + s)
+            for lb in old:
+                if lb not in cur:
+                    emit("%" + k + ":$" + lb + "=")
+            snaps[k] = cur
+
+    def axis(name):
+        for a, b in AXES:
+            if name.endswith(a):
+                return name[:-len(a)].rstrip("_").lower() not in DELTAS
+        return True
+
+    def analyze():
+        import ast
+        import inspect
+        import textwrap
+        A = State()
+        A.axes = []
+        A.loads = {}
+        A.stores = {}
+        A.bases = {}
+        A.nodes = set()
+        A.keyed = set()
+        A.popped = set()
+        A.deep = False
+        A.scoped = {}
+        bound = set()
+        strong = set()
+        subs = []
+
+        def name(e):
+            return e.id if isinstance(e, ast.Name) else None
+
+        def leaves(t):
+            if isinstance(t, ast.Name):
+                return [t.id]
+            if isinstance(t, (ast.Tuple, ast.List)):
+                out = []
+                for e in t.elts:
+                    out.extend(leaves(e))
+                return out
+            return []
+
+        def pair(elts, line, book, owner):
+            if len(elts) != 2:
+                return
+            a, b = name(elts[0]), name(elts[1])
+            if not a or not b or a == b or not axis(a) or not axis(b):
+                return
+            key = a + ":" + b
+            if key not in A.bases:
+                A.bases[key] = {}
+                A.axes.append(key)
+            if owner:
+                A.bases[key][owner] = A.bases[key].get(owner, 0) + 1
+            if book is A.loads:
+                strong.add(key)
+            book.setdefault(line, set()).add(key)
+
+        for fn in METHODS:
+            try:
+                tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
+            except Exception:
+                continue
+            base = fn.__code__.co_firstlineno - 1
+            for n in ast.walk(tree):
+                line = base + getattr(n, "lineno", 0)
+                if isinstance(n, ast.Subscript):
+                    i = name(n.slice)
+                    if i:
+                        subs.append((name(n.value), i))
+                    if isinstance(n.value, ast.Subscript):
+                        A.deep = True
+                        pair((n.value.slice, n.slice), line, A.loads, name(n.value.value))
+                elif isinstance(n, ast.Tuple) and isinstance(n.ctx, ast.Load):
+                    pair(n.elts, line, A.loads, None)
+                elif isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Tuple):
+                    if isinstance(n.value, ast.Call):
+                        pair(n.targets[0].elts, line, A.stores, None)
+                    elif isinstance(n.value, ast.Subscript) and name(n.value.value) in EDGES:
+                        A.nodes.update(leaves(n.targets[0])[:2])
+                elif isinstance(n, ast.For):
+                    span = (line, base + (n.end_lineno or n.lineno))
+                    for v in leaves(n.target):
+                        A.scoped.setdefault(v, []).append(span)
+                    it = n.iter
+                    fname = name(it.func) if isinstance(it, ast.Call) else None
+                    if fname not in ("enumerate", "zip") and isinstance(n.target, ast.Tuple):
+                        pair(n.target.elts, line, A.stores, None)
+                    if fname in ("sorted", "zip", "reversed", "list") and it.args:
+                        it = it.args[0]
+                    if isinstance(it, ast.Subscript):
+                        A.nodes.update(leaves(n.target)[:1])
+                    elif name(it) in EDGES:
+                        A.nodes.update(leaves(n.target)[:2])
+                elif isinstance(n, ast.Call):
+                    f = n.func
+                    if isinstance(f, ast.Attribute) and f.attr in ("pop", "popleft") and name(f.value):
+                        A.popped.add(f.value.id)
+                    elif (name(f) in HEAP or (isinstance(f, ast.Attribute) and f.attr in HEAP)) and n.args and name(n.args[0]):
+                        A.popped.add(n.args[0].id)
+            for n in ast.walk(tree):
+                if isinstance(n, ast.arg):
+                    bound.add(n.arg)
+                elif isinstance(n, (ast.Assign, ast.AugAssign, ast.AnnAssign)):
+                    for t in (n.targets if isinstance(n, ast.Assign) else [n.target]):
+                        bound.update(leaves(t))
+                elif isinstance(n, ast.NamedExpr):
+                    bound.update(leaves(n.target))
+        for v in bound:
+            A.scoped.pop(v, None)
+        A.axes = [k for k in A.axes if k in strong]
+        A.akeys = set(A.axes)
+        for owner, i in subs:
+            if owner not in EDGES and i != "_":
+                A.nodes.add(i)
+        for owner, i in subs:
+            if owner and owner not in EDGES and i in A.nodes:
+                A.keyed.add(owner)
+        return A
+
+    def pairs(loc):
+        out = {}
+        used = set()
+        first = st.grids[0]
+        for key in st.ast.axes:
+            a, b = key.split(":")
             rv = loc.get(a)
             cv = loc.get(b)
-            if type(rv) is int and type(cv) is int and 0 <= rv < len(snap) and 0 <= cv < len(snap[rv]):
-                if st.cell != (rv, cv):
-                    st.cell = (rv, cv)
-                    emit("@=" + p + str(rv) + "." + str(cv))
-                return
+            if type(rv) is int and type(cv) is int:
+                g = st.pgrid.get(key, first)
+                out[key] = cid(g, rv, cv) if inside(g, rv, cv) else None
+                used.add(a)
+                used.add(b)
+        for k, rv in loc.items():
+            if type(rv) is not int or k in used or not st.ast.deep:
+                continue
+            for a, b in AXES:
+                if not k.endswith(a):
+                    continue
+                pre = k[:-len(a)]
+                if pre.rstrip("_").lower() not in PREFIXES:
+                    break
+                for k2 in (pre + b, k.replace(a, b)):
+                    cv = loc.get(k2)
+                    if type(cv) is int and k2 not in used:
+                        out[k + ":" + k2] = cid(first, rv, cv) if inside(first, rv, cv) else None
+                        break
+                break
+        return out
+
+    def cells(loc, f):
+        A = st.ast
+        line = f.f_lineno
+        after = A.stores.get(st.cline, ()) if st.cframe is f else ()
+        now = A.loads.get(line, ())
+        st.cframe = f
+        st.cline = line
+        found = pairs(loc)
+        shown = st.cshown
+        hold = st.chold
+        st.chold = {}
+        moves = []
+        gone = []
+        stale = []
+        lead = st.ccur in now
+        for k, v in found.items():
+            if v is None:
+                if k in shown:
+                    gone.append(k)
+                continue
+            if k in A.akeys:
+                if k in now or k in after:
+                    if shown.get(k) != v or (k in now and not lead):
+                        moves.append(k)
+                elif k in shown and shown[k] != v:
+                    stale.append(k)
+            elif shown.get(k) != v:
+                if hold.get(k) == v:
+                    moves.append(k)
+                else:
+                    st.chold[k] = v
+        if moves:
+            gone.extend(k for k in shown if k not in found)
+            gone.extend(stale)
+            moves.sort(key=lambda k: k in now)
+        for k in gone:
+            if k in shown:
+                del shown[k]
+                emit("@" + k + "=-")
+        for k in moves:
+            shown[k] = found[k]
+            st.ccur = k
+            emit("@" + k + "=" + found[k])
+
+    def commit():
+        for k, v in st.chold.items():
+            st.cshown[k] = v
+            st.ccur = k
+            emit("@" + k + "=" + v)
+        st.chold = {}
 
     def ltrace(frame, event, arg):
         if not st.on:
@@ -518,6 +981,8 @@ def __graphy_install(G):
             finally:
                 st.busy = False
         elif event == "return":
+            if st.grids and st.chold:
+                commit()
             flush()
         return ltrace
 
@@ -538,23 +1003,49 @@ def __graphy_install(G):
         reset(args)
         for name, k in (("TreeNode", "t"), ("ListNode", "l")):
             learn(G.get(name), k)
-        if not tag_args(args):
+        code = fn.__code__
+        if not tag_args(args, code.co_varnames[:code.co_argcount]):
             return
-        if not st.kinds and st.grid is None:
+        active = bool(st.grids) or st.graphed
+        if not st.kinds and not active:
             return
-        if not st.ids and st.grid is None and not names_node(fn):
+        if not st.ids and not active and not names_node(fn):
             return
+        if active:
+            prepare()
         patch()
         st.top = frame
         st.saved = sys.gettrace()
         st.on = True
         sys.settrace(gtrace)
 
+    def settle(ret):
+        for g in st.grids:
+            snap = g.snap
+            if len(ret) != len(snap) or any(len(ret[ri]) != len(snap[ri]) for ri in range(len(snap))):
+                continue
+            for k in list(st.cshown):
+                emit("@" + k + "=-")
+            st.cshown = {}
+            for ri in range(len(snap)):
+                for ci in range(len(snap[ri])):
+                    if ret[ri][ci] != snap[ri][ci]:
+                        emit(cid(g, ri, ci) + "=" + label(ret[ri][ci]))
+            return
+
     def finish(fn, ret, ok):
         st.closing = st.on and ok
         stop()
         try:
             if st.closing:
+                for r in sorted(st.front):
+                    emit("&-" + r)
+                st.front = set()
+                if st.grids:
+                    diff()
+                    commit()
+                    if is_grid(ret) and all(ret is not g.obj for g in st.grids):
+                        settle(ret)
                 if ret is not None and type(ret) in st.kinds:
                     r = ensure(ret)
                     if r is not None:
@@ -600,8 +1091,10 @@ def __graphy_install(G):
     if not isinstance(sol, type):
         return
     for name, attr in list(vars(sol).items()):
-        if not name.startswith("_") and type(attr) is FN:
-            setattr(sol, name, wrap(attr))
+        if type(attr) is FN:
+            METHODS.append(attr)
+            if not name.startswith("_"):
+                setattr(sol, name, wrap(attr))
 
 __graphy_install(globals())
 `;

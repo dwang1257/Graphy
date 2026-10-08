@@ -6,7 +6,7 @@ const SYNC_KEY = "graphy.settings";
 const LOCAL_KEY = "graphy.panel";
 const IMAGES_KEY = "graphy.images";
 const OVERRIDE_KEY = "graphy.overrides";
-const PRIVACY_NOTICE_KEY = "graphy.privacyNoticeDismissed";
+const REVIEW_HIDDEN_KEY = "graphy.reviewHidden";
 
 export interface PanelState {
   x: number;
@@ -217,15 +217,15 @@ export function withOverrideKind(
   return next;
 }
 
-export async function loadPrivacyNoticeDismissed(): Promise<boolean> {
+export async function loadReviewHidden(): Promise<boolean> {
   try {
-    const bag = await chrome.storage.local.get(PRIVACY_NOTICE_KEY);
-    return bag[PRIVACY_NOTICE_KEY] === true;
+    const bag = await chrome.storage.sync.get(REVIEW_HIDDEN_KEY);
+    return bag[REVIEW_HIDDEN_KEY] === true;
   } catch {
     return false;
   }
 }
 
-export async function savePrivacyNoticeDismissed(): Promise<void> {
-  await settle(() => chrome.storage.local.set({ [PRIVACY_NOTICE_KEY]: true }));
+export async function saveReviewHidden(): Promise<void> {
+  await settle(() => chrome.storage.sync.set({ [REVIEW_HIDDEN_KEY]: true }));
 }

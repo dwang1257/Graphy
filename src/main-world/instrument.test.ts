@@ -6,6 +6,8 @@ import { afterAll, describe, expect, it } from "vitest";
 
 import { buildTrace, type Trace } from "../core/trace.js";
 import { TRACE_SENTINEL } from "../core/traceWire.js";
+import { parseGraph, type GraphOptions } from "../core/parse/graph.js";
+import { parseMatrix } from "../core/parse/matrix.js";
 import type { GNode, GraphModel, Links, Pane } from "../core/types.js";
 import { GRAPHY_TRACE_MARK, instrumentPython, instrumentRunBody } from "./instrument.js";
 
@@ -55,6 +57,19 @@ def mk_tree(arr):
         i += 1
     return root
 
+class Node:
+    def __init__(self, val=0, neighbors=None):
+        self.val = val
+        self.neighbors = neighbors if neighbors is not None else []
+
+def mk_graph(adj):
+    if not adj:
+        return None
+    nodes = [Node(i + 1) for i in range(len(adj))]
+    for i, nb in enumerate(adj):
+        nodes[i].neighbors = [nodes[j - 1] for j in nb]
+    return nodes[0]
+
 def mk_list(arr):
     d = ListNode()
     c = d
@@ -77,6 +92,8 @@ def ser(v):
         while out and out[-1] is None:
             out.pop()
         return out
+    if isinstance(v, Node):
+        return v.val
     if isinstance(v, ListNode):
         out = []
         while v is not None and len(out) < 10000:
@@ -97,7 +114,7 @@ interface CaseResult {
   seconds: number;
 }
 
-type Conv = "tree" | "list" | "raw";
+type Conv = "tree" | "list" | "graph" | "raw";
 
 function runCases(code: string, method: string, cases: unknown[][], conv: Conv[], instrument = true): CaseResult[] {
   const driver = `
@@ -105,7 +122,7 @@ cases = json.loads(${JSON.stringify(JSON.stringify(cases))})
 conv = ${JSON.stringify(conv)}
 real = sys.stdout
 for c in cases:
-    args = [mk_tree(v) if k == "tree" else mk_list(v) if k == "list" else v for v, k in zip(c, conv)]
+    args = [mk_tree(v) if k == "tree" else mk_list(v) if k == "list" else mk_graph(v) if k == "graph" else v for v, k in zip(c, conv)]
     buf = io.StringIO()
     sys.stdout = buf
     err = None
@@ -512,5 +529,357 @@ describe.skipIf(!PYTHON)("python tracer", () => {
     expect(trace.frames[floating]!.topology.nodes.z0?.label).toBe("5");
     expect(trace.frames[floating]!.topology.links.a2).toEqual({});
     expect(trace.frames.at(-1)!.topology.links.a2).toEqual({ left: "z0" });
+  });
+});
+
+function gridPane(values: unknown[][]): Pane {
+  return { id: "a", title: "grid", model: parseMatrix(values as never, "grid") };
+}
+
+function gridTrace(code: string, method: string, args: unknown[]): { trace: Trace; ret: unknown } {
+  const [result] = runCases(code, method, [args], args.map(() => "raw"));
+  expect(result!.err).toBeNull();
+  return { trace: buildTrace(result!.stdout, [gridPane(args[0] as unknown[][])]), ret: result!.ret };
+}
+
+function cellsOf(rows: unknown[][], trace: Trace): string[][] {
+  const last = trace.frames.at(-1)!;
+  return rows.map((row, r) => row.map((value, c) => last.labels[`a${r}.${c}`] ?? String(value)));
+}
+
+function moves(trace: Trace, name: string): string[] {
+  const out: string[] = [];
+  for (const frame of trace.frames) {
+    const at = frame.pointers[name];
+    if (at !== undefined && out.at(-1) !== at) out.push(at);
+  }
+  return out;
+}
+
+const ORANGES = `class Solution:
+    def orangesRotting(self, grid: List[List[int]]) -> int:
+        rows, cols = len(grid), len(grid[0])
+        q = deque()
+        fresh = 0
+        for r in range(rows):
+            for c in range(cols):
+                if grid[r][c] == 2:
+                    q.append((r, c))
+                elif grid[r][c] == 1:
+                    fresh += 1
+        minutes = 0
+        while q and fresh:
+            for _ in range(len(q)):
+                r, c = q.popleft()
+                for dr, dc in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                    nr, nc = r + dr, c + dc
+                    if 0 <= nr < rows and 0 <= nc < cols and grid[nr][nc] == 1:
+                        grid[nr][nc] = 2
+                        fresh -= 1
+                        q.append((nr, nc))
+            minutes += 1
+        return -1 if fresh else minutes
+`;
+
+const DIAGONAL = `from collections import defaultdict
+class Solution:
+    def diagonalSort(self, mat: List[List[int]]) -> List[List[int]]:
+        m, n = len(mat), len(mat[0])
+        d = defaultdict(list)
+        for i in range(m):
+            for j in range(n):
+                d[i - j].append(mat[i][j])
+        for k in d:
+            d[k].sort(reverse=True)
+        for i in range(m):
+            for j in range(n):
+                mat[i][j] = d[i - j].pop()
+        return mat
+`;
+
+describe.skipIf(!PYTHON)("python grid tracer", () => {
+  it("shows Rotting Oranges cells rotting, the BFS queue and both coordinate pairs", () => {
+    const grid = [[2, 1, 1], [1, 1, 0], [0, 1, 1]];
+    const { trace, ret } = gridTrace(ORANGES, "orangesRotting", [grid]);
+    expect(ret).toBe(4);
+    expect(cellsOf(grid, trace)).toEqual([["2", "2", "2"], ["2", "2", "0"], ["0", "2", "2"]]);
+    expect(moves(trace, "r,c").slice(0, 9)).toEqual(["a0.0", "a0.1", "a0.2", "a1.0", "a1.1", "a1.2", "a2.0", "a2.1", "a2.2"]);
+    expect(moves(trace, "nr,nc")).toContain("a1.0");
+    const rotted = trace.frames.findIndex((frame) => frame.labels["a1.0"] === "2");
+    expect(trace.frames[rotted]).toMatchObject({ current: "a1.0", pointers: { "r,c": "a0.0", "nr,nc": "a1.0" } });
+    expect(trace.frames[rotted]!.visited).toContain("a1.0");
+    expect(trace.frames.some((frame) => frame.frontier.length >= 2)).toBe(true);
+    expect(trace.frames.at(-1)!.frontier).toEqual([]);
+  });
+
+  it("writes Sort the Matrix Diagonally values back into the grid in order", () => {
+    const mat = [[3, 3, 1, 1], [2, 2, 1, 2], [1, 1, 1, 2]];
+    const sorted = [[1, 1, 1, 1], [1, 2, 2, 2], [1, 2, 3, 3]];
+    const { trace, ret } = gridTrace(DIAGONAL, "diagonalSort", [mat]);
+    expect(ret).toEqual(sorted);
+    expect(cellsOf(mat, trace)).toEqual(sorted.map((row) => row.map(String)));
+    const first = trace.frames.findIndex((frame) => frame.labels["a0.0"] === "1");
+    expect(trace.frames[first - 1]!.current).toBe("a0.0");
+  });
+
+  it("follows the pair each line indexes with", () => {
+    const code = `class Solution:
+    def spiralOrder(self, matrix: List[List[int]]) -> List[int]:
+        res = []
+        top, bottom, left, right = 0, len(matrix) - 1, 0, len(matrix[0]) - 1
+        while top <= bottom and left <= right:
+            for j in range(left, right + 1):
+                res.append(matrix[top][j])
+            top += 1
+            for i in range(top, bottom + 1):
+                res.append(matrix[i][right])
+            right -= 1
+            if top <= bottom:
+                for j in range(right, left - 1, -1):
+                    res.append(matrix[bottom][j])
+                bottom -= 1
+            if left <= right:
+                for i in range(bottom, top - 1, -1):
+                    res.append(matrix[i][left])
+                left += 1
+        return res
+`;
+    const { trace } = gridTrace(code, "spiralOrder", [[[1, 2, 3], [4, 5, 6], [7, 8, 9]]]);
+    const path = trace.frames.flatMap((frame, i) => (i > 0 && frame.current !== trace.frames[i - 1]!.current ? [frame.current] : []));
+    expect(path).toEqual(["a0.0", "a0.1", "a0.2", "a1.2", "a2.2", "a2.1", "a2.0", "a1.0", "a1.1"]);
+    expect(Object.keys(trace.frames.at(-1)!.pointers)).toEqual(["top,j"]);
+  });
+
+  it("uses the last two tuple fields of heap entries and ignores grid copies", () => {
+    const code = `import heapq
+class Solution:
+    def minimumEffortPath(self, heights: List[List[int]]) -> int:
+        R, C = len(heights), len(heights[0])
+        best = [row[:] for row in heights]
+        h = [(0, 0, 0)]
+        seen = set()
+        while h:
+            d, r, c = heapq.heappop(h)
+            if (r, c) in seen:
+                continue
+            seen.add((r, c))
+            if (r, c) == (R - 1, C - 1):
+                return d
+            for nr, nc in ((r + 1, c), (r, c + 1)):
+                if nr < R and nc < C:
+                    heapq.heappush(h, (max(d, abs(heights[nr][nc] - heights[r][c])), nr, nc))
+        return 0
+`;
+    const { trace, ret } = gridTrace(code, "minimumEffortPath", [[[1, 2], [3, 8]]]);
+    expect(ret).toBe(5);
+    const frontier = new Set(trace.frames.flatMap((frame) => frame.frontier));
+    expect([...frontier].sort()).toEqual(["a0.0", "a0.1", "a1.0", "a1.1"]);
+    expect(trace.frames.at(-1)!.visited).toEqual(expect.arrayContaining(["a0.0", "a1.1"]));
+  });
+
+  it("shows a returned grid as the final frame", () => {
+    const code = `class Solution:
+    def updateMatrix(self, mat: List[List[int]]) -> List[List[int]]:
+        m, n = len(mat), len(mat[0])
+        dist = [[0 if mat[i][j] == 0 else -1 for j in range(n)] for i in range(m)]
+        q = deque((i, j) for i in range(m) for j in range(n) if mat[i][j] == 0)
+        while q:
+            i, j = q.popleft()
+            for ni, nj in ((i + 1, j), (i - 1, j), (i, j + 1), (i, j - 1)):
+                if 0 <= ni < m and 0 <= nj < n and dist[ni][nj] == -1:
+                    dist[ni][nj] = dist[i][j] + 1
+                    q.append((ni, nj))
+        return dist
+`;
+    const mat = [[0, 0, 0], [0, 1, 0], [1, 1, 1]];
+    const { trace, ret } = gridTrace(code, "updateMatrix", [mat]);
+    expect(ret).toEqual([[0, 0, 0], [0, 1, 0], [1, 2, 1]]);
+    expect(cellsOf(mat, trace)).toEqual([["0", "0", "0"], ["0", "1", "0"], ["1", "2", "1"]]);
+    expect(trace.frames.at(-1)!.pointers).toEqual({});
+    expect(trace.frames.every((frame) => frame.frontier.every((id) => /^a\d\.\d$/.test(id)))).toBe(true);
+  });
+
+  it("restores cells written during backtracking and marks visited matrices", () => {
+    const code = `class Solution:
+    def exist(self, board: List[List[str]], word: str) -> bool:
+        R, C = len(board), len(board[0])
+        seen = [[False] * C for _ in range(R)]
+        def bt(r, c, k):
+            if k == len(word):
+                return True
+            if r < 0 or c < 0 or r >= R or c >= C or board[r][c] != word[k]:
+                return False
+            seen[r][c] = True
+            tmp, board[r][c] = board[r][c], "#"
+            found = bt(r + 1, c, k + 1) or bt(r, c + 1, k + 1)
+            board[r][c] = tmp
+            return found
+        return bt(0, 0, 0)
+`;
+    const board = [["A", "B"], ["C", "D"]];
+    const { trace, ret } = gridTrace(code, "exist", [board, "ABD"]);
+    expect(ret).toBe(true);
+    expect(trace.frames.some((frame) => frame.labels["a0.1"] === "#")).toBe(true);
+    expect(cellsOf(board, trace)).toEqual([["A", "B"], ["C", "D"]]);
+    expect(trace.frames.at(-1)!.visited).toEqual(expect.arrayContaining(["a0.0", "a0.1", "a1.1"]));
+  });
+});
+
+function graphTrace(code: string, method: string, args: unknown[], at: number, options: GraphOptions, conv?: Conv[]): { trace: Trace; ret: unknown } {
+  const [result] = runCases(code, method, [args], conv ?? args.map(() => "raw"));
+  expect(result!.err).toBeNull();
+  const id = "abcdefghijklmnopqrstuvwxy"[at]!;
+  const pane: Pane = { id, title: options.name ?? "graph", model: parseGraph(args[at] as never, id, options) };
+  return { trace: buildTrace(result!.stdout, [pane]), ret: result!.ret };
+}
+
+describe.skipIf(!PYTHON)("python graph tracer", () => {
+  it("follows Kahn's algorithm with node pointers, the queue and indegrees", () => {
+    const code = `from collections import defaultdict
+class Solution:
+    def canFinish(self, numCourses: int, prerequisites: List[List[int]]) -> bool:
+        adj = defaultdict(list)
+        indeg = [0] * numCourses
+        for a, b in prerequisites:
+            adj[b].append(a)
+            indeg[a] += 1
+        q = deque(i for i in range(numCourses) if indeg[i] == 0)
+        taken = 0
+        while q:
+            course = q.popleft()
+            taken += 1
+            for nxt in adj[course]:
+                indeg[nxt] -= 1
+                if indeg[nxt] == 0:
+                    q.append(nxt)
+        return taken == numCourses
+`;
+    const { trace, ret } = graphTrace(code, "canFinish", [3, [[1, 0], [2, 1]]], 1, { name: "prerequisites", count: 3 });
+    expect(ret).toBe(true);
+    const built = trace.frames.findIndex((frame) => frame.notes.indeg?.b2 === "1");
+    expect(trace.frames[built]).toMatchObject({ note: "indeg", notes: { indeg: { b0: "0", b1: "1", b2: "1" } } });
+    expect(trace.frames.some((frame) => frame.pointers.course === "b1" && frame.pointers.nxt === "b2")).toBe(true);
+    expect(trace.frames.some((frame) => frame.frontier.includes("b0"))).toBe(true);
+    const later = trace.frames.filter((frame) => frame.pointers.course !== undefined);
+    expect(later.every((frame) => frame.pointers.a === undefined && frame.pointers.b === undefined)).toBe(true);
+    expect(trace.frames.at(-1)!.notes.indeg).toEqual({ b0: "0", b1: "0", b2: "0" });
+  });
+
+  it("reads the node out of Dijkstra heap entries and shows distances", () => {
+    const code = `import heapq
+from collections import defaultdict
+class Solution:
+    def networkDelayTime(self, times: List[List[int]], n: int, k: int) -> int:
+        g = defaultdict(list)
+        for u, v, w in times:
+            g[u].append((v, w))
+        dist = {}
+        heap = [(0, k)]
+        while heap:
+            d, node = heapq.heappop(heap)
+            if node in dist:
+                continue
+            dist[node] = d
+            for nei, w in g[node]:
+                if nei not in dist:
+                    heapq.heappush(heap, (d + w, nei))
+        return max(dist.values()) if len(dist) == n else -1
+`;
+    const { trace, ret } = graphTrace(code, "networkDelayTime", [[[2, 1, 1], [2, 3, 1], [3, 4, 1]], 4, 2], 0, { name: "times", count: 4 });
+    expect(ret).toBe(2);
+    expect(trace.frames.some((frame) => frame.frontier.includes("a1"))).toBe(true);
+    expect(trace.frames.at(-1)!.notes.dist).toEqual({ a0: "1", a1: "0", a2: "1", a3: "2" });
+  });
+
+  it("tags Clone Graph nodes by object and leaves the copies alone", () => {
+    const code = `class Solution:
+    def cloneGraph(self, node: Optional['Node']) -> Optional['Node']:
+        if not node:
+            return None
+        copies = {node: Node(node.val)}
+        q = deque([node])
+        while q:
+            cur = q.popleft()
+            for nei in cur.neighbors:
+                if nei not in copies:
+                    copies[nei] = Node(nei.val)
+                    q.append(nei)
+                copies[cur].neighbors.append(copies[nei])
+        return copies[node]
+`;
+    const adj = [[2, 4], [1, 3], [2, 4], [1, 3]];
+    const { trace, ret } = graphTrace(code, "cloneGraph", [adj], 0, { name: "node", type: "Optional['Node']" }, ["graph"]);
+    expect(ret).toBe(1);
+    expect(new Set(trace.frames.map((frame) => frame.pointers.cur).filter(Boolean))).toEqual(new Set(["a0", "a1", "a2", "a3"]));
+    expect(trace.frames.some((frame) => frame.frontier.length >= 2)).toBe(true);
+  });
+
+  it("marks visited rooms from a seen set and the stack as the frontier", () => {
+    const code = `class Solution:
+    def canVisitAllRooms(self, rooms: List[List[int]]) -> bool:
+        seen = {0}
+        stack = [0]
+        while stack:
+            room = stack.pop()
+            for key in rooms[room]:
+                if key not in seen:
+                    seen.add(key)
+                    stack.append(key)
+        return len(seen) == len(rooms)
+`;
+    const { trace, ret } = graphTrace(code, "canVisitAllRooms", [[[1, 3], [3, 0, 1], [2], [0]]], 0, { name: "rooms" });
+    expect(ret).toBe(false);
+    expect(trace.frames.at(-1)!.visited).toEqual(["a0", "a1", "a3"]);
+    expect(trace.frames.some((frame) => frame.frontier.includes("a3"))).toBe(true);
+  });
+});
+
+describe.skipIf(!PYTHON)("python grid tracer pairs", () => {
+  it("ignores enumerate values and unpacked tuples the grid is never indexed with", () => {
+    const code = `class Solution:
+    def islandPerimeter(self, grid: List[List[int]]) -> int:
+        p = 0
+        for r, row in enumerate(grid):
+            for c, v in enumerate(row):
+                if v:
+                    p += 4
+                    if r and grid[r - 1][c]:
+                        p -= 2
+                    if c and grid[r][c - 1]:
+                        p -= 2
+        q, s = divmod(p, 3)
+        return p
+`;
+    const { trace, ret } = gridTrace(code, "islandPerimeter", [[[0, 1], [1, 1]]]);
+    expect(ret).toBe(8);
+    const names = new Set(trace.frames.flatMap((frame) => Object.keys(frame.pointers)));
+    expect([...names]).toEqual(["r,c"]);
+  });
+
+  it("traces writes on the grid each pair indexes", () => {
+    const code = `class Solution:
+    def countSubIslands(self, grid1: List[List[int]], grid2: List[List[int]]) -> int:
+        m, n = len(grid2), len(grid2[0])
+        def dfs(i, j):
+            if not (0 <= i < m and 0 <= j < n) or grid2[i][j] == 0:
+                return 1
+            grid2[i][j] = 0
+            res = grid1[i][j]
+            for di, dj in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                res &= dfs(i + di, j + dj)
+            return res
+        return sum(dfs(i, j) for i in range(m) for j in range(n) if grid2[i][j])
+`;
+    const grid1 = [[1, 1], [0, 1]];
+    const grid2 = [[1, 0], [0, 1]];
+    const [result] = runCases(code, "countSubIslands", [[grid1, grid2]], ["raw", "raw"]);
+    const panes: Pane[] = [
+      { id: "a", title: "grid1", model: parseMatrix(grid1 as never, "grid1") },
+      { id: "b", title: "grid2", model: parseMatrix(grid2 as never, "grid2") },
+    ];
+    const trace = buildTrace(result!.stdout, panes);
+    expect(result!.ret).toBe(2);
+    expect(trace.frames.at(-1)!.labels).toEqual({ "b0.0": "0", "b1.1": "0" });
+    expect(trace.frames.flatMap((frame) => Object.values(frame.pointers)).every((id) => id.startsWith("b"))).toBe(true);
   });
 });

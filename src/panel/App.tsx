@@ -12,11 +12,9 @@ import { extractImages, mergeImages, sameImages, sameSettings } from "../setting
 import {
   loadOverrides,
   loadPanelState,
-  loadPrivacyNoticeDismissed,
   loadSettings,
   onSettingsChanged,
   saveOverrides,
-  savePrivacyNoticeDismissed,
   saveSettings,
   withOverrideKind,
   type Override,
@@ -27,7 +25,6 @@ import { objectUrlFor } from "./blobUrl.js";
 import { EMPTY_CUSTOM_COPY, EMPTY_STAGE_COPY, isEmptyStage, isTooLarge, tooLargeCopy } from "./emptyStage.js";
 import { GraphView } from "./GraphView.js";
 import { SettingsDrawer, type SettingsUpdate } from "./SettingsDrawer.js";
-import { PrivacyNotice } from "./privacyNotice.js";
 import { CUSTOM_CASE, CaseTabs, caseTabId, type CaseSelection, type CaseTabActivation } from "./CaseTabs.js";
 import { CustomInput } from "./CustomInput.js";
 import {
@@ -83,7 +80,6 @@ export function App(): JSX.Element | null {
   const [traceIndex, setTraceIndex] = useState(0);
   const [tracePlaying, setTracePlaying] = useState(false);
   const [shrunk, setShrunk] = useState(false);
-  const [showPrivacyNotice, setShowPrivacyNotice] = useState(true);
 
   const settingsRef = useRef(settings);
   const saveTimer = useRef<number | undefined>(undefined);
@@ -130,7 +126,6 @@ export function App(): JSX.Element | null {
     void loadPanelState().then((state) => {
       if (!sawHostShrunk.current) setShrunk(state.shrunk);
     });
-    void loadPrivacyNoticeDismissed().then((dismissed) => setShowPrivacyNotice(!dismissed));
     const stop = onSettingsChanged((update) => {
       const prev = settingsRef.current;
       const next = update(prev);
@@ -313,10 +308,6 @@ export function App(): JSX.Element | null {
   );
   const movePanel = useCallback((dx: number, dy: number) => toHost({ channel: PANEL_CHANNEL, type: "move", dx, dy }), []);
   const persistPanel = useCallback(() => toHost({ channel: PANEL_CHANNEL, type: "persist" }), []);
-  const dismissPrivacyNotice = useCallback(() => {
-    setShowPrivacyNotice(false);
-    void savePrivacyNoticeDismissed();
-  }, []);
 
   const updateCustomDraft = useCallback(
     (update: (draft: CustomDraft) => CustomDraft) => updateCustomCase((c) => ({ ...c, draft: update(c.draft) })),
@@ -438,7 +429,6 @@ export function App(): JSX.Element | null {
       </div>
 
       <div class="statusbar" ref={statusbarRef}>
-        {showPrivacyNotice && <PrivacyNotice onDismiss={dismissPrivacyNotice} />}
         <CaseTabs count={cases.length} selection={tabSelection} onChange={selectCase} />
         {caseIndex === null && (
           <CustomInput

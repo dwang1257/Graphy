@@ -1,3 +1,10 @@
+.viewport svg :is(.graphy-pointer, .graphy-note) {
+  paint-order: stroke;
+  stroke: var(--stage-bg, var(--color-paper));
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+
 .viewport svg .graphy-pointer {
   fill: var(--color-accent);
   font-family: var(--font-body);
@@ -71,4 +78,32 @@
   color: var(--color-ink-2);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.viewport svg a[data-graphy-state~="pointer"]:not([data-graphy-state~="current"]) {
+  clip-path: inset(0) fill-box;
+}
+
+.viewport svg a[data-graphy-state~="pointer"]:not([data-graphy-state~="current"]) :is(polygon, path) {
+  stroke: var(--color-ink) !important;
+  stroke-width: 4px !important;
+  stroke-dasharray: none;
+}
+
+.viewport svg .graphy-note {
+  fill: var(--color-ink-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+.viewport svg g.edge[data-graphy-state~="active"] path {
+  stroke: var(--color-accent) !important;
+  stroke-width: 2.5px !important;
+}
+
+.viewport svg g.edge[data-graphy-state~="active"] polygon {
+  fill: var(--color-accent) !important;
+  stroke: var(--color-accent) !important;
 }

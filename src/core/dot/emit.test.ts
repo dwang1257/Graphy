@@ -88,3 +88,17 @@ describe("emitDot", () => {
     expect(emitDot(model({}), options)).not.toContain("ordering");
   });
 });
+
+describe("graph edges", () => {
+  it("drops arrowheads on undirected edges and passes the layout engine through", () => {
+    const dot = emitDot(model({
+      kind: "graph",
+      engine: "neato",
+      nodes: [{ id: "a0", label: "0", role: "normal" }, { id: "a1", label: "1", role: "normal" }],
+      edges: [{ from: "a0", to: "a1", role: "normal", label: "4", undirected: true }],
+    }), options);
+
+    expect(dot).toContain('layout="neato", overlap="false", pack="true"');
+    expect(dot).toContain('"a0" -> "a1" [label="4", dir="none"]');
+  });
+});

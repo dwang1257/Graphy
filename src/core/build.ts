@@ -2,9 +2,10 @@ import { detectRole, structureKindOf, type Role } from "./detect.js";
 import { parseBinaryTree } from "./parse/binaryTree.js";
 import { parseLinkedLists } from "./parse/linkedList.js";
 import { parseMatrix } from "./parse/matrix.js";
+import { COUNT_NAMES, graphForm, graphNodeCount, parseGraph, type GraphOptions } from "./parse/graph.js";
 import { isArray, isNestedArray, isStringGrid, parseInputResult, type LCValue } from "./parse/value.js";
 import { NODE_LIMIT } from "../settings/schema.js";
-import type { Signature } from "./signature.js";
+import type { SigParam, Signature } from "./signature.js";
 import { KIND_LABELS, paneId, type GraphModel, type KindChoice, type ParseResult, type StructureKind } from "./types.js";
 
 export interface BuildOptions {
@@ -31,28 +32,30 @@ export function buildPanes(
   result.detected = roles.map(structureKindOf);
   const cycleValue = values.find((_, i) => roles[i]?.kind === "cycle-pos");
   let cyclePos = typeof cycleValue === "number" ? cycleValue : undefined;
+  const count = countOf(values, signature);
 
   values.forEach((value, i) => {
     const id = paneId(i);
     const title = signature?.params[i]?.name ?? `arg ${i + 1}`;
     const choice = options.kinds?.[i];
     if (!id || choice === "none") return;
-    const override = options.override && isArray(value) && (options.override === "matrix" || !isNestedArray(value))
+    const override = options.override && isArray(value) && (options.override === "matrix" || options.override === "graph" || !isNestedArray(value))
       ? options.override
       : undefined;
     const kind = choice ?? override ?? result.detected[i];
     if (!kind) return;
-    if (!fits(kind, value)) {
+    const graph = graphOptions(signature?.params[i], title, count);
+    if (!fits(kind, value, graph)) {
       result.failures.push({ paramName: title, reason: `${title} is not a valid ${KIND_LABELS[kind].toLowerCase()}.` });
       return;
     }
-    if (nodeCount(kind, value) > NODE_LIMIT) {
+    if (nodeCount(kind, value, graph) > NODE_LIMIT) {
       result.failures.push({ paramName: title, reason: `Input exceeds the ${NODE_LIMIT}-node limit.` });
       return;
     }
     try {
       const pos = kind === "linked-list" && !isNestedArray(value) ? cyclePos : undefined;
-      result.panes.push({ id, title, model: modelFor(kind, value, title, id, pos, options.showIndices !== false) });
+      result.panes.push({ id, title, model: modelFor(kind, value, title, id, pos, options.showIndices !== false, graph) });
       if (pos !== undefined) cyclePos = undefined;
     } catch (error) {
       result.failures.push({ paramName: title, reason: error instanceof Error ? error.message : String(error) });
@@ -87,8 +90,19 @@ function roleAt(values: readonly LCValue[], i: number, signature: Signature | nu
   return detectRole(param, value);
 }
 
-function fits(kind: StructureKind, value: LCValue): boolean {
+function countOf(values: readonly LCValue[], signature: Signature | null): number | undefined {
+  const index = signature?.params.findIndex((param) => (COUNT_NAMES as readonly string[]).includes(param.name)) ?? -1;
+  const value = values[index];
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : undefined;
+}
+
+function graphOptions(param: SigParam | undefined, title: string, count: number | undefined): GraphOptions {
+  return { title, name: param?.name, type: param?.type, count };
+}
+
+function fits(kind: StructureKind, value: LCValue, graph: GraphOptions): boolean {
   if (value === null) return true;
+  if (kind === "graph") return graphForm(value, graph) !== undefined;
   return isArray(value) && (kind !== "binary-tree" || !isNestedArray(value));
 }
 
@@ -99,6 +113,7 @@ function modelFor(
   id: string,
   cyclePos: number | undefined,
   showIndices: boolean,
+  graph: GraphOptions,
 ): GraphModel {
   switch (kind) {
     case "binary-tree":
@@ -107,11 +122,14 @@ function modelFor(
       return parseLinkedLists(isNestedArray(value) ? value : [value], { cyclePos, title }, id);
     case "matrix":
       return parseMatrix(value, title, showIndices);
+    case "graph":
+      return parseGraph(value, id, graph);
   }
 }
 
-function nodeCount(kind: StructureKind, value: LCValue): number {
+function nodeCount(kind: StructureKind, value: LCValue, graph: GraphOptions): number {
   if (!isArray(value)) return 0;
+  if (kind === "graph") return graphNodeCount(value, graph);
   if (kind === "binary-tree") return value.filter((entry) => entry !== null).length;
   if (isNestedArray(value)) return value.reduce((total, row) => total + row.length, 0);
   if (kind === "matrix" && isStringGrid(value)) return value.length * (value[0]?.length ?? 0);

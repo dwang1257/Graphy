@@ -212,3 +212,24 @@ describe("detectKinds", () => {
     expect(detectKinds([""], null)).toEqual([undefined]);
   });
 });
+
+describe("graph panes", () => {
+  it("draws Course Schedule as a graph over every course", () => {
+    const result = buildPanes("4\n[[1,0],[2,0]]", sig("canFinish", [["numCourses", "int"], ["prerequisites", "List[List[int]]"]]));
+
+    expect(result.failures).toEqual([]);
+    expect(result.panes.map((pane) => [pane.id, pane.model.kind, pane.model.nodes.length, pane.model.edges.length])).toEqual([["b", "graph", 4, 2]]);
+  });
+
+  it("keeps a grid that shares a graph parameter name", () => {
+    const result = buildPanes("[[2147483647,-1,0],[0,-1,2147483647]]", sig("wallsAndGates", [["rooms", "List[List[int]]"]]));
+
+    expect(result.panes.map((pane) => pane.model.kind)).toEqual(["matrix"]);
+  });
+
+  it("lets a nested array be drawn as a graph by choice", () => {
+    const result = buildPanes("[[0,1],[1,2]]", null, { kinds: ["graph"] });
+
+    expect(result.panes[0]?.model.edges.map((edge) => `${edge.from}-${edge.to}`)).toEqual(["a0-a1", "a1-a2"]);
+  });
+});

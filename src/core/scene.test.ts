@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { parseBinaryTree } from "./parse/binaryTree.js";
 import { parseLinkedLists } from "./parse/linkedList.js";
+import { parseGraph } from "./parse/graph.js";
 import { parseMatrix } from "./parse/matrix.js";
 import { initialTopology, layoutKeyOf, sceneModel, type SceneTopology } from "./scene.js";
 import type { GraphModel, Links, Pane } from "./types.js";
@@ -177,5 +178,25 @@ describe("layoutKeyOf", () => {
     expect(layoutKeyOf(edit(base, { deleted: ["a2"], links: { a0: { left: "a1" } } }))).toBe(
       layoutKeyOf(edit(base, { deleted: ["a2"] })),
     );
+  });
+});
+
+describe("graph scenes", () => {
+  it("copies graph nodes and edges and lays undirected graphs out with neato", () => {
+    const pane: Pane = { id: "a", title: "edges", model: parseGraph([[0, 1], [1, 2]], "a", { name: "edges" }) };
+    const model = sceneModel([pane], initialTopology([pane]), opts);
+
+    expect(model.kind).toBe("graph");
+    expect(model.engine).toBe("neato");
+    expect(model.nodes.map((node) => node.id)).toEqual(["a0", "a1", "a2"]);
+    expect(model.edges.map((edge) => [edge.from, edge.to, edge.undirected])).toEqual([["a0", "a1", true], ["a1", "a2", true]]);
+  });
+
+  it("keeps dot for directed graphs and titles graphs that share the stage", () => {
+    const graph: Pane = { id: "b", title: "prerequisites", model: parseGraph([[1, 0]], "b", { name: "prerequisites" }) };
+    const model = sceneModel([treePane([1, 2]), graph], initialTopology([treePane([1, 2]), graph]), opts);
+
+    expect(model.engine).toBeUndefined();
+    expect(model.nodes.filter((node) => node.role === "title").map((node) => node.label)).toEqual(["root", "prerequisites"]);
   });
 });

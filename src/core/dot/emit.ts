@@ -21,6 +21,9 @@ export function emitDot(model: GraphModel, options: EmitOptions): string {
       ranksep: layout.rankSep,
       fontname: layout.fontFamily,
       ordering: model.kind === "binary-tree" ? "out" : undefined,
+      layout: model.engine,
+      overlap: model.engine ? "false" : undefined,
+      pack: model.engine ? "true" : undefined,
       pad: 0.2,
     })}];`,
     `  node [${attrs({
@@ -121,6 +124,7 @@ function nodeLine(node: GNode, options: EmitOptions, ranked: boolean): string {
 function edgeLine(edge: GEdge, directed: boolean, { layout }: EmitOptions): string {
   const base: Record<string, string | number | undefined> = { label: edge.label };
   if ("constraint" in edge && edge.constraint === false) base.constraint = "false";
+  if (edge.undirected && directed) base.dir = "none";
   if (edge.role === "spine") Object.assign(base, { style: "invis", weight: 10 });
   else if (edge.role === "null") {
     Object.assign(base, layout.showNullChildren

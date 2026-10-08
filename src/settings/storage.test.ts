@@ -322,14 +322,14 @@ describe("withOverrideKind", () => {
   });
 });
 
-describe("privacy notice storage", () => {
-  it("defaults to visible and persists dismissal in local storage", async () => {
-    const { localStore } = installChromeMock();
-    const { loadPrivacyNoticeDismissed, savePrivacyNoticeDismissed } = await storage();
+describe("review button storage", () => {
+  it("defaults to shown and syncs the choice to hide it", async () => {
+    const { syncStore } = installChromeMock();
+    const { loadReviewHidden, saveReviewHidden } = await storage();
 
-    await expect(loadPrivacyNoticeDismissed()).resolves.toBe(false);
-    await savePrivacyNoticeDismissed();
-    expect(localStore["graphy.privacyNoticeDismissed"]).toBe(true);
-    await expect(loadPrivacyNoticeDismissed()).resolves.toBe(true);
+    await expect(loadReviewHidden()).resolves.toBe(false);
+    await saveReviewHidden();
+    expect(syncStore["graphy.reviewHidden"]).toBe(true);
+    await expect(loadReviewHidden()).resolves.toBe(true);
   });
 });

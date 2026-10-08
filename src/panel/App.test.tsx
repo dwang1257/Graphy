@@ -39,13 +39,11 @@ vi.mock("../settings/storage.js", () => ({
   }),
   loadOverrides: () => Promise.resolve({}),
   loadPanelState: () => Promise.resolve({ shrunk: false }),
-  loadPrivacyNoticeDismissed: () => Promise.resolve(true),
   onSettingsChanged: (handler: (update: Update) => void) => {
     harness.remote = handler;
     return () => undefined;
   },
   saveOverrides: () => Promise.resolve(),
-  savePrivacyNoticeDismissed: () => Promise.resolve(),
   saveSettings: (settings: unknown) => {
     harness.saves.push(settings);
     return Promise.resolve();

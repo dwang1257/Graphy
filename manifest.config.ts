@@ -5,9 +5,9 @@ const SITES = ["https://leetcode.com/*", "https://leetcode.cn/*"];
 
 export default defineManifest({
   manifest_version: 3,
-  name: "Graphy",
+  name: "Graphy - LeetCode Graph Visualizer",
   version: pkg.version,
-  description: "Renders LeetCode custom test cases as interactive graphs.",
+  description: "LeetCode Graph Visualizer: turn test cases into binary trees, linked lists, and graphs, then watch your solution run step by step.",
   permissions: ["storage"],
   action: { default_title: "Toggle Graphy" },
   background: { service_worker: "src/background/service-worker.ts", type: "module" },

@@ -22,6 +22,7 @@ const frame: TraceFrame = {
   visited: ["a0"],
   frontier: [],
   dimmed: [],
+  notes: {},
 };
 
 let dom: Window;

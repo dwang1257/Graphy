@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { parseGraph } from "./parse/graph.js";
 import { buildTrace, EMPTY_TRACE, MAX_TRACE_FRAMES, parseAutoLine } from "./trace.js";
 import { TRACE_SENTINEL } from "./traceWire.js";
 import type { GraphModel, Links, Pane } from "./types.js";
@@ -57,6 +58,8 @@ const grid: Pane = {
   },
 };
 
+const graph: Pane = { id: "b", title: "prerequisites", model: parseGraph([[1, 0], [2, 1]], "b", { name: "prerequisites" }) };
+
 const auto = (...steps: string[]) => `${S}0 ${steps.join(" ")}`;
 
 describe("parseAutoLine", () => {
@@ -78,6 +81,14 @@ describe("parseAutoLine", () => {
         { t: "link", ref: "a0", side: ">", to: null },
         { t: "link", ref: "b2", side: ">", to: "z0" },
       ],
+    ]);
+  });
+
+  it("parses grid cell values, cell frontier entries and coordinate pair pointers", () => {
+    expect(parseAutoLine(auto("1.2=7,b0.1=#", "&+1.2,&-b0.1", "@r:c=1.2,@nr:nc=-"))).toEqual([
+      [{ t: "value", ref: "a1.2", label: "7" }, { t: "value", ref: "b0.1", label: "#" }],
+      [{ t: "front", add: true, ref: "a1.2" }, { t: "front", add: false, ref: "b0.1" }],
+      [{ t: "pointer", name: "r,c", to: "a1.2" }, { t: "pointer", name: "nr,nc", to: null }],
     ]);
   });
 
@@ -161,6 +172,14 @@ describe("buildTrace", () => {
     expect(trace.frames.at(-1)!.visited).toEqual(["b0.0"]);
   });
 
+  it("relabels grid cells, tracks cell frontiers and named cell pointers", () => {
+    const trace = buildTrace(`${S}0 @r:c=b0.0 &+b0.1 b0.1=2,b0.1 b0.0=1 b0.9=5,&+b4.4 @r:c=b0.1,&-b0.1`, [grid]);
+    expect(trace.frames.map((frame) => frame.frontier.join(","))).toEqual(["", "", "b0.1", "b0.1", ""]);
+    expect(trace.frames.at(-1)).toMatchObject({ current: "b0.1", pointers: { "r,c": "b0.1" }, labels: { "b0.1": "2" } });
+    expect(trace.frames[3]!.visited).toEqual(["b0.1"]);
+    expect(trace.frames.map((frame) => frame.labels["b0.0"])).not.toContain("1");
+  });
+
   it("ignores refs into panes that were not built", () => {
     expect(buildTrace(auto("b0", "@p=b1"), [tree()])).toBe(EMPTY_TRACE);
   });
@@ -196,5 +215,33 @@ describe("buildTrace", () => {
   it("resolves manual cell refs to the first grid pane", () => {
     const trace = buildTrace("#graphy visit 0,1", [tree(), grid]);
     expect(trace.frames.at(-1)!.visited).toEqual(["b0.1"]);
+  });
+});
+
+describe("graph traces", () => {
+  it("resolves node labels to graph ids for pointers, visits and frontiers", () => {
+    const trace = buildTrace(auto("@course=$0,&+$1", "$0,@nxt=$1", "&-$1,@nxt=$9,$9"), [graph]);
+    expect(trace.frames.map((frame) => [frame.current, frame.frontier.join(","), frame.visited.join(",")])).toEqual([
+      [undefined, "", ""],
+      ["b0", "b1", ""],
+      ["b1", "b1", "b0"],
+      ["b1", "", "b0"],
+    ]);
+    expect(trace.frames.at(-1)!.pointers).toEqual({ course: "b0", nxt: "b1" });
+  });
+
+  it("resolves manual references to graph nodes by label or id", () => {
+    const trace = buildTrace("#graphy walk 1 b2", [graph]);
+    expect(trace.frames.at(-1)).toMatchObject({ current: "b2", visited: ["b1", "b2"] });
+  });
+
+  it("keeps per-node values and remembers which one changed last", () => {
+    const trace = buildTrace(auto("%indeg:$0=0,%indeg:$1=1", "%dist:$1=4", "%indeg:$1=0", "%indeg:$1="), [graph]);
+    const [, first, second, third, fourth] = trace.frames;
+    expect(first).toMatchObject({ note: "indeg", notes: { indeg: { b0: "0", b1: "1" } } });
+    expect(second).toMatchObject({ note: "dist", notes: { indeg: { b0: "0", b1: "1" }, dist: { b1: "4" } } });
+    expect(third!.notes.indeg).toEqual({ b0: "0", b1: "0" });
+    expect(first!.notes.indeg).toEqual({ b0: "0", b1: "1" });
+    expect(fourth!.notes.indeg).toEqual({ b0: "0" });
   });
 });

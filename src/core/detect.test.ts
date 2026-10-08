@@ -12,13 +12,26 @@ describe("detectRole", () => {
     });
   });
 
-  it("maps the isConnected parameter name to a matrix", () => {
+  it("maps the isConnected parameter name to a graph", () => {
     expect(
       detectRole(
         { name: "isConnected", type: "number[][]" },
         [[1, 1, 0], [1, 1, 0], [0, 0, 1]],
       ),
-    ).toEqual({ kind: "matrix" });
+    ).toEqual({ kind: "graph" });
+  });
+
+  it("detects graphs from edge and adjacency parameter names, Node types and uneven adjacency lists", () => {
+    expect(detectRole({ name: "prerequisites", type: "List[List[int]]" }, [[1, 0]])).toEqual({ kind: "graph" });
+    expect(detectRole({ name: "rooms", type: "List[List[int]]" }, [[1, 3], [3, 0, 1], [2], [0]])).toEqual({ kind: "graph" });
+    expect(detectRole({ name: "node", type: "Optional['Node']" }, [[2, 4], [1, 3], [2, 4], [1, 3]])).toEqual({ kind: "graph" });
+    expect(detectRole(undefined, [[1, 2], [3], [3], []])).toEqual({ kind: "graph" });
+  });
+
+  it("keeps grids that only share a graph parameter name", () => {
+    expect(detectRole({ name: "rooms", type: "List[List[int]]" }, [[2147483647, -1, 0], [0, -1, 2147483647]])).toEqual({ kind: "matrix" });
+    expect(detectRole({ name: "edges", type: "List[List[int]]" }, [[1, 2, 3, 4]])).toEqual({ kind: "matrix" });
+    expect(detectRole(undefined, [[2], [3, 4], [6, 5, 7]])).toEqual({ kind: "ignore" });
   });
 
   it("detects a sparse binary tree with nulls from shape", () => {

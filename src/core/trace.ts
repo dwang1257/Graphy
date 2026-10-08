@@ -1,5 +1,6 @@
 import { cellId, childrenOf, initialTopology, layoutKeyOf, visibleIds, type NodeKind, type SceneNode, type SceneTopology } from "./scene.js";
 import { TRACE_SENTINEL, traceLines } from "./traceWire.js";
+import { graphLabel } from "./parse/graph.js";
 import type { Links, NodeLinks, Pane } from "./types.js";
 
 export const MAX_TRACE_TEXT = 256 * 1024;
@@ -16,6 +17,8 @@ export interface TraceFrame {
   visited: readonly string[];
   frontier: readonly string[];
   dimmed: readonly string[];
+  notes: Readonly<Record<string, Readonly<Record<string, string>>>>;
+  note?: string;
 }
 
 export interface Trace {
@@ -37,6 +40,7 @@ export type TraceOp =
   | { t: "frontier"; refs: string[] }
   | { t: "del"; ref: string }
   | { t: "result"; ref: Ref }
+  | { t: "note"; name: string; ref: string; value: string }
   | { t: "clear" };
 
 export type TraceStep = TraceOp[] | "~";
@@ -48,6 +52,7 @@ function nodeRef(raw: string): string | undefined {
 
 function anyRef(raw: string): Ref | undefined {
   if (raw === "-") return null;
+  if (raw.startsWith("$")) return raw.length > 1 ? raw : undefined;
   const [, pane = "", row, col] = /^([b-y]?)(\d+)\.(\d+)$/.exec(raw) ?? [];
   if (row !== undefined && col !== undefined) return `${pane || "a"}${row}.${col}`;
   return nodeRef(raw);
@@ -74,13 +79,13 @@ function parseOp(raw: string): TraceOp | undefined {
       return kind && ref ? { t: "alloc", kind: kind === "t" ? "tree" : "list", ref, label: label.slice(0, MAX_LABEL) } : undefined;
     }
     case "@": {
-      const [, name = "", target = ""] = /^([A-Za-z_]\w*)?=(.*)$/.exec(rest) ?? [];
+      const [, name = "", target = ""] = /^([A-Za-z_]\w*(?::[A-Za-z_]\w*)?)?=(.*)$/.exec(rest) ?? [];
       const to = anyRef(target);
-      return to === undefined ? undefined : { t: "pointer", name: name || null, to };
+      return to === undefined ? undefined : { t: "pointer", name: name.replace(":", ",") || null, to };
     }
     case "&": {
       const [, sign, target = ""] = /^([+-])(.+)$/.exec(rest) ?? [];
-      const ref = nodeRef(target);
+      const ref = anyRef(target);
       return sign && ref ? { t: "front", add: sign === "+", ref } : undefined;
     }
     case "!": {
@@ -91,7 +96,15 @@ function parseOp(raw: string): TraceOp | undefined {
       const ref = rest === "-" ? null : nodeRef(rest);
       return ref === undefined ? undefined : { t: "result", ref };
     }
+    case "%": {
+      const [, name, target = "", value = ""] = /^([A-Za-z_]\w*):([^=]+)=(.*)$/.exec(rest) ?? [];
+      const ref = anyRef(target);
+      return name && ref ? { t: "note", name, ref, value: value.slice(0, MAX_LABEL) } : undefined;
+    }
   }
+  const [, cell, written = ""] = /^([b-y]?\d+\.\d+)=(.*)$/.exec(raw) ?? [];
+  const cellRef = cell === undefined ? undefined : anyRef(cell);
+  if (cellRef) return { t: "value", ref: cellRef, label: written.slice(0, MAX_LABEL) };
   const [, owner = "", op, value = ""] = /^([b-z]?\d+)([=<>])(.*)$/.exec(raw) ?? [];
   const ref = nodeRef(owner);
   if (ref && op === "=") return { t: "value", ref, label: value.slice(0, MAX_LABEL) };
@@ -154,8 +167,10 @@ function resolveManual(raw: string, panes: readonly Pane[], topology: SceneTopol
   }
   const [, legacy] = /^(?:n|@)(\d+)$/i.exec(raw) ?? [];
   if (legacy !== undefined) return `a${legacy}`;
-  if (/^[a-y]\d+$/.test(raw) && topology.nodes[raw]) return raw;
-  return visibleIds(topology).find((id) => topology.nodes[id]?.label === raw);
+  const graphs = panes.flatMap((pane) => (pane.model.kind === "graph" ? pane.model.nodes : []));
+  if (/^[a-y]\d+$/.test(raw) && (topology.nodes[raw] || graphs.some((node) => node.id === raw))) return raw;
+  return visibleIds(topology).find((id) => topology.nodes[id]?.label === raw)
+    ?? graphs.find((node) => node.label === raw)?.id;
 }
 
 function manualSteps(text: string, panes: readonly Pane[], topology: SceneTopology): TraceStep[] {
@@ -182,11 +197,11 @@ function manualSteps(text: string, panes: readonly Pane[], topology: SceneTopolo
   return steps;
 }
 
-function cellValid(ref: string, panes: readonly Pane[]): boolean {
+function cellText(ref: string, panes: readonly Pane[]): string | undefined {
   const [, id, r, c] = /^([a-y])(\d+)\.(\d+)$/.exec(ref) ?? [];
   const pane = panes.find((entry) => entry.id === id);
   const row = pane?.model.kind === "matrix" ? pane.model.matrix?.rows[Number(r)] : undefined;
-  return row?.[Number(c)] !== undefined;
+  return row?.[Number(c)]?.text;
 }
 
 function linkField(kind: NodeKind, side: "<" | ">"): keyof NodeLinks | undefined {
@@ -215,14 +230,26 @@ class Player {
   private visitedSet = new Set<string>();
   private frontier: string[] = [];
   private dimmed: string[] = [];
+  private notes: Record<string, Record<string, string>> = {};
+  private note: string | undefined;
+  private readonly graphIds = new Map<string, string>();
+  private readonly graphNodes = new Set<string>();
   private work: WorkTopology | null = null;
-  private owned = { labels: false, pointers: false, visited: false };
+  private owned = { labels: false, pointers: false, visited: false, notes: new Set<string>() };
   private layoutDirty = false;
   private changed = false;
 
   constructor(private readonly panes: readonly Pane[], initial: SceneTopology) {
     this.topology = initial;
     this.layoutKey = layoutKeyOf(initial);
+    for (const pane of panes) {
+      if (pane.model.kind !== "graph") continue;
+      for (const node of pane.model.nodes) {
+        this.graphNodes.add(node.id);
+        const label = graphLabel(node.label);
+        if (!this.graphIds.has(label)) this.graphIds.set(label, node.id);
+      }
+    }
   }
 
   frame(): TraceFrame {
@@ -230,7 +257,7 @@ class Player {
       this.layoutKey = layoutKeyOf(this.topology);
       this.layoutDirty = false;
     }
-    this.owned = { labels: false, pointers: false, visited: false };
+    this.owned = { labels: false, pointers: false, visited: false, notes: new Set() };
     this.work = null;
     this.changed = false;
     const frame: TraceFrame = {
@@ -241,8 +268,10 @@ class Player {
       visited: this.visited,
       frontier: this.frontier,
       dimmed: this.dimmed,
+      notes: this.notes,
     };
     if (this.current !== undefined) frame.current = this.current;
+    if (this.note !== undefined) frame.note = this.note;
     return frame;
   }
 
@@ -251,11 +280,33 @@ class Player {
   }
 
   private known(ref: string): boolean {
-    return this.isNode(ref) || (ref.includes(".") && cellValid(ref, this.panes));
+    return this.isNode(ref) || this.cellLabel(ref) !== undefined;
+  }
+
+  private cellLabel(ref: string): string | undefined {
+    return ref.includes(".") ? cellText(ref, this.panes) : undefined;
   }
 
   private isNode(ref: string): boolean {
-    return this.topology.nodes[ref] !== undefined;
+    return this.topology.nodes[ref] !== undefined || this.graphNodes.has(ref);
+  }
+
+  private resolve(ref: string): string | undefined {
+    return ref.startsWith("$") ? this.graphIds.get(ref.slice(1)) : ref;
+  }
+
+  private setNote(name: string, ref: string, value: string): void {
+    const current = this.notes[name]?.[ref] ?? "";
+    if (current === value) return;
+    if (!this.owned.notes.has(name)) {
+      this.notes = { ...this.notes, [name]: { ...(this.notes[name] ?? {}) } };
+      this.owned.notes.add(name);
+    }
+    const bag = this.notes[name]!;
+    if (value === "") delete bag[ref];
+    else bag[ref] = value;
+    this.note = name;
+    this.changed = true;
   }
 
   private mutable(): WorkTopology {
@@ -313,7 +364,7 @@ class Player {
   }
 
   private setLabel(ref: string, label: string): void {
-    const now = this.labels[ref] ?? this.topology.nodes[ref]?.label;
+    const now = this.labels[ref] ?? this.topology.nodes[ref]?.label ?? this.cellLabel(ref);
     if (now === label) return;
     if (!this.owned.labels) {
       this.labels = { ...this.labels };
@@ -323,7 +374,9 @@ class Player {
     this.changed = true;
   }
 
-  apply(op: TraceOp): void {
+  apply(raw: TraceOp): void {
+    const op = this.resolved(raw);
+    if (!op) return;
     switch (op.t) {
       case "visit":
         if (!this.known(op.ref)) return;
@@ -331,7 +384,7 @@ class Player {
         this.addVisit(op.ref);
         return;
       case "value":
-        if (!this.isNode(op.ref)) return;
+        if (!this.known(op.ref)) return;
         this.revive(op.ref);
         this.setLabel(op.ref, op.label);
         return;
@@ -357,7 +410,7 @@ class Player {
         this.setCurrent(op.to);
         return;
       case "front":
-        if (!this.isNode(op.ref)) return;
+        if (!this.known(op.ref)) return;
         this.editFrontier((list) => {
           if (op.add) return list.includes(op.ref) ? list : [...list, op.ref];
           return list.filter((id) => id !== op.ref);
@@ -373,6 +426,9 @@ class Player {
       case "result":
         this.result(op.ref);
         return;
+      case "note":
+        if (this.isNode(op.ref)) this.setNote(op.name, op.ref, op.value);
+        return;
       case "clear":
         this.setCurrent(undefined);
         if (this.visited.length > 0) {
@@ -383,6 +439,28 @@ class Player {
         this.editFrontier(() => []);
         for (const name of Object.keys(this.pointers)) this.editPointers(name, null);
         return;
+    }
+  }
+
+  private resolved(op: TraceOp): TraceOp | undefined {
+    switch (op.t) {
+      case "visit":
+      case "value":
+      case "front":
+      case "del":
+      case "note": {
+        const ref = this.resolve(op.ref);
+        return ref === undefined ? undefined : { ...op, ref };
+      }
+      case "pointer": {
+        if (op.to === null) return op;
+        const to = this.resolve(op.to);
+        return to === undefined ? undefined : { ...op, to };
+      }
+      case "frontier":
+        return { ...op, refs: op.refs.flatMap((ref) => this.resolve(ref) ?? []) };
+      default:
+        return op;
     }
   }
 

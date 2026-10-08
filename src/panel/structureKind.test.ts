@@ -28,11 +28,12 @@ describe("structure kind labels", () => {
   it("labels the auto option with what detection found", () => {
     expect(autoKindLabel([])).toBe("Auto");
     expect(autoKindLabel([undefined, "binary-tree", "binary-tree"])).toBe("Auto (Binary tree)");
-    expect(autoKindLabel(["linked-list", undefined, "matrix", "linked-list"])).toBe("Auto (Linked list + Graph)");
+    expect(autoKindLabel(["linked-list", undefined, "matrix", "linked-list"])).toBe("Auto (Linked list + Grid)");
   });
 
   it("prefers the override, then detection, then the unselected prompt", () => {
-    expect(structureKindLabel("matrix", ["binary-tree"])).toBe("Graph");
+    expect(structureKindLabel("matrix", ["binary-tree"])).toBe("Grid");
+    expect(structureKindLabel("graph", ["binary-tree"])).toBe("Graph");
     expect(structureKindLabel(undefined, ["binary-tree", "linked-list"])).toBe("Binary tree + Linked list");
     expect(structureKindLabel(undefined, [undefined])).toBe("Choose a structure");
     expect(structureKindLabel(undefined)).toBe("Choose a structure");
@@ -42,7 +43,8 @@ describe("structure kind labels", () => {
     expect(structureKindOptions()).toEqual([
       ["binary-tree", "Binary tree"],
       ["linked-list", "Linked list"],
-      ["matrix", "Graph"],
+      ["matrix", "Grid"],
+      ["graph", "Graph"],
     ]);
   });
 });
