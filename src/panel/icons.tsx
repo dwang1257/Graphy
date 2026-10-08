@@ -91,3 +91,11 @@ export function StarIcon(): JSX.Element {
     </svg>
   );
 }
+
+export function LightbulbIcon(): JSX.Element {
+  return (
+    <svg {...base}>
+      <path d="M6 11c0-1-.6-1.8-1.2-2.6a4 4 0 1 1 6.4 0c-.6.8-1.2 1.6-1.2 2.6zM6.5 13.5h3" />
+    </svg>
+  );
+}

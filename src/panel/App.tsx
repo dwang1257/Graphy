@@ -369,6 +369,7 @@ export function App(): JSX.Element | null {
       style={panelStyle}
     >
       <TitleBar
+        slug={slug}
         showSettings={showSettings}
         selectedKind={selectedKind}
         detectedKinds={result.detected}

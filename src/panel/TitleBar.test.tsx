@@ -31,6 +31,7 @@ async function mount(selectedKind: StructureKind | undefined, detectedKinds: Arr
   await act(async () => {
     render(
       <TitleBar
+        slug="two-sum"
         showSettings={false}
         selectedKind={selectedKind}
         detectedKinds={detectedKinds}
@@ -66,6 +67,60 @@ describe("TitleBar kind picker", () => {
     expect(select.value).toBe("");
     expect(select.options[0]?.textContent).toBe("Auto (Binary tree + Linked list)");
     expect(select.getAttribute("aria-label")).toBe("Structure to draw: Binary tree + Linked list");
+  });
+
+  it("puts the suggestion button right before the review link after the structure dropdown", async () => {
+    await mount(undefined, ["binary-tree"]);
+    await act(async () => {});
+
+    const suggest = container.querySelector(".kind-field")?.nextElementSibling;
+    expect(suggest?.querySelector(".suggest-btn")).not.toBeNull();
+    expect(suggest?.nextElementSibling?.querySelector(".review-link")).not.toBeNull();
+  });
+
+  it("does not drag the panel from inside the suggestion popover", async () => {
+    await mount(undefined, ["binary-tree"]);
+    const titlebar = container.querySelector(".titlebar")!;
+    const down = async (el: Element) => {
+      await act(async () => {
+        el.dispatchEvent(new dom.PointerEvent("pointerdown", { bubbles: true, button: 0 }) as unknown as Event);
+      });
+    };
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>(".suggest-btn")!.click();
+    });
+    await down(container.querySelector(".suggest-field")!);
+    await down(container.querySelector(".suggest-popover")!);
+    expect(titlebar.classList.contains("dragging")).toBe(false);
+
+    await down(titlebar);
+    expect(titlebar.classList.contains("dragging")).toBe(true);
+  });
+
+  it("never shows the suggestion and review popovers together", async () => {
+    await mount(undefined, ["binary-tree"]);
+    await act(async () => {});
+    const suggest = container.querySelector<HTMLButtonElement>(".suggest-btn")!;
+    const review = container.querySelector<HTMLAnchorElement>(".review-link")!;
+    review.addEventListener("click", (event) => event.preventDefault());
+    const press = async (el: HTMLElement) => {
+      await act(async () => {
+        el.dispatchEvent(new dom.PointerEvent("pointerdown", { bubbles: true }) as unknown as Event);
+        el.click();
+      });
+    };
+
+    await press(suggest);
+    expect(container.querySelector(".suggest-popover")).not.toBeNull();
+
+    await press(review);
+    expect(container.querySelector(".review-prompt")).not.toBeNull();
+    expect(container.querySelector(".suggest-popover")).toBeNull();
+
+    await press(suggest);
+    expect(container.querySelector(".suggest-popover")).not.toBeNull();
+    expect(container.querySelector(".review-prompt")).toBeNull();
   });
 
   it("asks for a choice when nothing is detected", async () => {

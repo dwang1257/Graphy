@@ -7,8 +7,10 @@ import { memo } from "./memo.js";
 import { STYLE_DRAWER_ID } from "./styleOptions.js";
 import { pointerDragHandler } from "./usePointerDrag.js";
 import { ReviewLink } from "./ReviewLink.js";
+import { SuggestionBox } from "./SuggestionBox.js";
 
 interface Props {
+  slug: string;
   showSettings: boolean;
   selectedKind: StructureKind | undefined;
   detectedKinds: ReadonlyArray<StructureKind | undefined>;
@@ -26,7 +28,7 @@ function TitleBarView(props: Props): JSX.Element {
   const [dragging, setDragging] = useState(false);
 
   const onPointerDown = pointerDragHandler<HTMLDivElement>({
-    ignore: "button, select, label, a, .review-prompt",
+    ignore: "button, select, label, a, textarea, .review-prompt, .suggest-popover",
     onStart: () => setDragging(true),
     onMove: props.onDrag,
     onEnd: () => {
@@ -62,6 +64,7 @@ function TitleBarView(props: Props): JSX.Element {
           ))}
         </select>
       </label>
+      <SuggestionBox shrunk={props.shrunk} slug={props.slug} />
       <ReviewLink shrunk={props.shrunk} />
 
       <span class="spacer" />
