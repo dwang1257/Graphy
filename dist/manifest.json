@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Graphy",
-  "version": "1.0.1",
-  "description": "Renders LeetCode custom test cases as interactive graphs.",
+  "name": "Graphy - LeetCode Graph Visualizer",
+  "version": "1.0.3",
+  "description": "LeetCode Graph Visualizer: turn test cases into binary trees, linked lists, and graphs, then watch your solution run step by step.",
   "permissions": [
     "storage"
   ],
@@ -22,7 +22,7 @@
   "content_scripts": [
     {
       "js": [
-        "assets/index.ts-loader-D9deO-aB.js"
+        "assets/index.ts-loader-BOdQ15S9.js"
       ],
       "matches": [
         "https://leetcode.com/*",
@@ -40,8 +40,8 @@
       "resources": [
         "injected.js",
         "src/panel/index.html",
-        "assets/protocol-BlOzJiD5.js",
-        "assets/index.ts-DPywxHBI.js"
+        "assets/protocol-C2TKDuwB.js",
+        "assets/index.ts-DnB-baN0.js"
       ],
       "use_dynamic_url": false
     }
